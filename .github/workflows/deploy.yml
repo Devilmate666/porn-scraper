@@ -12,6 +12,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          node-version: '20'   # keep it as 20
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -41,7 +43,7 @@ jobs:
             -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
             -H "Content-Type: application/json" \
             -d '{
-              "name": "porn-scraper",
+              "name": "porn-archive",
               "production_branch": "main",
               "deployment_configs": {
                 "preview_deployment_setting": "disabled",
@@ -51,4 +53,4 @@ jobs:
             }' | jq '.result'
 
           echo "✅ Cloudflare Pages project created/updated"
-          echo "Your site will be available at: https://porn-scraper.pages.dev"
+          echo "Your site will be available at: https://porn-archive.pages.dev"
