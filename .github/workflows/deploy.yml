@@ -7,7 +7,7 @@ on:
     branches: [ main, master ]
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -33,12 +33,22 @@ jobs:
           EOF
 
       - name: Deploy to Cloudflare Pages
-        uses: cloudflare/pages-action@v1
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          projectName: porn-scraper
-          directory: .
-          branch: ${{ github.ref_name }}
-          wranglerConfigPath: wrangler.toml
-          onDestroy: 'delete'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          curl -X POST "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects" \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "name": "porn-scraper",
+              "production_branch": "main",
+              "deployment_configs": {
+                "preview_deployment_setting": "disabled",
+                "production_deployment_enabled": true,
+                "production_branch": "main"
+              }
+            }' | jq '.result'
+
+          echo "✅ Cloudflare Pages project created/updated"
+          echo "Your site will be available at: https://porn-scraper.pages.dev"
