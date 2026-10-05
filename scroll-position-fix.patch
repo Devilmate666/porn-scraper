@@ -1,0 +1,162 @@
+--- index.html.orig+++ index.html.patched@@ -1176,6 +1176,7 @@     feedId: activeFeedId,
+     view: 'feed',
+     feedUrl: activeTab && !isListTab(activeTab) ? activeTab : activeSource().url,
++    scrollY: window.scrollY,
+   };
+   if (!ignorePlayer && mainPlayer && mainPlayer.classList.contains('active') && mainPlayerInfo) {
+     const under = currentNavState(true);
+@@ -1364,10 +1365,20 @@ 
+   if (state.view === 'categories') {
+     await openCategories(false, { skipPush: true });
++    if (typeof state.scrollY === 'number') {
++      requestAnimationFrame(() => {
++        window.scrollTo({ top: state.scrollY, behavior: 'instant' });
++      });
++    }
+     return;
+   }
+   if (state.view === 'pornsites') {
+     await openPornSites(false, { skipPush: true });
++    if (typeof state.scrollY === 'number') {
++      requestAnimationFrame(() => {
++        window.scrollTo({ top: state.scrollY, behavior: 'instant' });
++      });
++    }
+     return;
+   }
+   if (state.view === 'porntags') {
+@@ -1376,6 +1387,11 @@   }
+   if (state.view === 'networks') {
+     await openNetworks(false, { skipPush: true });
++    if (typeof state.scrollY === 'number') {
++      requestAnimationFrame(() => {
++        window.scrollTo({ top: state.scrollY, behavior: 'instant' });
++      });
++    }
+     return;
+   }
+   if (state.view === 'pornstars') {
+@@ -1585,6 +1601,7 @@   retryCount: 0,
+   categories: [],
+   sourceId: null,
++  scrollY: 0,             // preserved scroll position when navigating away
+ };
+ 
+ const COMBINED_CAT_CACHE_KEY = '__combined_categories__';
+@@ -1936,6 +1953,11 @@ 
+ async function openNetwork(net) {
+   if (busy) return;
++  // Save scroll position of networks list before opening a network feed
++  if (activeTab === NETWORKS_TAB || activeTab === PORN_SITES_TAB) {
++    studioState.scrollY = window.scrollY;
++    studioState.rendered = true;
++  }
+   // FullPorno for general networks; BDSMHole for BDSM studios
+   const src = sourceForUrl(net.url);
+   const sid = (src && src.id) || (hostOf(net.url).includes('bdsmhole') ? 'bdsmhole' : 'fullporno');
+@@ -2026,6 +2048,14 @@     card._catBound = true;
+     card.addEventListener('click', e => {
+       e.preventDefault();
++      // Save scroll position before navigating to category feed
++      if (activeTab === CATEGORIES_TAB) {
++        categoriesState.scrollY = window.scrollY;
++      }
++      if (activeTab === NETWORKS_TAB || activeTab === PORN_SITES_TAB) {
++        studioState.scrollY = window.scrollY;
++        studioState.rendered = true;
++      }
+       const link = card.getAttribute('data-link');
+       const name = card.getAttribute('data-name') || 'Category';
+       const sid = card.getAttribute('data-source-id');
+@@ -2229,6 +2259,16 @@ 
+ async function openCategoryFeed(link, name, opts = {}) {
+   if (busy) return;
++
++  // Save scroll position of the view we're leaving
++  if (activeTab === NETWORKS_TAB || activeTab === PORN_SITES_TAB) {
++    studioState.scrollY = window.scrollY;
++    studioState.rendered = true;
++  }
++  if (activeTab === CATEGORIES_TAB) {
++    categoriesState.scrollY = window.scrollY;
++  }
++
+   // Already fetched? Show the same data again (every page loaded so far, same paging cursor) instead of starting over.
+   const cachedKey = feedKeyByLink.get(link) || link;
+   if (!opts.force && siteData.has(cachedKey) && siteState.has(cachedKey)) {
+@@ -3247,6 +3287,10 @@ 
+ /** Combined Superporn + BDSMHole category indexes. */
+ async function openCategories(forceRefresh = false, opts = {}) {
++  // Save scroll position if coming from a category feed
++  if (activeTab === CATEGORIES_TAB && categoriesState.categories.length) {
++    categoriesState.scrollY = window.scrollY;
++  }
+   if (!forceRefresh && loadCategoryCache(COMBINED_CAT_CACHE_KEY)) {
+     const data = {
+       ...(lastCategoriesData || {}),
+@@ -3260,6 +3304,10 @@     if (!opts.skipPush) pushNav({ view: 'categories' });
+     setStatus(`Categories — ${categoriesState.categories.length}`, false);
+     scheduleCategoryRecheck();
++    // Restore scroll position
++    requestAnimationFrame(() => {
++      window.scrollTo({ top: categoriesState.scrollY || 0, behavior: 'instant' });
++    });
+     return;
+   }
+ 
+@@ -3398,6 +3446,8 @@   searchToken: 0,
+   filter: 'all',          // Networks: all | general | bdsm
+   nexts: {},              // Networks: next page URL per group
++  scrollY: 0,             // preserved scroll position when navigating away
++  rendered: false,        // true once the list has been rendered at least once
+ };
+ 
+ // Networks = two sources: freesexvideos studios (name + preview videos) and BDSMHole studios (tiles).
+@@ -3779,6 +3829,27 @@   useStudioView(tab);
+   const V = studioView();
+   const btn = tab === NETWORKS_TAB ? document.getElementById('networksBtn') : pornSitesBtn;
++
++  // If already rendered and DOM still exists, just restore scroll — don't re-render
++  if (!forceRefresh && studioState.rendered && studioState.sections.length) {
++    activeTab = studioTab;
++    if (!results.querySelector(`.feed[data-site="${studioTab}"] .studio-list`)) {
++      renderStudioSections({
++        sections: studioState.sections.slice(),
++        next_page: studioState.next_page,
++        page_num: studioState.page_num,
++        nexts: { ...(studioState.nexts || {}) },
++      });
++    }
++    if (!opts.skipPush) pushNav({ view: V.navView });
++    setStatus(`${V.title} — ${studioState.sections.length}`, false);
++    // Restore scroll position
++    requestAnimationFrame(() => {
++      window.scrollTo({ top: studioState.scrollY || 0, behavior: 'instant' });
++    });
++    return;
++  }
++
+   if (!forceRefresh && lastStudioData && (lastStudioData.sections || []).length) {
+     // Re-render accumulated sections; studioState is rebuilt inside renderStudioSections
+     renderStudioSections({
+@@ -3788,8 +3859,13 @@       page_num: studioState.page_num || lastStudioData.page_num || 1,
+       nexts: studioState.nexts || lastStudioData.nexts || {},
+     });
++    studioState.rendered = true;
+     if (!opts.skipPush) pushNav({ view: V.navView });
+     setStatus(`${V.title} — ${(studioState.sections.length || lastStudioData.sections.length)}`, false);
++    // Restore scroll position
++    requestAnimationFrame(() => {
++      window.scrollTo({ top: studioState.scrollY || 0, behavior: 'instant' });
++    });
+     return;
+   }
+ 
+@@ -3833,6 +3909,8 @@     studioState.next_page = null;
+     studioState.exhausted = false;
+     renderStudioSections(json);
++    studioState.rendered = true;
++    studioState.scrollY = 0;
+     if (!opts.skipPush) pushNav({ view: V.navView });
+     setStatus(`${V.title} — ${(json.sections || []).length}`, false);
+   } catch (err) {
