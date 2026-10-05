@@ -1,6 +1,5 @@
 name = "porn-archive-api"
 main = "src/index.ts"
-account_id = "7e5a85454cd58ec9c3f4dab65a7eca9e"
 compatibility_date = "2024-01-01"
 compatibility_flags = ["nodejs_compat"]
 

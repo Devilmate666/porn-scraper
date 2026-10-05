@@ -111,6 +111,7 @@ def init_kv_clients():
     return True
 
 
+CATEGORY_INDEX: dict = {}
 KV_STATS = {"ok": 0, "failed": 0}
 
 
@@ -313,7 +314,7 @@ def job_popular_feeds():
 
 
 def job_category_pages():
-    """Scrape category/tag/studio listing pages."""
+    """Scrape category/tag/studio listing pages (and remember them for the feed job)."""
     category_urls = [
         ("https://www.superporn.com/categories", "categories"),
         ("https://www.freesexvideos.xxx/models/", "models"),
@@ -322,8 +323,19 @@ def job_category_pages():
         ("https://www.bdsmhole.com/categories/", "categories"),
     ]
     for url, mode in category_urls:
-        scrape_categories_and_cache(url, mode)
+        CATEGORY_INDEX[url] = scrape_categories_and_cache(url, mode)
         time.sleep(1)
+
+
+def job_category_feeds():
+    """Pre-scrape the first N category feeds so clicking a category hits the cache."""
+    limit = int(os.environ.get("MAX_CATEGORY_FEEDS", "16"))
+    for index_url in ("https://www.superporn.com/categories", "https://www.bdsmhole.com/categories/"):
+        cats = (CATEGORY_INDEX.get(index_url) or {}).get("categories") or []
+        links = [c.get("link") for c in cats if c.get("link")][:limit]
+        print(f"Category feeds for {index_url}: {len(links)}")
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            list(ex.map(scrape_and_cache_url, links))
 
 
 def job_search_queries():
@@ -362,6 +374,7 @@ def main():
     # Dynamic scraping
     job_popular_feeds()
     job_category_pages()
+    job_category_feeds()
     job_search_queries()
     job_livecams_channels()
 
