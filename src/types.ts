@@ -8,4 +8,6 @@ export interface Env {
   BACKEND_URL?: string;
   /** "live" (default when BACKEND_URL is set) = backend first, KV fallback.  "kv" = KV first, backend on miss. */
   MODE?: string;
+  /** "on" (default): the Worker scrapes the websites itself for search + scrolling. "off": backend/KV only. */
+  LIVE_SCRAPE?: string;
 }

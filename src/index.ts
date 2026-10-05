@@ -1,10 +1,13 @@
 import { Env } from "./types";
+import { scrapePage, searchOne, combineResults } from "./scrape";
 
 // ---------------------------------------------------------------------------
 // API Worker. Two data sources, used like the always-running Flask server would:
 //
 //   1. LIVE  - your Flask app (BACKEND_URL, e.g. through a Cloudflare Tunnel). Asked FIRST, with a timeout.
 //              Good answers are kept in the colo's Cache API (free, no KV writes) like Flask's own caches.
+//   1b. NATIVE - the Worker scrapes the websites itself (src/scrape.ts, a port of scraper.py's generic scraper),
+//              so search + scrolling hit the real sites even with no backend running. Edge-cached like Flask.
 //   2. KV    - SCRAPE_DATA, filled by the GitHub Actions scraper. Used when the backend is off/slow/failing,
 //              and as the only source when BACKEND_URL is not set.
 //
@@ -168,6 +171,50 @@ export default {
       })());
     };
 
+    // ---------------------------------------------------------------- native live scraping
+    // order: backend (if set) -> Worker scrapes the sites itself -> KV. Set LIVE_SCRAPE=off to disable the native step.
+    const nativeOn = (env.LIVE_SCRAPE || "on").toLowerCase() !== "off";
+    const nativeFirst = nativeOn && (env.MODE || "live").toLowerCase() !== "kv";
+    const edgeCache = (caches as any).default as Cache;
+    const ek = (k: string) => new Request(`https://edge-cache.invalid/${k}`);
+    const edgeGetJson = async (k: string): Promise<any | null> => {
+      const hit = await edgeCache.match(ek(k));
+      return hit ? hit.json() : null;
+    };
+    const edgePutJson = (k: string, data: unknown, seconds: number) =>
+      ctx.waitUntil(edgeCache.put(ek(k), new Response(JSON.stringify(data), { headers: { "Content-Type": "application/json", "Cache-Control": `public, max-age=${seconds}` } })));
+
+    const nativePage = async (u: string, pageNum: number | null): Promise<any | null> => {
+      const k = `page/${await sha1Hex(u + "|" + (pageNum ?? ""))}`;
+      if (!forced) { const c = await edgeGetJson(k); if (c) return c; }
+      const r = await scrapePage(u, 80, pageNum);
+      if (r.error || !r.items.length) return null;                 // failures are never cached
+      edgePutJson(k, r, 600);
+      return r;
+    };
+
+    const nativeSearchSite = async (site: string, query: string): Promise<any | null> => {
+      const k = `search/${await sha1Hex(site + "|" + query)}`;
+      if (!forced) { const c = await edgeGetJson(k); if (c) return c; }
+      const shapeKey = `shape/${await sha1Hex(site)}`;
+      const pref = await edgeGetJson(shapeKey);
+      const { result, winner } = await searchOne(site, query, 40, typeof pref?.i === "number" ? pref.i : null);
+      if (winner !== null) edgePutJson(shapeKey, { i: winner }, 7 * 86400);
+      if (!result.items.length) return null;
+      edgePutJson(k, result, 300);
+      return result;
+    };
+
+    const nativeSearch = async (sites: string[], query: string): Promise<Response | null> => {
+      const rs = (await Promise.all(sites.slice(0, 8).map((x) => nativeSearchSite(x, query).catch(() => null)))).filter(Boolean) as any[];
+      if (!rs.length) return null;
+      const combined = combineResults(rs, query);
+      if (!combined.length) return null;
+      const out = json({ results: rs, query, combined, count: combined.length }, 200, headers);
+      out.headers.set("X-Source", "native");
+      return out;
+    };
+
     try {
       switch (url.pathname) {
         case "/healthz":
@@ -196,13 +243,21 @@ export default {
           const live = await tryLive();
           if (live) return live;
 
-          const hits = await Promise.all(reqs.map((r) => kvGet(env.SCRAPE_DATA, `scrape:${r.url}`)));
+          // live: scrape the real pages now (parallel); anything that fails is answered from KV
+          const fresh: (any | null)[] = nativeFirst
+            ? await Promise.all(reqs.map((r) => nativePage(r.url, r.page_num).catch(() => null)))
+            : reqs.map(() => null);
+          const hits = await Promise.all(reqs.map((r, i) => (fresh[i] ? fresh[i] : kvGet(env.SCRAPE_DATA, `scrape:${r.url}`))));
+          if (!nativeFirst && nativeOn && hits.some((h) => !h || (h as any).error)) {
+            const again = await Promise.all(reqs.map((r, i) => (hits[i] && !(hits[i] as any).error ? hits[i] : nativePage(r.url, r.page_num).catch(() => null))));
+            again.forEach((a, i) => { if (a) hits[i] = a; });
+          }
           if (hits.some((h) => !h || (h as any).error)) {
             const l = await missLive();
             if (l) return l;
           }
           const results = hits.map((h: any, i) => {
-            if (h && !h.error) return h;
+            if (h && !h.error) return { ...h, page_num: reqs[i].page_num ?? h.page_num };
             if (!h) want({ t: "scrape", url: reqs[i].url, page_num: reqs[i].page_num });
             // Past the cached pages: say "no more" (frontend stops scrolling) instead of showing an error.
             const first = (reqs[i].page_num ?? 1) <= 1;
@@ -223,6 +278,7 @@ export default {
 
           const live = await tryLive();
           if (live) return live;
+          if (nativeFirst) { const n = await nativeSearch(sites, query); if (n) return n; }
 
           const all = await Promise.all(sites.map((s) => kvGet<any>(env.SCRAPE_DATA, `search:${s}:${query}`)));
           sites.forEach((s, i) => { if (!all[i] || all[i].error) want({ t: "search", site: s, query }); });
@@ -230,6 +286,7 @@ export default {
           if (!parts.length) {
             const l = await missLive();
             if (l) return l;
+            if (nativeOn && !nativeFirst) { const n = await nativeSearch(sites, query); if (n) return n; }
             return json({ results: [], query, combined: [], count: 0, error: NOT_CACHED }, 200, headers);
           }
           const combined = parts.flatMap((p) => p.combined || []).sort((a, b) => (b._score || 0) - (a._score || 0));
