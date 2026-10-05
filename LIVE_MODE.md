@@ -6,6 +6,15 @@
   * a page past the end is answered as "end of list", not as an error.
 * **Search while scrolling** - only page 1 of 8 preset queries was cached. Now the scraper also caches the following result pages (`SEARCH_PAGES`, default 3), and anything visitors ask for that is missing is queued (`wanted:queue`) and scraped on the next run (hourly :30 run, or the full 6-hourly run).
 
+## What is scraped live by the Worker (no backend needed)
+| Endpoint | Live scraper |
+|---|---|
+| `/api/search`, `/api/scrape` (all video feeds, networks/categories/pornstar feeds, scrolling) | `src/scrape.ts` |
+| `/api/scrape-categories` (categories, pornstars, networks/studios, series, tags) | `src/listings.ts` |
+| `/api/resolve`, `/api/resolve-full` (playable video links) | `src/resolve.ts` |
+| `/api/metadata` (duration, stars, tags ...) | `src/metadata.ts` |
+| `/api/livecams`, `/api/channels` | still cron/backend only (needs `livecams.py` / `channels.py`) |
+
 ## Real scraping on search (no backend needed)
 `src/scrape.ts` is a TypeScript port of the generic scraper in `scraper.py`. When you search a keyword, the Worker now fetches the sites' own search pages (the same 6 URL shapes, raced), parses the video cards and follows `next_page` while you scroll. Order of answers: your Flask backend (if `BACKEND_URL` is set) -> **Worker scrapes the site live** -> KV cache. Live answers are edge-cached (search 5 min, pages 10 min); failed/empty scrapes are never cached.
 Set `LIVE_SCRAPE=off` (Worker variable) to disable it. It needs the `package.json` in the repo root (`node-html-parser`); the workflow already runs `npm install` when that file exists.

@@ -39,35 +39,35 @@ export interface PageResult {
 }
 
 // ------------------------------------------------------------------ constants (from scraper.py)
-const IMAGE_EXT = /\.(jpe?g|png|gif|webp|svg|bmp|ico|avif|heic)(\?|#|\/|$)/i;
-const VIDEO_EXT = /\.(mp4|webm|ogg|ogv|mov|m4v|mkv|m3u8|mpd)(\?|#|\/|$)/i;
-const PLACEHOLDER = /(placeholder|lazy|loading|blank|transparent|spacer|1x1|no[-_]?image|preload|default[-_]?thumb|\/static\/img\/load|\/img\/load|load-\dx\d|data:image\/gif|data:image\/svg|pixel\.(?:gif|png)|spacer\.(?:gif|png))/i;
-const SHARED_IMAGE = /(?:^|[/_\-])(logo|sprite|banner|share|sharing|og[_-]?default|og[_-]?image|twitter[_-]?card|default|noimage|no[_-]?image|dummy|avatar|flag|icon|favicon|watermark|brand)(?:[/_\-.]|$)/i;
-const JUNK_TITLES = /^(link|links|watch|watch now|play|play now|view|view now|download|download now|read more|more|click here|click|open|open now|see more|show more|go|next|prev|previous|video|photo|image|here|→|»|›|▶|►|•|-|--)$/i;
+export const IMAGE_EXT = /\.(jpe?g|png|gif|webp|svg|bmp|ico|avif|heic)(\?|#|\/|$)/i;
+export const VIDEO_EXT = /\.(mp4|webm|ogg|ogv|mov|m4v|mkv|m3u8|mpd)(\?|#|\/|$)/i;
+export const PLACEHOLDER = /(placeholder|lazy|loading|blank|transparent|spacer|1x1|no[-_]?image|preload|default[-_]?thumb|\/static\/img\/load|\/img\/load|load-\dx\d|data:image\/gif|data:image\/svg|pixel\.(?:gif|png)|spacer\.(?:gif|png))/i;
+export const SHARED_IMAGE = /(?:^|[/_\-])(logo|sprite|banner|share|sharing|og[_-]?default|og[_-]?image|twitter[_-]?card|default|noimage|no[_-]?image|dummy|avatar|flag|icon|favicon|watermark|brand)(?:[/_\-.]|$)/i;
+export const JUNK_TITLES = /^(link|links|watch|watch now|play|play now|view|view now|download|download now|read more|more|click here|click|open|open now|see more|show more|go|next|prev|previous|video|photo|image|here|→|»|›|▶|►|•|-|--)$/i;
 const VIDEO_HINT_ATTRS = ["data-poster", "data-video-poster", "data-video-thumb", "data-video-preview", "data-preview", "data-preview-src", "data-video", "data-video-src", "data-video-id", "data-video-url", "data-src-video", "poster"];
 const PHOTO_PATHS = ["/photo/", "/photos/", "/image/", "/images/", "/img/", "/album/", "/albums/", "/gallery/", "/galleries/", "/pic/", "/pics/", "/picture/", "/pictures/", "/image-gallery/", "/photo-gallery/"];
 const VIDEO_PATHS = ["/video/", "/videos/", "/watch/", "/play/", "/player/", "/embed/", "/v/", "/clip/", "/clips/", "/movie/", "/movies/", "/stream/", "/tube/", "/p/", "/content_video/", "/content_video_alt/"];
 const SKIP_PATHS = ["/login", "/signup", "/register", "/terms", "/privacy", "/contact", "/about", "/faq", "/dmca"];
 const NAV_CLASSES = ["navbar", "nav-", "-nav", "menu", "header", "footer", "breadcrumb", "pagination"];
-const DUR_RE = /(?<!\d)(\d{1,2}:\d{2}(?::\d{2})?)(?!\d)/;
-const NUM_RE = /\d[\d.,]*\s*[kKmMbB]?(?![a-zA-Z])/;
-const PCT_RE = /(\d{1,3}(?:\.\d+)?)\s*%/;
+export const DUR_RE = /(?<!\d)(\d{1,2}:\d{2}(?::\d{2})?)(?!\d)/;
+export const NUM_RE = /\d[\d.,]*\s*[kKmMbB]?(?![a-zA-Z])/;
+export const PCT_RE = /(\d{1,3}(?:\.\d+)?)\s*%/;
 const LAZY_ATTRS = ["data-src", "data-original", "data-lazy", "data-lazy-src", "data-thumb", "data-thumbnail", "data-image", "data-cover", "data-poster", "data-preview", "data-webp", "data-src-retina"];
 
 // ------------------------------------------------------------------ small helpers
-const absUrl = (base: string, u?: string | null): string | null => {
+export const absUrl = (base: string, u?: string | null): string | null => {
   if (!u) return null;
   u = u.trim().replace(/^['"]|['"]$/g, "");
   if (!u) return null;
   try { return new URL(u, base).toString(); } catch { return null; }
 };
-const attr = (el: HTMLElement | null | undefined, n: string): string => (el ? el.getAttribute(n) || "" : "");
-const clsOf = (el: HTMLElement): string => (el.getAttribute("class") || "").toLowerCase();
-const collapse = (s: string) => s.replace(/\s+/g, " ").trim();
-const textOf = (el: HTMLElement | null | undefined) => (el ? collapse(el.text || "") : "");
-const noQuery = (u: string) => u.split("?")[0];
+export const attr = (el: HTMLElement | null | undefined, n: string): string => (el ? el.getAttribute(n) || "" : "");
+export const clsOf = (el: HTMLElement): string => (el.getAttribute("class") || "").toLowerCase();
+export const collapse = (s: string) => s.replace(/\s+/g, " ").trim();
+export const textOf = (el: HTMLElement | null | undefined) => (el ? collapse(el.text || "") : "");
+export const noQuery = (u: string) => u.split("?")[0];
 
-function hash12(s: string): string {
+export function hash12(s: string): string {
   let h1 = 0xdeadbeef ^ s.length, h2 = 0x41c6ce57 ^ s.length;
   for (let i = 0; i < s.length; i++) {
     const c = s.charCodeAt(i);
@@ -79,10 +79,10 @@ function hash12(s: string): string {
   return ((h2 >>> 0).toString(16).padStart(8, "0") + (h1 >>> 0).toString(16).padStart(8, "0")).slice(0, 12);
 }
 
-const isVideoUrl = (u?: string | null) => !!u && !IMAGE_EXT.test(u.toLowerCase().split("?")[0]) && VIDEO_EXT.test(u.toLowerCase().split("?")[0]);
+export const isVideoUrl = (u?: string | null) => !!u && !IMAGE_EXT.test(u.toLowerCase().split("?")[0]) && VIDEO_EXT.test(u.toLowerCase().split("?")[0]);
 const acceptableThumb = (u: string | null) => !!u && !isVideoUrl(u) && !PLACEHOLDER.test(u) && !SHARED_IMAGE.test(u);
 
-function pickFromSrcset(srcset: string, base: string): string | null {
+export function pickFromSrcset(srcset: string, base: string): string | null {
   if (!srcset) return null;
   let best: string | null = null, bestW = -1;
   for (const part of srcset.split(",")) {
@@ -96,7 +96,7 @@ function pickFromSrcset(srcset: string, base: string): string | null {
   return absUrl(base, best);
 }
 
-function findThumbnail(c: HTMLElement, base: string): string | null {
+export function findThumbnail(c: HTMLElement, base: string): string | null {
   const ok = (u: string | null) => (acceptableThumb(u) ? u : null);
   for (const v of c.querySelectorAll("video")) {
     for (const a of ["poster", "data-poster", "data-video-poster"]) { const h = ok(absUrl(base, attr(v, a))); if (h) return h; }
@@ -142,7 +142,7 @@ function cleanTitle(t?: string | null): string | null {
   return s;
 }
 
-function findTitle(c: HTMLElement): string | null {
+export function findTitle(c: HTMLElement): string | null {
   for (const a of ["title", "aria-label", "data-title", "data-name", "data-video-title", "data-original-title", "data-tooltip", "data-label"]) {
     const t = cleanTitle(attr(c, a));
     if (t) return t;
@@ -167,7 +167,7 @@ function findTitle(c: HTMLElement): string | null {
   return null;
 }
 
-function titleFromUrl(u: string): string | null {
+export function titleFromUrl(u: string): string | null {
   try {
     let slug = new URL(u).pathname.replace(/\/+$/, "").split("/").pop() || "";
     slug = slug.replace(/\.(html?|php|aspx?)$/i, "").replace(/[-_]+/g, " ").trim();
@@ -225,7 +225,7 @@ export function guessNextPage(base: string, pageNum: number): string {
   return u.toString();
 }
 
-function findNextPageLink(root: HTMLElement, base: string, baseHost: string, anchors: HTMLElement[]): string | null {
+export function findNextPageLink(root: HTMLElement, base: string, baseHost: string, anchors: HTMLElement[]): string | null {
   const rel = root.querySelector('link[rel="next"]') || root.querySelector('a[rel="next"]');
   if (rel && attr(rel, "href")) return absUrl(base, attr(rel, "href"));
   const cur = currentPageNumber(base);
@@ -286,7 +286,7 @@ function cardMeta(card: HTMLElement): Partial<Item> {
 }
 
 // ------------------------------------------------------------------ page parsing
-function prepare(html: string): HTMLElement {
+export function prepare(html: string): HTMLElement {
   let h = html.length > MAX_HTML ? html.slice(0, MAX_HTML) : html;
   h = h.replace(/<script\b[\s\S]*?<\/script\s*>/gi, "").replace(/<style\b[\s\S]*?<\/style\s*>/gi, "").replace(/<!--[\s\S]*?-->/g, "");
   return parse(h, { blockTextElements: { script: false, style: false, noscript: false, pre: true } });
@@ -482,3 +482,10 @@ export function combineResults(results: any[], query: string) {
   combined.sort((a, b) => b._score - a._score);
   return combined;
 }
+
+/** Parse WITHOUT stripping scripts (JSON-LD, inline player config). Used by resolve + metadata. */
+export function prepareFull(html: string): HTMLElement {
+  const h = html.length > MAX_HTML ? html.slice(0, MAX_HTML) : html;
+  return parse(h.replace(/<!--[\s\S]*?-->/g, ""), { blockTextElements: { script: true, style: false, noscript: false, pre: true } });
+}
+export { UA };
