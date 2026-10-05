@@ -38,7 +38,7 @@ Thumbs.db
 
 # Debug
 debug/
-*.html
+# *.html
 
 # Local backend artifacts
 tunnel.log
