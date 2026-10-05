@@ -32,8 +32,10 @@ jobs:
       - name: Get CACHE namespace ID
         id: get_cache
         run: |
-          NS_ID=$(wrangler kv namespace list --json | jq -r '.[] | select(.title=="CACHE") | .id')
-          if [ -z "$NS_ID" ] || [ "$NS_ID" = "null" ]; then
+          OUTPUT=$(wrangler kv namespace list 2>&1)
+          echo "$OUTPUT"
+          NS_ID=$(echo "$OUTPUT" | grep -A1 'CACHE' | grep -oE '[a-f0-9]{32}' | head -1)
+          if [ -z "$NS_ID" ]; then
             echo "Creating CACHE namespace..."
             OUTPUT=$(wrangler kv namespace create "CACHE" 2>&1)
             echo "$OUTPUT"
@@ -48,8 +50,10 @@ jobs:
       - name: Get SCRAPE_DATA namespace ID
         id: get_scrape
         run: |
-          NS_ID=$(wrangler kv namespace list --json | jq -r '.[] | select(.title=="SCRAPE_DATA") | .id')
-          if [ -z "$NS_ID" ] || [ "$NS_ID" = "null" ]; then
+          OUTPUT=$(wrangler kv namespace list 2>&1)
+          echo "$OUTPUT"
+          NS_ID=$(echo "$OUTPUT" | grep -A1 'SCRAPE_DATA' | grep -oE '[a-f0-9]{32}' | head -1)
+          if [ -z "$NS_ID" ]; then
             echo "Creating SCRAPE_DATA namespace..."
             OUTPUT=$(wrangler kv namespace create "SCRAPE_DATA" 2>&1)
             echo "$OUTPUT"
