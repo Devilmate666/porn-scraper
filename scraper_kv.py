@@ -273,7 +273,22 @@ def _score(it: dict, query: str) -> int:
     return s
 
 
-def scrape_search_and_cache(site: str, query: str, max_items: int = 40):
+def scrape_chain_from(url: str, first_num: int = 1, pages: int = 3):
+    """Cache `url` (page `first_num`) and follow next_page for `pages` pages in total. Each page is stored
+    under scrape:{its own url}, which is exactly what the frontend asks for while scrolling."""
+    cur, n, seen = url, first_num, set()
+    for _ in range(max(1, pages)):
+        if not cur or cur in seen:
+            break
+        seen.add(cur)
+        result = scrape_and_cache_url(cur, page_num=n)
+        if not result or result.get("error") or not result.get("items"):
+            break
+        cur, n = result.get("next_page"), n + 1
+        time.sleep(1)
+
+
+def scrape_search_and_cache(site: str, query: str, max_items: int = 40, pages: int | None = None):
     """Pre-scrape one (site, query) pair under the key the Worker looks up (ranked like the local app)."""
     key = search_key(site, query)
     try:
@@ -295,6 +310,11 @@ def scrape_search_and_cache(site: str, query: str, max_items: int = 40):
         payload = {"results": results, "query": query, "combined": combined, "count": len(combined)}
         if kv_put_scrape(key, payload, ttl=86400):
             print(f"  Cached search: {query!r} on {site} ({len(combined)} items)")
+        # infinite scroll on a search = the following result pages, fetched through /api/scrape
+        pages = pages if pages is not None else int(os.environ.get("SEARCH_PAGES", "3"))
+        first = (results[0] if results else {}) or {}
+        if pages > 1 and combined and first.get("next_page"):
+            scrape_chain_from(first["next_page"], int(first.get("page_num") or 1) + 1, pages - 1)
         return payload
     except Exception as e:
         kv_put_scrape(key, {"results": [], "query": query, "combined": [], "count": 0, "error": str(e)}, ttl=3600)
@@ -381,6 +401,38 @@ def scrape_channels_and_cache(category: str | None = None, page: int = 1, force:
         error_data = {"items": [], "count": 0, "error": str(e)}
         kv_put_scrape(key, error_data, ttl=600)
         return error_data
+
+
+def scrape_channels_bundle(category: str | None = None, max_pages: int | None = None, force: bool = False):
+    """Every channel page in ONE KV key (channels-bundle:{category|all}) = 1 write however deep the scroll goes.
+    The Worker slices the page the frontend asks for; pages past the end come back as 'end of list'."""
+    cat = category or "all"
+    max_pages = max_pages or int(os.environ.get("CHANNEL_PAGES", "20"))
+    key = f"channels-bundle:{cat}"
+    if not fetch_channels:
+        return {"pages": {}, "error": "channels module unavailable"}
+    pages, err = {}, None
+    for n in range(1, max_pages + 1):
+        try:
+            data = fetch_channels(category, n, force=bool(force and n == 1))
+        except Exception as e:
+            err = str(e)
+            break
+        if not data or data.get("error") or not data.get("items"):
+            err = (data or {}).get("error") if n == 1 else None
+            break
+        pages[str(n)] = data
+        if not data.get("next_page"):
+            break
+        time.sleep(0.5)
+    if pages:
+        bundle = {"pages": pages}
+        kv_put_scrape(key, bundle, ttl=1800)
+        print(f"  Cached channels[{cat}]: {len(pages)} page(s), {sum(len(p.get('items', [])) for p in pages.values())} items")
+        return bundle
+    bundle = {"pages": {}, "error": err or "no channels"}
+    kv_put_scrape(key, bundle, ttl=600)          # keeps previous good data if there is any
+    return bundle
 
 
 def scrape_categories_and_cache(url: str, mode: str = "categories", page_num: int | None = None):
@@ -523,14 +575,64 @@ def job_search_queries():
             time.sleep(1)
 
 
-def job_livecams_channels():
-    """Live cams + live TV channels (a few pages, so the frontend can keep scrolling)."""
+def job_livecams_channels(with_categories: bool = False):
+    """Live cams + live TV channels: ALL channel pages in one bundle key, so scrolling never hits a gap.
+    3 KV writes per run (livecams, thumb origins, channels bundle). Category chips are refreshed on full runs."""
     scrape_livecams_and_cache()
-    for page in range(1, int(os.environ.get("CHANNEL_PAGES", "3")) + 1):
-        data = scrape_channels_and_cache(None, page)
-        if not (data or {}).get("items"):
-            break
-        time.sleep(1)
+    bundle = scrape_channels_bundle(None)
+    if with_categories:
+        first = (bundle.get("pages") or {}).get("1") or {}
+        slugs = [c.get("slug") for c in (first.get("categories") or []) if c.get("slug")]
+        for slug in slugs[: int(os.environ.get("CHANNEL_CATEGORIES", "6"))]:
+            scrape_channels_bundle(slug)
+            time.sleep(1)
+
+
+def _wanted_id(it: dict) -> str:
+    return json.dumps(it, sort_keys=False)
+
+
+def _run_wanted(it: dict):
+    t = it.get("t")
+    try:
+        if t == "search" and it.get("site") and it.get("query"):
+            scrape_search_and_cache(it["site"], it["query"], pages=int(os.environ.get("WANTED_SEARCH_PAGES", "5")))
+        elif t == "scrape" and it.get("url"):
+            scrape_chain_from(it["url"], int(it.get("page_num") or 1), int(os.environ.get("WANTED_FEED_PAGES", "3")))
+        elif t == "resolve" and it.get("url"):
+            scrape_resolve_and_cache(it["url"], full=bool(it.get("full")))
+        elif t == "channels":
+            scrape_channels_bundle(it.get("category"))
+        elif t == "categories" and it.get("url"):
+            scrape_categories_and_cache(it["url"], it.get("mode") or "categories", it.get("page_num"))
+    except Exception as e:
+        print(f"  wanted {t} failed: {e}")
+
+
+def job_wanted():
+    """Fetch what visitors asked for that the cache did not have (the Worker queues it in CACHE: wanted:queue)."""
+    if not kv_cache:
+        return
+    try:
+        q = kv_cache.get("wanted:queue")
+    except Exception as e:
+        print(f"wanted queue unreadable: {e}")
+        return
+    items = (q or {}).get("items") or []
+    if not items:
+        print("Wanted queue: empty")
+        return
+    batch = items[: int(os.environ.get("MAX_WANTED", "30"))]
+    print(f"Wanted queue: {len(items)} queued, processing {len(batch)}")
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        list(ex.map(_run_wanted, batch))
+    done = {_wanted_id(i) for i in batch}
+    try:
+        cur = kv_cache.get("wanted:queue") or {}          # re-read: the Worker may have queued more meanwhile
+        cur["items"] = [i for i in (cur.get("items") or []) if _wanted_id(i) not in done]
+        kv_cache.put("wanted:queue", cur, 3 * 86400, skip_same=False)
+    except Exception as e:
+        print(f"could not update wanted queue: {e}")
 
 
 META_SHARDS = "0123456789abcdef"
@@ -602,17 +704,21 @@ def main():
 
     if only == "live":
         job_livecams_channels()
+        job_wanted()
+    elif only == "wanted":
+        job_wanted()
     else:
         # Static data
         job_catalog_urls()
         job_test_sites()
 
-        # Dynamic scraping
+        # Dynamic scraping (what visitors asked for goes first)
+        job_wanted()
         job_popular_feeds()
         job_category_pages()
         job_category_feeds()
         job_search_queries()
-        job_livecams_channels()
+        job_livecams_channels(with_categories=True)
         job_metadata()
 
     elapsed = time.time() - start

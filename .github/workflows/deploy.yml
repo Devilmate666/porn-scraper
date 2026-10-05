@@ -4,10 +4,15 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      only:
+        description: 'Scraper mode: empty = full, "live" = cams/TV + wanted queue, "wanted" = wanted queue only'
+        required: false
+        default: ''
   schedule:
     # KV free tier = 1,000 writes/day. Every 6h is ~4 runs/day. Use '0 * * * *' only on a paid plan.
-    - cron: '0 */6 * * *'   # full scrape (feeds, listings, search, metadata)
-    - cron: '30 * * * *'    # live cams / TV channels only (3 KV writes)
+    - cron: '0 */6 * * *'   # full scrape (feeds, listings, search + result pages, channels, metadata)
+    - cron: '30 * * * *'    # live cams / ALL TV channel pages (3 KV writes) + whatever visitors asked for that was not cached
 
 permissions:
   contents: read
@@ -89,10 +94,12 @@ jobs:
       - name: Deploy Worker
         id: deploy
         env:
-          BACKEND_URL: ${{ secrets.BACKEND_URL }}   # optional: live Flask backend
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}   # optional: live Flask backend (Cloudflare Tunnel URL, see LIVE_MODE.md)
+          MODE: ${{ vars.WORKER_MODE }}             # optional repo variable: "live" (default) or "kv"
         run: |
           EXTRA=""
           if [ -n "${BACKEND_URL:-}" ]; then EXTRA="--var BACKEND_URL:${BACKEND_URL}"; fi
+          if [ -n "${MODE:-}" ]; then EXTRA="$EXTRA --var MODE:${MODE}"; fi
           wrangler deploy $EXTRA 2>&1 | tee deploy.log
           URL=$(grep -oE 'https://[A-Za-z0-9._-]+\.workers\.dev' deploy.log | head -1 || true)
           if [ -z "$URL" ]; then
@@ -128,8 +135,10 @@ jobs:
           CACHE_KV_NAMESPACE_ID: ${{ needs.setup-kv.outputs.cache_ns_id }}
           SCRAPE_DATA_KV_NAMESPACE_ID: ${{ needs.setup-kv.outputs.scrape_ns_id }}
         run: |
-          if [ "${{ github.event.schedule }}" = "30 * * * *" ]; then
-            python scraper_kv.py --only live
+          ONLY="${{ github.event.inputs.only }}"
+          if [ "${{ github.event.schedule }}" = "30 * * * *" ]; then ONLY="live"; fi
+          if [ -n "$ONLY" ]; then
+            python scraper_kv.py --only "$ONLY"
           else
             python scraper_kv.py
           fi

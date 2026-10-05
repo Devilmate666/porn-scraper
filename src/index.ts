@@ -1,18 +1,40 @@
 import { Env } from "./types";
 
 // ---------------------------------------------------------------------------
-// Read-only API over KV. The scraper (GitHub Actions) writes into SCRAPE_DATA;
-// key formats below MUST match scraper_kv.py.
-//   scrape:{url}                       search:{site}:{query-lowercased}
-//   categories:{url}:{mode}:{page}     livecams:{url|default}
-//   channels:{category|all}:{page}     resolve:{url} / resolve-full:{url}
+// API Worker. Two data sources, used like the always-running Flask server would:
+//
+//   1. LIVE  - your Flask app (BACKEND_URL, e.g. through a Cloudflare Tunnel). Asked FIRST, with a timeout.
+//              Good answers are kept in the colo's Cache API (free, no KV writes) like Flask's own caches.
+//   2. KV    - SCRAPE_DATA, filled by the GitHub Actions scraper. Used when the backend is off/slow/failing,
+//              and as the only source when BACKEND_URL is not set.
+//
+// Whatever KV could not answer is remembered in `wanted:queue` (capped, deduped, max N writes/day) so the
+// next scraper run fetches exactly what people scrolled/searched for. Pages past the end of the cache are
+// reported as "end of list" instead of an error, so infinite scroll finishes cleanly.
+//
+// KV key formats MUST match scraper_kv.py:
+//   scrape:{url}                      search:{site}:{query-lowercased}
+//   categories:{url}:{mode}:{page}    livecams:{url|default}
+//   channels-bundle:{category|all} -> { pages: { "1": {...}, "2": {...} } }    (legacy: channels:{category|all}:{page})
+//   resolve:{url} / resolve-full:{url}
 //   meta-shard:{sha1(url)[0]} -> { items: { url: metadata } }     cam-thumb-origins -> { origins: { img: referer } }
-// KV reads use cacheTtl (edge cache) instead of writing to KV, which keeps us
-// well under the free-tier write limit.
 // ---------------------------------------------------------------------------
 
 const EDGE_TTL = 300;
 const NOT_CACHED = "Not in cache - run scraper";
+const WANTED_KEY = "wanted:queue";
+const WANTED_MAX = 200;
+const WANTED_PER_DAY = 120;
+
+// seconds a live answer stays in the Cache API (Flask uses 300-600s for the same things)
+const LIVE_TTL: Record<string, number> = {
+  "/api/scrape": 600, "/api/search": 300, "/api/resolve": 300, "/api/resolve-full": 300,
+  "/api/metadata": 3600, "/api/livecams": 60, "/api/channels": 120, "/api/scrape-categories": 900,
+};
+const LIVE_TIMEOUT: Record<string, number> = {
+  "/api/scrape": 28000, "/api/search": 28000, "/api/resolve": 20000, "/api/resolve-full": 25000,
+  "/api/metadata": 15000, "/api/livecams": 20000, "/api/channels": 20000, "/api/scrape-categories": 25000,
+};
 
 function corsHeaders(origin: string | null): Record<string, string> {
   return {
@@ -54,6 +76,18 @@ function isBlockedHost(host: string): boolean {
   );
 }
 
+/** A live payload is only worth serving/caching if it actually carries data. */
+function isGoodPayload(d: any): boolean {
+  if (!d || typeof d !== "object") return false;
+  const has = !!(d.items?.length || d.combined?.length || d.categories?.length || d.sections?.length || d.video || d.groups?.length);
+  if (d.error && !has) return false;
+  if (Array.isArray(d.results) && d.results.length) {
+    const anyData = d.results.some((r: any) => r && ((r.items || []).length || (r.categories || []).length));
+    if (!anyData && !has) return false;
+  }
+  return true;
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
@@ -68,27 +102,76 @@ export default {
       try { return JSON.parse(bodyText || "{}") as T; } catch { return {} as T; }
     };
 
-    // Optional live backend (Flask): used only when KV has no cached answer.
+    // ---------------------------------------------------------------- live backend
     const backend = (env.BACKEND_URL || "").replace(/\/$/, "");
+    const liveFirst = !!backend && (env.MODE || "live").toLowerCase() !== "kv";
+    const ttl = LIVE_TTL[url.pathname] ?? 120;
+    const forced = (() => { try { const j = JSON.parse(bodyText || "{}"); return !!(j.force || j.fresh); } catch { return false; } })();
+
+    const withCors = (r: Response): Response => {
+      const o = new Response(r.body, r);
+      for (const [k, v] of Object.entries(headers)) o.headers.set(k, v);
+      o.headers.delete("Cache-Control");
+      return o;
+    };
+
+    /** Ask Flask (edge-cached). Returns null when it is off, slow, errors, or returns a failed scrape. */
     const viaBackend = async (): Promise<Response | null> => {
       if (!backend) return null;
+      const cache = (caches as any).default as Cache;
+      const key = new Request(`https://edge-cache.invalid${url.pathname}/${await sha1Hex(bodyText + "|" + url.search)}`);
+      if (!forced) {
+        const hit = await cache.match(key);
+        if (hit) { const o = withCors(hit); o.headers.set("X-Source", "edge"); return o; }
+      }
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), LIVE_TIMEOUT[url.pathname] ?? 20000);
       try {
         const r = await fetch(backend + url.pathname + url.search, {
           method: request.method,
           headers: { "Content-Type": "application/json" },
           body: isPost ? bodyText : undefined,
+          signal: ac.signal,
         });
         if (!r.ok) return null;
-        const out = new Response(r.body, r);
-        for (const [k, v] of Object.entries(headers)) out.headers.set(k, v);
+        const text = await r.text();
+        let parsed: any = null;
+        try { parsed = JSON.parse(text); } catch { return null; }
+        if (!isGoodPayload(parsed)) return null;                       // let KV answer instead of a failed scrape
+        const stored = new Response(text, { headers: { "Content-Type": "application/json", "Cache-Control": `public, max-age=${ttl}` } });
+        ctx.waitUntil(cache.put(key, stored));
+        const out = withCors(new Response(text, { headers: { "Content-Type": "application/json" } }));
+        out.headers.set("X-Source", "live");
         return out;
-      } catch { return null; }
+      } catch { return null; } finally { clearTimeout(timer); }
+    };
+    /** live-first mode: call at the top of a route. */
+    const tryLive = async (): Promise<Response | null> => (liveFirst ? viaBackend() : null);
+    /** kv-first mode: call after a KV miss. (In live-first mode the backend was already asked.) */
+    const missLive = async (): Promise<Response | null> => (liveFirst ? null : viaBackend());
+
+    /** Remember what KV could not answer so the next scraper run fetches it. */
+    const want = (item: { t: string; [k: string]: any }) => {
+      ctx.waitUntil((async () => {
+        try {
+          const q = (await env.CACHE.get(WANTED_KEY, { type: "json" })) as { day?: string; n?: number; items?: any[] } | null;
+          const today = new Date().toISOString().slice(0, 10);
+          const cur = { day: today, n: q && q.day === today ? q.n || 0 : 0, items: q?.items || [] };
+          const id = JSON.stringify(item);
+          if (cur.items.some((x) => JSON.stringify(x) === id)) return;
+          if (cur.n >= WANTED_PER_DAY) return;
+          cur.items.push(item);
+          if (cur.items.length > WANTED_MAX) cur.items.splice(0, cur.items.length - WANTED_MAX);
+          cur.n += 1;
+          await env.CACHE.put(WANTED_KEY, JSON.stringify(cur), { expirationTtl: 3 * 86400 });
+        } catch { /* best effort */ }
+      })());
     };
 
     try {
       switch (url.pathname) {
         case "/healthz":
-          if (isGet) return json({ ok: true }, 200, headers);
+          if (isGet) return json({ ok: true, live: !!backend, mode: liveFirst ? "live-first" : "kv-first" }, 200, headers);
           break;
 
         case "/api/catalog-urls":
@@ -104,17 +187,30 @@ export default {
           const b = await body<{ urls?: any[]; url?: string }>();
           const raw = b.urls || (b.url ? [b.url] : []);
           // the frontend sends plain strings or {url, page_num}
-          const urls: string[] = raw.map((u: any) => (typeof u === "string" ? u : u?.url)).filter(Boolean);
-          if (!urls.length) return err("No urls provided", 400, headers);
+          const reqs = raw
+            .map((u: any) => (typeof u === "string" ? { url: u, page_num: null } : { url: u?.url, page_num: u?.page_num ?? null }))
+            .filter((u: any) => u.url)
+            .slice(0, 12);
+          if (!reqs.length) return err("No urls provided", 400, headers);
 
-          const hits = await Promise.all(urls.slice(0, 12).map((u) => kvGet(env.SCRAPE_DATA, `scrape:${u}`)));
+          const live = await tryLive();
+          if (live) return live;
+
+          const hits = await Promise.all(reqs.map((r) => kvGet(env.SCRAPE_DATA, `scrape:${r.url}`)));
           if (hits.some((h) => !h || (h as any).error)) {
-            const live = await viaBackend();
-            if (live) return live;
+            const l = await missLive();
+            if (l) return l;
           }
-          const results = hits.map(
-            (h, i) => h || { page: urls[i], items: [], count: 0, error: NOT_CACHED, next_page: null, page_num: 1 }
-          );
+          const results = hits.map((h: any, i) => {
+            if (h && !h.error) return h;
+            if (!h) want({ t: "scrape", url: reqs[i].url, page_num: reqs[i].page_num });
+            // Past the cached pages: say "no more" (frontend stops scrolling) instead of showing an error.
+            const first = (reqs[i].page_num ?? 1) <= 1;
+            return h || {
+              page: reqs[i].url, items: [], count: 0, next_page: null, page_num: reqs[i].page_num ?? 1,
+              not_cached: true, ...(first ? { error: NOT_CACHED } : {}),
+            };
+          });
           return json({ results }, 200, headers);
         }
 
@@ -125,12 +221,15 @@ export default {
           const query = (b.query || "").trim().toLowerCase();
           if (!sites.length || !query) return err("sites and query are required", 400, headers);
 
-          const parts = (
-            await Promise.all(sites.map((s) => kvGet<any>(env.SCRAPE_DATA, `search:${s}:${query}`)))
-          ).filter(Boolean) as any[];
+          const live = await tryLive();
+          if (live) return live;
+
+          const all = await Promise.all(sites.map((s) => kvGet<any>(env.SCRAPE_DATA, `search:${s}:${query}`)));
+          sites.forEach((s, i) => { if (!all[i] || all[i].error) want({ t: "search", site: s, query }); });
+          const parts = all.filter((p) => p && !p.error) as any[];
           if (!parts.length) {
-            const live = await viaBackend();
-            if (live) return live;
+            const l = await missLive();
+            if (l) return l;
             return json({ results: [], query, combined: [], count: 0, error: NOT_CACHED }, 200, headers);
           }
           const combined = parts.flatMap((p) => p.combined || []).sort((a, b) => (b._score || 0) - (a._score || 0));
@@ -146,9 +245,12 @@ export default {
           if (!isPost) break;
           const b = await body<{ url?: string }>();
           if (!b.url) return err("url is required", 400, headers);
+          const live = await tryLive();
+          if (live) return live;
           const prefix = url.pathname === "/api/resolve" ? "resolve" : "resolve-full";
           const data = await kvGet(env.SCRAPE_DATA, `${prefix}:${b.url}`);
-          if (!data) { const live = await viaBackend(); if (live) return live; }
+          if (!data || (data as any).error) { const l = await missLive(); if (l) return l; }
+          if (!data) want({ t: "resolve", url: b.url, full: prefix === "resolve-full" });
           return json(data || { video: null, error: NOT_CACHED }, 200, headers);
         }
 
@@ -157,6 +259,7 @@ export default {
           const b = await body<{ url?: string }>();
           const u = (b.url || "").trim();
           if (!u) return err("valid url is required", 400, headers);
+          // metadata is cheap and stable: shard cache first, live only on a miss
           const shard = (await sha1Hex(u))[0];
           const bundle = await kvGet<{ items?: Record<string, any> }>(env.SCRAPE_DATA, `meta-shard:${shard}`);
           const hit = bundle?.items?.[u] ?? (await kvGet<any>(env.SCRAPE_DATA, `meta:${u}`));
@@ -172,17 +275,37 @@ export default {
         case "/api/livecams": {
           if (!isPost) break;
           const b = await body<{ url?: string }>();
+          const live = await tryLive();
+          if (live) return live;
           const data = await kvGet(env.SCRAPE_DATA, `livecams:${b.url || "default"}`);
-          if (!data) { const live = await viaBackend(); if (live) return live; }
+          if (!data || (data as any).error) { const l = await missLive(); if (l) return l; }
           return json(data || { items: [], count: 0, error: NOT_CACHED }, 200, headers);
         }
 
         case "/api/channels": {
           if (!isPost) break;
           const b = await body<{ category?: string | null; page?: number }>();
-          const data = await kvGet(env.SCRAPE_DATA, `channels:${b.category || "all"}:${b.page || 1}`);
-          if (!data) { const live = await viaBackend(); if (live) return live; }
-          return json(data || { items: [], count: 0, error: NOT_CACHED }, 200, headers);
+          const cat = b.category || "all";
+          const page = Math.max(1, Number(b.page) || 1);
+          const live = await tryLive();
+          if (live) return live;
+
+          // all pages live in ONE bundle key (1 KV write per scrape, however many pages there are)
+          const bundle = await kvGet<{ pages?: Record<string, any> }>(env.SCRAPE_DATA, `channels-bundle:${cat}`);
+          let data = bundle?.pages?.[String(page)] ?? (await kvGet(env.SCRAPE_DATA, `channels:${cat}:${page}`));
+          if (!data || (data as any).error) {
+            const l = await missLive();
+            if (l) return l;
+          }
+          if (data && !(data as any).error) return json(data, 200, headers);
+
+          if (page > 1) {
+            // scrolled past the last cached page: that's the end of the list, not an error
+            want({ t: "channels", category: cat === "all" ? null : cat, page });
+            return json({ items: [], count: 0, next_page: null, page, end: true }, 200, headers);
+          }
+          want({ t: "channels", category: cat === "all" ? null : cat, page: 1 });
+          return json({ items: [], count: 0, error: NOT_CACHED }, 200, headers);
         }
 
         case "/api/scrape-categories": {
@@ -195,8 +318,11 @@ export default {
             const p = new URL(b.url);
             if (p.hostname.endsWith("freesexvideos.xxx") && p.pathname.toLowerCase().startsWith("/models")) mode = "models";
           } catch { /* keep mode */ }
+          const live = await tryLive();
+          if (live) return live;
           const data = await kvGet(env.SCRAPE_DATA, `categories:${b.url}:${mode}:${b.page_num || 1}`);
-          if (!data) { const live = await viaBackend(); if (live) return live; }
+          if (!data || (data as any).error) { const l = await missLive(); if (l) return l; }
+          if (!data) want({ t: "categories", url: b.url, mode, page_num: b.page_num || 1 });
           return json(data || { categories: [], count: 0, error: NOT_CACHED }, 200, headers);
         }
 

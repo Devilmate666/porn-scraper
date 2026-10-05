@@ -3,6 +3,9 @@ export interface Env {
   SCRAPE_DATA: KVNamespace;
   CLOUDFLARE_API_TOKEN?: string;
   CLOUDFLARE_ACCOUNT_ID?: string;
-  /** Optional live backend (your Flask app). Used when KV has no cached answer. */
+  /** Live backend (your Flask app, e.g. behind a Cloudflare Tunnel). When set, the Worker asks it FIRST
+   *  and only falls back to KV when it is offline / slow / errors. */
   BACKEND_URL?: string;
+  /** "live" (default when BACKEND_URL is set) = backend first, KV fallback.  "kv" = KV first, backend on miss. */
+  MODE?: string;
 }
