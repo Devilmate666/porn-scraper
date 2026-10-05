@@ -29,38 +29,32 @@ jobs:
       - name: Install wrangler
         run: npm install -g wrangler
 
-      - name: Get CACHE namespace ID
-        id: get_cache
+      - name: Get KV namespace IDs
+        id: get_namespaces
         run: |
-          OUTPUT=$(wrangler kv namespace list 2>&1)
+          OUTPUT=$(wrangler kv namespace list --json 2>&1)
           echo "$OUTPUT"
-          NS_ID=$(echo "$OUTPUT" | grep -A1 'CACHE' | grep -oE '[a-f0-9]{32}' | head -1)
-          if [ -z "$NS_ID" ]; then
+          CACHE_ID=$(echo "$OUTPUT" | jq -r '.[] | select(.title=="CACHE") | .id')
+          SCRAPE_ID=$(echo "$OUTPUT" | jq -r '.[] | select(.title=="SCRAPE_DATA") | .id')
+          
+          if [ -z "$CACHE_ID" ] || [ "$CACHE_ID" = "null" ]; then
             echo "Creating CACHE namespace..."
             OUTPUT=$(wrangler kv namespace create "CACHE" 2>&1)
             echo "$OUTPUT"
-            NS_ID=$(echo "$OUTPUT" | grep -oE '[a-f0-9]{32}' | head -1)
+            CACHE_ID=$(echo "$OUTPUT" | grep -oE '[a-f0-9]{32}' | head -1)
           fi
-          echo "Using CACHE namespace: $NS_ID"
-          echo "namespace_id=$NS_ID" >> $GITHUB_OUTPUT
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
-      - name: Get SCRAPE_DATA namespace ID
-        id: get_scrape
-        run: |
-          OUTPUT=$(wrangler kv namespace list 2>&1)
-          echo "$OUTPUT"
-          NS_ID=$(echo "$OUTPUT" | grep -A1 'SCRAPE_DATA' | grep -oE '[a-f0-9]{32}' | head -1)
-          if [ -z "$NS_ID" ]; then
+          
+          if [ -z "$SCRAPE_ID" ] || [ "$SCRAPE_ID" = "null" ]; then
             echo "Creating SCRAPE_DATA namespace..."
             OUTPUT=$(wrangler kv namespace create "SCRAPE_DATA" 2>&1)
             echo "$OUTPUT"
-            NS_ID=$(echo "$OUTPUT" | grep -oE '[a-f0-9]{32}' | head -1)
+            SCRAPE_ID=$(echo "$OUTPUT" | grep -oE '[a-f0-9]{32}' | head -1)
           fi
-          echo "Using SCRAPE_DATA namespace: $NS_ID"
-          echo "namespace_id=$NS_ID" >> $GITHUB_OUTPUT
+          
+          echo "Using CACHE: $CACHE_ID"
+          echo "Using SCRAPE_DATA: $SCRAPE_ID"
+          echo "cache_ns_id=$CACHE_ID" >> $GITHUB_OUTPUT
+          echo "scrape_ns_id=$SCRAPE_ID" >> $GITHUB_OUTPUT
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
