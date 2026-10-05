@@ -21,6 +21,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install wrangler
+        run: npm install -g wrangler
+
       - name: Debug secrets
         run: |
           echo "Token length: ${#CLOUDFLARE_API_TOKEN}"
@@ -31,27 +39,28 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Test wrangler auth
-        run: |
-          npx wrangler@latest whoami
+        run: wrangler whoami
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Create CACHE namespace
         id: create_cache
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: kv:namespace create "CACHE" --preview false
+        run: |
+          NS_ID=$(wrangler kv:namespace create "CACHE" --preview false --json | jq -r '.id')
+          echo "namespace_id=$NS_ID" >> $GITHUB_OUTPUT
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Create SCRAPE_DATA namespace
         id: create_scrape
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: kv:namespace create "SCRAPE_DATA" --preview false
+        run: |
+          NS_ID=$(wrangler kv:namespace create "SCRAPE_DATA" --preview false --json | jq -r '.id')
+          echo "namespace_id=$NS_ID" >> $GITHUB_OUTPUT
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
   deploy-worker:
     name: Deploy Worker
@@ -60,6 +69,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install wrangler
+        run: npm install -g wrangler
+
       - name: Update wrangler.toml with KV IDs
         run: |
           sed -i "s/your-kv-namespace-id/${{ needs.setup-kv.outputs.cache_ns_id }}/" wrangler.toml
@@ -67,22 +84,14 @@ jobs:
           sed -i "s/your-scrape-data-kv-id/${{ needs.setup-kv.outputs.scrape_ns_id }}/" wrangler.toml
           sed -i "s/your-preview-scrape-data-kv-id/${{ needs.setup-kv.outputs.scrape_ns_id }}/" wrangler.toml
 
-      - name: Install Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
       - name: Install dependencies
         run: npm install
 
       - name: Deploy Worker
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy
-          workingDirectory: ./
+        run: wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
   run-scraper:
     name: Run Scraper (GitHub Actions)
@@ -119,6 +128,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install wrangler
+        run: npm install -g wrangler
+
       - name: Build static folder (inject API URL)
         env:
           API_URL: https://porn-archive-api.${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.workers.dev
@@ -128,8 +145,7 @@ jobs:
           sed -i "s|__API_BASE__|${API_URL%/}|g" static/index.html
 
       - name: Deploy to Cloudflare Pages
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy static --project-name=porn-archive --branch=main
+        run: wrangler pages deploy static --project-name=porn-archive --branch=main
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
