@@ -24,7 +24,16 @@ from scraper import (
     scrape_superporn_categories, scrape_models, search_many, fetch_html,
     _current_page_number, _guess_next_page, _find_next_page_link,
 )
-from sourcetest import TEST_SITES, search_site, site_from_url
+# Frontend SOURCES (from index.html) - these are what the frontend expects
+FRONTEND_SOURCES = [
+    "https://www.superporn.com/",
+    "https://2023.pornvideobb.com/",
+    "https://www.freesexvideos.xxx/",
+    "https://www.bdsmhole.com/",
+]
+
+# Also include TEST_SITES for search fallback
+from sourcetest import TEST_SITES
 from extras import scrape_plus, deep_resolve, is_smart
 try:
     from livecams import fetch_livecams
@@ -285,8 +294,8 @@ def job_test_sites():
 
 
 def job_popular_feeds():
-    """Scrape popular feed URLs (first page of each test site)."""
-    urls = [site["feed"] for site in TEST_SITES]
+    """Scrape popular feed URLs (first page of each frontend source)."""
+    urls = FRONTEND_SOURCES
     with ThreadPoolExecutor(max_workers=4) as executor:
         futures = [executor.submit(scrape_and_cache_url, url) for url in urls]
         for f in as_completed(futures):
@@ -308,7 +317,7 @@ def job_category_pages():
 
 def job_search_queries():
     """Pre-scrape common search queries across popular sites."""
-    popular_sites = [s["feed"] for s in TEST_SITES[:4]]
+    popular_sites = FRONTEND_SOURCES
     queries = ["milf", "teen", "anal", "amateur", "lesbian", "mature", "big tits", "blowjob"]
 
     for query in queries:
