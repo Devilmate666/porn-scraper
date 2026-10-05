@@ -60,7 +60,8 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Show Worker URL
-        run: echo "Worker URL: https://porn-archive-api.${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.workers.dev"
+        run: |
+          echo "Worker URL: https://porn-archive-api.${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.workers.dev"
 
   run-scraper:
     name: Run Scraper (GitHub Actions)
@@ -120,4 +121,5 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Show Pages URL
-        run: echo "Frontend URL: https://porn-archive.pages.dev"
+        run: |
+          echo "Frontend URL: https://porn-archive.pages.dev"
