@@ -16,48 +16,17 @@ jobs:
     name: Setup KV Namespaces
     runs-on: ubuntu-latest
     outputs:
-      cache_ns_id: ${{ steps.get_cache.outputs.namespace_id }}
-      scrape_ns_id: ${{ steps.get_scrape.outputs.namespace_id }}
+      cache_ns_id: ${{ steps.set_ids.outputs.cache_ns_id }}
+      scrape_ns_id: ${{ steps.set_ids.outputs.scrape_ns_id }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install wrangler
-        run: npm install -g wrangler
-
-      - name: Get KV namespace IDs
-        id: get_namespaces
+      - name: Set existing KV namespace IDs
+        id: set_ids
         run: |
-          OUTPUT=$(wrangler kv namespace list --json 2>&1)
-          echo "$OUTPUT"
-          CACHE_ID=$(echo "$OUTPUT" | jq -r '.[] | select(.title=="CACHE") | .id')
-          SCRAPE_ID=$(echo "$OUTPUT" | jq -r '.[] | select(.title=="SCRAPE_DATA") | .id')
-          
-          if [ -z "$CACHE_ID" ] || [ "$CACHE_ID" = "null" ]; then
-            echo "Creating CACHE namespace..."
-            OUTPUT=$(wrangler kv namespace create "CACHE" 2>&1)
-            echo "$OUTPUT"
-            CACHE_ID=$(echo "$OUTPUT" | grep -oE '[a-f0-9]{32}' | head -1)
-          fi
-          
-          if [ -z "$SCRAPE_ID" ] || [ "$SCRAPE_ID" = "null" ]; then
-            echo "Creating SCRAPE_DATA namespace..."
-            OUTPUT=$(wrangler kv namespace create "SCRAPE_DATA" 2>&1)
-            echo "$OUTPUT"
-            SCRAPE_ID=$(echo "$OUTPUT" | grep -oE '[a-f0-9]{32}' | head -1)
-          fi
-          
-          echo "Using CACHE: $CACHE_ID"
-          echo "Using SCRAPE_DATA: $SCRAPE_ID"
-          echo "cache_ns_id=$CACHE_ID" >> $GITHUB_OUTPUT
-          echo "scrape_ns_id=$SCRAPE_ID" >> $GITHUB_OUTPUT
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # These were created successfully in previous runs
+          echo "cache_ns_id=c6d6a82f780e4daab92e911876b916db" >> $GITHUB_OUTPUT
+          echo "scrape_ns_id=2f0e361279244a2f8935b5028d44e273" >> $GITHUB_OUTPUT
 
   deploy-worker:
     name: Deploy Worker
