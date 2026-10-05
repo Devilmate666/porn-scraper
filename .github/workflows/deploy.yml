@@ -6,7 +6,8 @@ on:
   workflow_dispatch:
   schedule:
     # KV free tier = 1,000 writes/day. Every 6h is ~4 runs/day. Use '0 * * * *' only on a paid plan.
-    - cron: '0 */6 * * *'
+    - cron: '0 */6 * * *'   # full scrape (feeds, listings, search, metadata)
+    - cron: '30 * * * *'    # live cams / TV channels only (3 KV writes)
 
 permissions:
   contents: read
@@ -87,8 +88,12 @@ jobs:
 
       - name: Deploy Worker
         id: deploy
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}   # optional: live Flask backend
         run: |
-          wrangler deploy 2>&1 | tee deploy.log
+          EXTRA=""
+          if [ -n "${BACKEND_URL:-}" ]; then EXTRA="--var BACKEND_URL:${BACKEND_URL}"; fi
+          wrangler deploy $EXTRA 2>&1 | tee deploy.log
           URL=$(grep -oE 'https://[A-Za-z0-9._-]+\.workers\.dev' deploy.log | head -1 || true)
           if [ -z "$URL" ]; then
             SUB=$(curl -sS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
@@ -104,7 +109,7 @@ jobs:
     name: Run Scraper
     runs-on: ubuntu-latest
     needs: setup-kv
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
@@ -116,13 +121,18 @@ jobs:
       - name: Install dependencies
         run: |
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          pip install requests httpx
+          pip install requests httpx beautifulsoup4 lxml
 
       - name: Run scraper
         env:
           CACHE_KV_NAMESPACE_ID: ${{ needs.setup-kv.outputs.cache_ns_id }}
           SCRAPE_DATA_KV_NAMESPACE_ID: ${{ needs.setup-kv.outputs.scrape_ns_id }}
-        run: python scraper_kv.py
+        run: |
+          if [ "${{ github.event.schedule }}" = "30 * * * *" ]; then
+            python scraper_kv.py --only live
+          else
+            python scraper_kv.py
+          fi
 
   frontend:
     name: Frontend -> Cloudflare Pages

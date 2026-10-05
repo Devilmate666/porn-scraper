@@ -5,11 +5,13 @@ This replaces the in-memory caching and threading from the original Flask app.
 """
 
 import os
+import re
 import sys
 import json
 import time
 import asyncio
 import hashlib
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse, quote, quote_plus
 
@@ -63,8 +65,15 @@ class KVClient:
         self.session = requests.Session()
         self.session.headers.update(self.headers)
 
-    def put(self, key: str, value: dict, expiration_ttl: int = 3600) -> bool:
-        """Write to KV with TTL in seconds. Key MUST be URL-encoded (it contains '/' and ':')."""
+    def put(self, key: str, value: dict, expiration_ttl: int = 3600, skip_same: bool = True) -> bool:
+        """Write to KV with TTL in seconds. Key MUST be URL-encoded (it contains '/' and ':').
+        Identical existing values are left alone (reads are free, writes are limited)."""
+        if skip_same:
+            try:
+                if self.get(key) == value:
+                    return True
+            except Exception:
+                pass
         url = f"{self.base_url}/values/{quote(key, safe='')}"
         params = {"expiration_ttl": max(expiration_ttl, 60)} if expiration_ttl else {}
         resp = self.session.put(url, data=json.dumps(value), params=params)
@@ -83,11 +92,14 @@ class KVClient:
         return success
 
     def get(self, key: str) -> dict | None:
+        """None = key does not exist. Raises on any other failure (so callers never mistake an outage for 'empty')."""
         url = f"{self.base_url}/values/{quote(key, safe='')}"
         resp = self.session.get(url)
         if resp.status_code == 200:
             return resp.json()
-        return None
+        if resp.status_code == 404:
+            return None
+        raise RuntimeError(f"KV GET {resp.status_code} for {key[:80]}")
 
 
 # Global KV client (initialized in main)
@@ -121,7 +133,21 @@ def kv_put_cache(key: str, value: dict, ttl: int = 3600):
 
 
 def kv_put_scrape(key: str, value: dict, ttl: int = 86400) -> bool:
-    ok = bool(kv_scrape and kv_scrape.put(key, value, ttl))
+    if not kv_scrape:
+        KV_STATS["failed"] += 1
+        return False
+    if isinstance(value, dict) and value.get("error"):
+        # a site hiccup must not wipe previously good data
+        try:
+            old = kv_scrape.get(key)
+            if old and not old.get("error"):
+                print(f"  keeping previous good data for {key[:80]} ({value.get('error')})")
+                return True
+        except Exception:
+            pass
+    else:
+        ttl = max(ttl, 7 * 86400) if ttl >= 86400 else ttl   # skipped-identical writes don't refresh TTL
+    ok = kv_scrape.put(key, value, ttl)
     KV_STATS["ok" if ok else "failed"] += 1
     return ok
 
@@ -131,26 +157,81 @@ def search_key(site: str, query: str) -> str:
     return f"search:{site}:{query.strip().lower()}"
 
 
+try:
+    from translate_titles import translate_result as _translate_result
+except Exception:
+    _translate_result = None
+
+
 def translate_result(r: dict) -> dict:
-    """Placeholder for translation - can be extended."""
-    return r
+    """Same title translation the local Flask app applies to scraped pages."""
+    if not _translate_result or not isinstance(r, dict):
+        return r
+    try:
+        return _translate_result(r)
+    except Exception:
+        return r
+
+
+# Sites handled by the extra (sourcetest/extras) scrapers instead of the generic one - same rules as app.py
+_REMOVED = ("pornoklad", "tlenporno", "xfuntaxy", "epornhome")
+_norm = lambda x: re.sub(r"[^a-z0-9]", "", (x or "").lower())
+TEST_SITES[:] = [x for x in TEST_SITES
+                 if not any(k in _norm(x.get("name")) + _norm(x.get("id")) + _norm(x.get("feed")) for k in _REMOVED)]
+
+
+def _reg_host(url):
+    h = (urlparse(url if "://" in (url or "") else "https://" + (url or "")).hostname or "").lower()
+    return ".".join(h.split(".")[-2:]) if h else ""
+
+
+_PLUS_HOSTS = {_reg_host(x["feed"]) for x in TEST_SITES} | {"porno-666.me"}
+
+
+def use_plus(url: str) -> bool:
+    try:
+        return _reg_host(url) in _PLUS_HOSTS or bool(is_smart(url))
+    except Exception:
+        return False
+
+
+# every video link seen while scraping (metadata is fetched for these)
+VIDEO_LINKS: list = []
+_VL_SEEN: set = set()
+_VL_LOCK = threading.Lock()
+
+
+def remember_links(result):
+    for it in (result or {}).get("items") or []:
+        link = it.get("link")
+        if not link or it.get("_cam") or it.get("_chan"):
+            continue
+        with _VL_LOCK:
+            if link not in _VL_SEEN:
+                _VL_SEEN.add(link)
+                VIDEO_LINKS.append(link)
 
 
 # Scrape functions that write to KV
 def scrape_and_cache_url(url: str, page_num: int | None = None, fresh: bool = False):
     key = f"scrape:{url}"
-    if not fresh:
-        # Check cache first (in real usage, Worker checks cache)
-        pass
-
     try:
-        if is_smart(url):
-            result = scrape_plus(url, max_items=80, page_num=page_num)
+        if use_plus(url):
+            result = scrape_plus(url, max_items=80) or {}
+            items = result.get("items") or []
+            result.setdefault("page", url)
+            result["items"] = items
+            result["count"] = len(items)
+            result["page_num"] = page_num if page_num is not None else result.get("page_num") or _current_page_number(url)
+            if items and not result.get("next_page"):
+                result["next_page"] = _guess_next_page(url, result["page_num"])
+                result["next_is_guess"] = True
         else:
             result = scrape_page(url, max_items=80, page_num=page_num)
 
         result = translate_result(result)
-        if kv_put_scrape(key, result, ttl=86400):  # 24 hours
+        remember_links(result)
+        if kv_put_scrape(key, result, ttl=86400):
             print(f"  Cached: {url} ({result.get('count', 0)} items)")
         return result
     except Exception as e:
@@ -160,14 +241,47 @@ def scrape_and_cache_url(url: str, page_num: int | None = None, fresh: bool = Fa
         return error_result
 
 
-def scrape_search_and_cache(site: str, query: str, max_items: int = 30):
-    """Pre-scrape one (site, query) pair under the key the Worker looks up."""
+def _plus_search(site: str, query: str) -> dict:
+    try:
+        p = urlparse(site if "://" in site else "https://" + site)
+        origin = f"{p.scheme}://{p.netloc}/"
+        r = search_site(site_from_url(origin, None), query) or {}
+    except Exception as e:
+        r = {"error": str(e), "items": []}
+    items = r.get("items") or []
+    r["site"] = site
+    r["query"] = query
+    r["items"] = items
+    r["count"] = len(items)
+    r.setdefault("page", r.get("search_url") or site)
+    r["source"] = "site-search" if items else "none"
+    if items and not r.get("next_page") and r.get("search_url"):
+        r["next_page"] = _guess_next_page(r["search_url"], _current_page_number(r["search_url"]))
+    return r
+
+
+def _score(it: dict, query: str) -> int:
+    s = 0
+    if it.get("thumbnail"): s += 10
+    if it.get("duration"): s += 4
+    if it.get("views"): s += 2
+    if it.get("rating"): s += 1
+    t = (it.get("title") or "").lower()
+    q = query.lower()
+    if t.startswith(q): s += 8
+    elif q in t: s += 4
+    return s
+
+
+def scrape_search_and_cache(site: str, query: str, max_items: int = 40):
+    """Pre-scrape one (site, query) pair under the key the Worker looks up (ranked like the local app)."""
     key = search_key(site, query)
     try:
-        if is_smart(site):
-            results = [search_site(site_from_url(site), query)]
+        if use_plus(site):
+            results = [_plus_search(site, query)]
         else:
             results = search_many([site], query, max_items=max_items, verify=False)
+        results = [translate_result(r) if isinstance(r, dict) else r for r in results]
         combined, seen = [], set()
         for r in results:
             site_name = r.get("site") or r.get("page") or site
@@ -176,9 +290,9 @@ def scrape_search_and_cache(site: str, query: str, max_items: int = 30):
                 if not k or k in seen:
                     continue
                 seen.add(k)
-                combined.append({**it, "_site": site_name})
-        payload = {"results": [translate_result(r) for r in results], "query": query,
-                   "combined": combined, "count": len(combined)}
+                combined.append({**it, "_site": site_name, "_score": _score(it, query)})
+        combined.sort(key=lambda x: -x["_score"])
+        payload = {"results": results, "query": query, "combined": combined, "count": len(combined)}
         if kv_put_scrape(key, payload, ttl=86400):
             print(f"  Cached search: {query!r} on {site} ({len(combined)} items)")
         return payload
@@ -190,7 +304,7 @@ def scrape_search_and_cache(site: str, query: str, max_items: int = 30):
 def scrape_resolve_and_cache(url: str, full: bool = False):
     key = f"resolve-full:{url}" if full else f"resolve:{url}"
     try:
-        if is_smart(url) or full:
+        if use_plus(url) or full:
             result = deep_resolve(url)
         else:
             result = {"video": None, "error": "Use full resolve for this site"}
@@ -220,6 +334,20 @@ def scrape_metadata_and_cache(url: str):
         return error_data
 
 
+def _cam_thumb_origins() -> dict:
+    """image url -> Referer origin the provider's CDN expects (what local fetch_thumb() uses)."""
+    try:
+        import livecams as lc
+        out = {}
+        for u, prov in list(lc._THUMB_SRC.items()):
+            site = lc._ORIGIN_OF.get(prov) or lc._ROOM_URL.get(prov, lc.HOME_URL).split("{")[0]
+            out[u] = "/".join(site.split("/")[:3]) + "/"
+        return out
+    except Exception as e:
+        print(f"  thumb origins unavailable: {e}")
+        return {}
+
+
 def scrape_livecams_and_cache(url: str | None = None, force: bool = False):
     key = f"livecams:{url or 'default'}"
     if not fetch_livecams:
@@ -228,7 +356,10 @@ def scrape_livecams_and_cache(url: str | None = None, force: bool = False):
     try:
         data = fetch_livecams(url, force=force)
         kv_put_scrape(key, data, ttl=1800)  # 30 min
-        print(f"  Cached livecams: {len(data.get('items', []))} items")
+        origins = _cam_thumb_origins()
+        if origins:
+            kv_put_scrape("cam-thumb-origins", {"origins": origins}, ttl=1800)
+        print(f"  Cached livecams: {len(data.get('items', []))} items, {len(origins)} thumb origins")
         return data
     except Exception as e:
         error_data = {"items": [], "count": 0, "error": str(e)}
@@ -294,13 +425,16 @@ def job_test_sites():
     print(f"Cached {len(sites)} test sites")
 
 
-def scrape_feed_chain(url: str, pages: int = 3):
-    """Scrape page 1 and follow next_page so the frontend's 'load more' hits the cache."""
+def scrape_feed_chain(url: str, pages: int | None = None):
+    """Scrape page 1 and follow next_page so infinite scroll keeps hitting the cache."""
+    pages = pages or int(os.environ.get("FEED_PAGES", "8"))
     result = scrape_and_cache_url(url)
+    seen = {url}
     for n in range(2, pages + 1):
         nxt = (result or {}).get("next_page")
-        if not nxt or (result or {}).get("error"):
+        if not nxt or nxt in seen or (result or {}).get("error") or not (result or {}).get("items"):
             break
+        seen.add(nxt)
         time.sleep(1)
         result = scrape_and_cache_url(nxt, page_num=n)
 
@@ -313,29 +447,71 @@ def job_popular_feeds():
             f.result()
 
 
+# (listing url, mode, pages to follow)
+LISTINGS = [
+    ("https://www.superporn.com/categories", "categories", 2),
+    ("https://www.superporn.com/series",     "sites",      2),   # Porn Series
+    ("https://www.freesexvideos.xxx/models/", "models",    3),   # Pornstars
+    ("https://www.freesexvideos.xxx/sites/",  "sites",     3),   # Networks (General)
+    ("https://www.bdsmhole.com/studios/",     "categories", 2),  # Networks (BDSM)
+    ("https://www.bdsmhole.com/categories/",  "categories", 2),
+    ("https://www.porner.xxx/categories/",    "tags",      1),   # Porn Tags
+]
+# (listing url, env var, default count) -> how many "See All"/model/category feeds to pre-scrape
+FEED_GROUPS = [
+    ("https://www.superporn.com/categories",  "MAX_CATEGORY_FEEDS", 8),
+    ("https://www.bdsmhole.com/categories/",  "MAX_BDSM_CATEGORY_FEEDS", 8),
+    ("https://www.freesexvideos.xxx/sites/",  "MAX_NETWORK_FEEDS", 12),
+    ("https://www.bdsmhole.com/studios/",     "MAX_BDSM_NETWORK_FEEDS", 8),
+    ("https://www.freesexvideos.xxx/models/", "MAX_PORNSTAR_FEEDS", 12),
+    ("https://www.superporn.com/series",      "MAX_SERIES_FEEDS", 6),
+]
+
+
+def _items_of(data: dict) -> list:
+    for k in ("sections", "categories", "models", "items"):
+        if data.get(k):
+            return data[k]
+    return []
+
+
+def cache_listing_chain(url: str, mode: str, pages: int) -> list[str]:
+    """Cache a listing page and its next pages (each under its own URL, like the frontend asks).
+    Returns every item link found, in order."""
+    links, cur, seen = [], url, set()
+    for _ in range(pages):
+        if not cur or cur in seen:
+            break
+        seen.add(cur)
+        data = scrape_categories_and_cache(cur, mode)
+        if not data or data.get("error"):
+            break
+        links += [i.get("link") for i in _items_of(data) if i.get("link")]
+        cur = data.get("next_page")
+        time.sleep(1)
+    return links
+
+
 def job_category_pages():
-    """Scrape category/tag/studio listing pages (and remember them for the feed job)."""
-    category_urls = [
-        ("https://www.superporn.com/categories", "categories"),
-        ("https://www.freesexvideos.xxx/models/", "models"),
-        ("https://www.freesexvideos.xxx/sites/", "sites"),
-        ("https://www.bdsmhole.com/studios/", "categories"),
-        ("https://www.bdsmhole.com/categories/", "categories"),
-    ]
-    for url, mode in category_urls:
-        CATEGORY_INDEX[url] = scrape_categories_and_cache(url, mode)
+    """Scrape category / series / models / studio / tag listings (with a few pages each)."""
+    for url, mode, pages in LISTINGS:
+        CATEGORY_INDEX[url] = cache_listing_chain(url, mode, pages)
+        print(f"Listing {url} [{mode}]: {len(CATEGORY_INDEX[url])} links")
         time.sleep(1)
 
 
 def job_category_feeds():
-    """Pre-scrape the first N category feeds so clicking a category hits the cache."""
-    limit = int(os.environ.get("MAX_CATEGORY_FEEDS", "16"))
-    for index_url in ("https://www.superporn.com/categories", "https://www.bdsmhole.com/categories/"):
-        cats = (CATEGORY_INDEX.get(index_url) or {}).get("categories") or []
-        links = [c.get("link") for c in cats if c.get("link")][:limit]
-        print(f"Category feeds for {index_url}: {len(links)}")
+    """Pre-scrape the video feeds behind the listings, so 'See All', category and pornstar clicks
+    (and their infinite scroll) hit the cache."""
+    cat_pages = int(os.environ.get("CATEGORY_FEED_PAGES", "2"))
+    done = set()
+    for index_url, env_name, default in FEED_GROUPS:
+        limit = int(os.environ.get(env_name, str(default)))
+        links = [l for l in CATEGORY_INDEX.get(index_url, []) if l not in done][:limit]
+        done.update(links)
+        print(f"Feeds for {index_url}: {len(links)}")
         with ThreadPoolExecutor(max_workers=4) as ex:
-            list(ex.map(scrape_and_cache_url, links))
+            list(ex.map(lambda l: scrape_feed_chain(l, cat_pages), links))
 
 
 def job_search_queries():
@@ -348,39 +524,100 @@ def job_search_queries():
 
 
 def job_livecams_channels():
-    """Scrape livecams and channels."""
+    """Live cams + live TV channels (a few pages, so the frontend can keep scrolling)."""
     scrape_livecams_and_cache()
-    scrape_channels_and_cache()
-    time.sleep(2)
+    for page in range(1, int(os.environ.get("CHANNEL_PAGES", "3")) + 1):
+        data = scrape_channels_and_cache(None, page)
+        if not (data or {}).get("items"):
+            break
+        time.sleep(1)
 
 
-def job_resolve_sample():
-    """Resolve a sample of video URLs from recent scrapes."""
-    # This would read from KV and resolve links - simplified for now
-    pass
+META_SHARDS = "0123456789abcdef"
+
+
+def meta_shard(url: str) -> str:
+    # MUST match the Worker: first hex char of SHA-1(url)
+    return hashlib.sha1(url.encode("utf-8")).hexdigest()[0]
+
+
+def _fetch_one_meta(url: str):
+    try:
+        p = urlparse(url)
+        html, final = fetch_html(url, timeout=20.0, referer=f"{p.scheme}://{p.netloc}/")
+        data = fetch_metadata(html, final)
+    except Exception:
+        return url, None
+    if not data or data.get("error"):
+        return url, None            # failures are retried next run, never stored
+    return url, data
+
+
+def job_metadata():
+    """Fetch duration / date / views / rating / tags / stars for videos seen this run.
+    Stored in 16 shard keys (meta-shard:<hex>) = at most 16 KV writes per run."""
+    if not fetch_metadata:
+        print("metadata module unavailable - skipping")
+        return
+    limit = int(os.environ.get("MAX_METADATA", "400"))
+    per_shard = int(os.environ.get("META_PER_SHARD", "250"))
+    max_age = 14 * 86400
+    now = int(time.time())
+
+    shards = {}
+    for c in META_SHARDS:
+        cur = kv_scrape.get(f"meta-shard:{c}")          # raises on outage -> nothing gets overwritten
+        shards[c] = dict(cur.get("items", {})) if isinstance(cur, dict) else {}
+
+    todo = [l for l in VIDEO_LINKS if l not in shards[meta_shard(l)]][:limit]
+    print(f"Metadata: {len(VIDEO_LINKS)} videos seen, {len(todo)} to fetch")
+    dirty = set()
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        for url, data in pool.map(_fetch_one_meta, todo):
+            if data:
+                data["_ts"] = now
+                shards[meta_shard(url)][url] = data
+                dirty.add(meta_shard(url))
+
+    for c, items in shards.items():
+        fresh = {u: m for u, m in items.items() if now - int(m.get("_ts", now)) < max_age}
+        if len(fresh) > per_shard:
+            newest = sorted(fresh.items(), key=lambda kv: -int(kv[1].get("_ts", 0)))[:per_shard]
+            fresh = dict(newest)
+        if len(fresh) != len(items):
+            dirty.add(c)
+        shards[c] = fresh
+    for c in sorted(dirty):
+        kv_put_scrape(f"meta-shard:{c}", {"items": shards[c]}, ttl=30 * 86400)
+    print(f"Metadata: wrote {len(dirty)} shard(s), {sum(len(v) for v in shards.values())} videos stored")
 
 
 def main():
     if not init_kv_clients():
         sys.exit(1)
 
-    print("Starting Cloudflare KV scraper...")
+    only = sys.argv[sys.argv.index("--only") + 1] if "--only" in sys.argv else None
+    print(f"Starting Cloudflare KV scraper{' (' + only + ' only)' if only else ''}...")
     start = time.time()
 
-    # Static data
-    job_catalog_urls()
-    job_test_sites()
+    if only == "live":
+        job_livecams_channels()
+    else:
+        # Static data
+        job_catalog_urls()
+        job_test_sites()
 
-    # Dynamic scraping
-    job_popular_feeds()
-    job_category_pages()
-    job_category_feeds()
-    job_search_queries()
-    job_livecams_channels()
+        # Dynamic scraping
+        job_popular_feeds()
+        job_category_pages()
+        job_category_feeds()
+        job_search_queries()
+        job_livecams_channels()
+        job_metadata()
 
     elapsed = time.time() - start
     print(f"\nCompleted in {elapsed:.1f}s - KV writes ok={KV_STATS['ok']} failed={KV_STATS['failed']}")
-    if KV_STATS["ok"] == 0 or KV_STATS["failed"] > KV_STATS["ok"]:
+    if KV_STATS["failed"] and KV_STATS["failed"] >= KV_STATS["ok"]:
         print("Too many KV write failures", file=sys.stderr)
         sys.exit(1)
 
