@@ -11,7 +11,7 @@ import time
 import asyncio
 import hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from urllib.parse import urlparse, quote_plus
+from urllib.parse import urlparse, quote, quote_plus
 
 import httpx
 import requests
@@ -33,7 +33,7 @@ FRONTEND_SOURCES = [
 ]
 
 # Also include TEST_SITES for search fallback
-from sourcetest import TEST_SITES
+from sourcetest import TEST_SITES, search_site, site_from_url
 from extras import scrape_plus, deep_resolve, is_smart
 try:
     from livecams import fetch_livecams
@@ -64,11 +64,14 @@ class KVClient:
         self.session.headers.update(self.headers)
 
     def put(self, key: str, value: dict, expiration_ttl: int = 3600) -> bool:
-        """Write to KV with TTL in seconds."""
-        url = f"{self.base_url}/values/{key}"
-        params = {"expiration_ttl": expiration_ttl} if expiration_ttl else {}
-        resp = self.session.put(url, json=value, params=params)
-        return resp.status_code in (200, 201)
+        """Write to KV with TTL in seconds. Key MUST be URL-encoded (it contains '/' and ':')."""
+        url = f"{self.base_url}/values/{quote(key, safe='')}"
+        params = {"expiration_ttl": max(expiration_ttl, 60)} if expiration_ttl else {}
+        resp = self.session.put(url, data=json.dumps(value), params=params)
+        if resp.status_code not in (200, 201):
+            print(f"  KV PUT FAILED {resp.status_code} key={key[:90]} body={resp.text[:200]}", file=sys.stderr)
+            return False
+        return True
 
     def put_batch(self, entries: list[tuple[str, dict]], expiration_ttl: int = 3600) -> int:
         """Write multiple entries. Returns success count."""
@@ -80,7 +83,7 @@ class KVClient:
         return success
 
     def get(self, key: str) -> dict | None:
-        url = f"{self.base_url}/values/{key}"
+        url = f"{self.base_url}/values/{quote(key, safe='')}"
         resp = self.session.get(url)
         if resp.status_code == 200:
             return resp.json()
@@ -108,14 +111,23 @@ def init_kv_clients():
     return True
 
 
+KV_STATS = {"ok": 0, "failed": 0}
+
+
 def kv_put_cache(key: str, value: dict, ttl: int = 3600):
     if kv_cache:
         kv_cache.put(key, value, ttl)
 
 
-def kv_put_scrape(key: str, value: dict, ttl: int = 86400):
-    if kv_scrape:
-        kv_scrape.put(key, value, ttl)
+def kv_put_scrape(key: str, value: dict, ttl: int = 86400) -> bool:
+    ok = bool(kv_scrape and kv_scrape.put(key, value, ttl))
+    KV_STATS["ok" if ok else "failed"] += 1
+    return ok
+
+
+def search_key(site: str, query: str) -> str:
+    # Must match the Worker: `search:${site}:${query.trim().toLowerCase()}`
+    return f"search:{site}:{query.strip().lower()}"
 
 
 def translate_result(r: dict) -> dict:
@@ -137,8 +149,8 @@ def scrape_and_cache_url(url: str, page_num: int | None = None, fresh: bool = Fa
             result = scrape_page(url, max_items=80, page_num=page_num)
 
         result = translate_result(result)
-        kv_put_scrape(key, result, ttl=86400)  # 24 hours
-        print(f"  Cached: {url} ({result.get('count', 0)} items)")
+        if kv_put_scrape(key, result, ttl=86400):  # 24 hours
+            print(f"  Cached: {url} ({result.get('count', 0)} items)")
         return result
     except Exception as e:
         error_result = {"page": url, "items": [], "count": 0, "error": str(e), "next_page": None, "page_num": page_num or 1}
@@ -147,43 +159,31 @@ def scrape_and_cache_url(url: str, page_num: int | None = None, fresh: bool = Fa
         return error_result
 
 
-def scrape_search_and_cache(sites: list[str], query: str, verify: bool = False, max_items: int = 40):
-    cache_key = f"search:{','.join(sorted(sites))}:{query}:{verify}:{max_items}"
-
+def scrape_search_and_cache(site: str, query: str, max_items: int = 30):
+    """Pre-scrape one (site, query) pair under the key the Worker looks up."""
+    key = search_key(site, query)
     try:
-        normal = [s for s in sites if not is_smart(s)]
-        plus = [s for s in sites if is_smart(s)]
-
-        results = []
-        if normal:
-            results.extend(search_many(normal, query, max_items=max_items, verify=verify))
-        for site in plus:
-            results.append(search_site(site_from_url(site), query))
-
-        # Build combined results like the original API
+        if is_smart(site):
+            results = [search_site(site_from_url(site), query)]
+        else:
+            results = search_many([site], query, max_items=max_items, verify=False)
         combined, seen = [], set()
         for r in results:
-            site_name = r.get("site") or r.get("page") or ""
+            site_name = r.get("site") or r.get("page") or site
             for it in (r.get("items") or []):
                 k = (it.get("link") or "").split("?")[0]
                 if not k or k in seen:
                     continue
                 seen.add(k)
                 combined.append({**it, "_site": site_name})
-
-        payload = {
-            "results": [translate_result(r) for r in results],
-            "query": query,
-            "combined": combined,
-            "count": len(combined),
-        }
-        kv_put_scrape(cache_key, payload, ttl=86400)
-        print(f"  Cached search: {query} across {len(sites)} sites ({len(combined)} combined)")
+        payload = {"results": [translate_result(r) for r in results], "query": query,
+                   "combined": combined, "count": len(combined)}
+        if kv_put_scrape(key, payload, ttl=86400):
+            print(f"  Cached search: {query!r} on {site} ({len(combined)} items)")
         return payload
     except Exception as e:
-        error_payload = {"results": [], "query": query, "combined": [], "count": 0, "error": str(e)}
-        kv_put_scrape(cache_key, error_payload, ttl=3600)
-        return error_payload
+        kv_put_scrape(key, {"results": [], "query": query, "combined": [], "count": 0, "error": str(e)}, ttl=3600)
+        print(f"  Search error {site} {query!r}: {e}")
 
 
 def scrape_resolve_and_cache(url: str, full: bool = False):
@@ -220,7 +220,7 @@ def scrape_metadata_and_cache(url: str):
 
 
 def scrape_livecams_and_cache(url: str | None = None, force: bool = False):
-    key = f"livecams:{url or 'default'}:{force}"
+    key = f"livecams:{url or 'default'}"
     if not fetch_livecams:
         return {"items": [], "count": 0, "error": "livecams module unavailable"}
 
@@ -236,7 +236,7 @@ def scrape_livecams_and_cache(url: str | None = None, force: bool = False):
 
 
 def scrape_channels_and_cache(category: str | None = None, page: int = 1, force: bool = False):
-    key = f"channels:{category or 'all'}:{page}:{force}"
+    key = f"channels:{category or 'all'}:{page}"
     if not fetch_channels:
         return {"items": [], "count": 0, "error": "channels module unavailable"}
 
@@ -293,11 +293,21 @@ def job_test_sites():
     print(f"Cached {len(sites)} test sites")
 
 
+def scrape_feed_chain(url: str, pages: int = 3):
+    """Scrape page 1 and follow next_page so the frontend's 'load more' hits the cache."""
+    result = scrape_and_cache_url(url)
+    for n in range(2, pages + 1):
+        nxt = (result or {}).get("next_page")
+        if not nxt or (result or {}).get("error"):
+            break
+        time.sleep(1)
+        result = scrape_and_cache_url(nxt, page_num=n)
+
+
 def job_popular_feeds():
-    """Scrape popular feed URLs (first page of each frontend source)."""
-    urls = FRONTEND_SOURCES
+    """Scrape each frontend source plus a few pages of 'next'."""
     with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = [executor.submit(scrape_and_cache_url, url) for url in urls]
+        futures = [executor.submit(scrape_feed_chain, url) for url in FRONTEND_SOURCES]
         for f in as_completed(futures):
             f.result()
 
@@ -309,6 +319,7 @@ def job_category_pages():
         ("https://www.freesexvideos.xxx/models/", "models"),
         ("https://www.freesexvideos.xxx/sites/", "sites"),
         ("https://www.bdsmhole.com/studios/", "categories"),
+        ("https://www.bdsmhole.com/categories/", "categories"),
     ]
     for url, mode in category_urls:
         scrape_categories_and_cache(url, mode)
@@ -316,13 +327,12 @@ def job_category_pages():
 
 
 def job_search_queries():
-    """Pre-scrape common search queries across popular sites."""
-    popular_sites = FRONTEND_SOURCES
+    """Pre-scrape common queries, one KV entry per (site, query)."""
     queries = ["milf", "teen", "anal", "amateur", "lesbian", "mature", "big tits", "blowjob"]
-
     for query in queries:
-        scrape_search_and_cache(popular_sites, query, verify=False, max_items=40)
-        time.sleep(2)
+        for site in FRONTEND_SOURCES:
+            scrape_search_and_cache(site, query)
+            time.sleep(1)
 
 
 def job_livecams_channels():
@@ -356,7 +366,10 @@ def main():
     job_livecams_channels()
 
     elapsed = time.time() - start
-    print(f"\nCompleted in {elapsed:.1f}s")
+    print(f"\nCompleted in {elapsed:.1f}s - KV writes ok={KV_STATS['ok']} failed={KV_STATS['failed']}")
+    if KV_STATS["ok"] == 0 or KV_STATS["failed"] > KV_STATS["ok"]:
+        print("Too many KV write failures", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

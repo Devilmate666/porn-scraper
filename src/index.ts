@@ -64,7 +64,10 @@ export default {
 
         case url.pathname === "/api/scrape" && request.method === "POST": {
           const body = await request.json() as { urls?: string[]; url?: string; fresh?: boolean };
-          const urls = body.urls || (body.url ? [body.url] : []);
+          const rawUrls: any[] = (body as any).urls || (body.url ? [body.url] : []);
+          const urls: string[] = rawUrls
+            .map((u: any) => (typeof u === "string" ? u : u?.url))
+            .filter(Boolean);
           if (!urls.length) return errorResponse("No urls provided", 400, headers);
 
           const results = await Promise.all(
@@ -84,21 +87,27 @@ export default {
         }
 
         case url.pathname === "/api/search" && request.method === "POST": {
-          const body = await request.json() as { sites?: string[]; query?: string; verify?: boolean; max_items?: number };
+          const body = await request.json() as { sites?: string[]; query?: string };
           const sites = (body.sites || []).filter(Boolean);
-          const query = (body.query || "").trim();
+          const query = (body.query || "").trim().toLowerCase();
           if (!sites.length || !query) return errorResponse("sites and query are required", 400, headers);
 
-          const cacheKey = `search:${sites.sort().join(",")}:${query}:${body.verify}:${body.max_items || 40}`;
-          const cached = await kvGet(env.CACHE, cacheKey);
-          if (cached) return jsonResponse(cached, 200, headers);
-
-          const data = await kvGet(env.SCRAPE_DATA, cacheKey);
-          if (data) {
-            await env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: 300 });
-            return jsonResponse(data, 200, headers);
+          // One KV entry per (site, query) - must match scraper_kv.search_key()
+          const parts = await Promise.all(sites.map(async (site) => {
+            const key = `search:${site}:${query}`;
+            const cached = await kvGet<any>(env.CACHE, key);
+            if (cached) return cached;
+            const data = await kvGet<any>(env.SCRAPE_DATA, key);
+            if (data) await env.CACHE.put(key, JSON.stringify(data), { expirationTtl: 300 });
+            return data;
+          }));
+          const found = parts.filter(Boolean);
+          if (!found.length) {
+            return jsonResponse({ results: [], query, combined: [], count: 0, error: "Not in cache - run scraper" }, 200, headers);
           }
-          return jsonResponse({ results: [], query, combined: [], count: 0, error: "Not in cache - run scraper" }, 200, headers);
+          const results = found.flatMap((p: any) => p.results || []);
+          const combined = found.flatMap((p: any) => p.combined || []);
+          return jsonResponse({ results, query, combined, count: combined.length }, 200, headers);
         }
 
         case url.pathname === "/api/resolve" && request.method === "POST": {
@@ -127,13 +136,13 @@ export default {
 
         case url.pathname === "/api/livecams" && request.method === "POST": {
           const body = await request.json() as { url?: string; force?: boolean };
-          const data = await kvGet(env.SCRAPE_DATA, `livecams:${body.url || "default"}:${body.force}`);
+          const data = await kvGet(env.SCRAPE_DATA, `livecams:${body.url || "default"}`);
           return jsonResponse(data || { items: [], count: 0, error: "Not in cache - run scraper" }, 200, headers);
         }
 
         case url.pathname === "/api/channels" && request.method === "POST": {
           const body = await request.json() as { category?: string; page?: number; force?: boolean };
-          const key = `channels:${body.category || "all"}:${body.page || 1}:${body.force}`;
+          const key = `channels:${body.category || "all"}:${body.page || 1}`;
           const data = await kvGet(env.SCRAPE_DATA, key);
           return jsonResponse(data || { items: [], count: 0, error: "Not in cache - run scraper" }, 200, headers);
         }
@@ -152,7 +161,12 @@ export default {
           const body = await request.json() as { url?: string; mode?: string; page_num?: number };
           const urlStr = body.url;
           if (!urlStr) return errorResponse("url is required", 400, headers);
-          const key = `categories:${urlStr}:${body.mode || "categories"}:${body.page_num || 1}`;
+          let mode = body.mode === "pornstars" ? "models" : (body.mode || "categories");
+          try {
+            const p = new URL(urlStr);
+            if (p.hostname.endsWith("freesexvideos.xxx") && p.pathname.toLowerCase().startsWith("/models")) mode = "models";
+          } catch {}
+          const key = `categories:${urlStr}:${mode}:${body.page_num || 1}`;
           const data = await kvGet(env.SCRAPE_DATA, key);
           return jsonResponse(data || { categories: [], count: 0, error: "Not in cache - run scraper" }, 200, headers);
         }
