@@ -202,7 +202,19 @@ function siteMetadata(root: HTMLElement, host: string, url: string, title: strin
       m = /^([\d.,]+\s*[kKmM]?)\s+I don'?t like it/.exec(tx); if (m) dislike = countOf(m[1]);
     }
     if (like !== null && like + (dislike || 0) > 0) site.rating = `${Math.round((100 * like) / (like + (dislike || 0)))}%`;
-    const chips = root.querySelectorAll(".data-video .catlist .chip-link");
+    // genre chips (folder icon + name, e.g. "Big tits", "Blowjob"): wherever the page puts them, but never in related-video cards
+    const chips: HTMLElement[] = [];
+    for (const a of [...root.querySelectorAll(".catlist a[href], .chip-group a[href], a.chip-link"), ...root.querySelectorAll("a[href]").filter((x) => !!x.querySelector("i[class*='icon-folder']"))]) {
+      if (chips.includes(a)) continue;
+      let p = a.parentNode as HTMLElement | null, bad = false;
+      while (p) {
+        const tag = (p.rawTagName || "").toLowerCase();
+        if (tag && tag !== "body" && tag !== "html" && /(?:^|\s)(?:thumb-video|related|navbar|footer)/i.test(attr(p, "class"))) { bad = true; break; }   // another video's card / site chrome
+        p = p.parentNode as HTMLElement | null;
+      }
+      if (!bad) chips.push(a);
+    }
+    chips.length = Math.min(chips.length, 40);
     const isStar = (a: HTMLElement) => /\/(?:pornstars?|models?|stars?)\//i.test(attr(a, "href"));
     add("models", chipsOf(chips.filter(isStar), url));
     const series = root.querySelectorAll(".data-video a[href*='/series/']").filter((a) => textOf(a));

@@ -492,7 +492,17 @@ def _site_metadata(soup, host, url, title):
                 dislike = _count(m.group(1))
         if like is not None and (like + (dislike or 0)) > 0:
             site["rating"] = f"{round(100 * like / (like + (dislike or 0)))}%"
-        chips = soup.select(".data-video .catlist .chip-link")
+        # genre chips (folder icon + name, e.g. "Big tits", "Blowjob"): wherever the page puts them, but never in related-video cards
+        chips = []
+        for a in soup.select(".catlist a[href], .chip-group a[href], a.chip-link") + \
+                [x for x in soup.find_all("a", href=True) if x.find("i", class_=re.compile(r"icon-folder"))]:
+            if a in chips:
+                continue
+            if any(p.name not in ("body", "html") and re.search(r"(?:^|\s)(?:thumb-video|related|navbar|footer)", " ".join(p.get("class") or []))
+                   for p in a.parents):
+                continue                         # a card of another video / site chrome, not this video's genres
+            chips.append(a)
+        chips = chips[:40]
         stars = [a for a in chips if re.search(r"/(?:pornstars?|models?|stars?)/", a.get("href") or "", re.I)]
         cats = [a for a in chips if a not in stars]
         if stars:
