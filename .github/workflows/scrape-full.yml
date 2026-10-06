@@ -1,0 +1,48 @@
+name: Scrape full (feeds, listings, search, metadata)
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'        # KV free tier = 1,000 writes/day; ~4 runs/day. Off-peak minute on purpose.
+  workflow_dispatch:
+  workflow_call:                   # deploy.yml runs this once after every deploy
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scrape-full
+  cancel-in-progress: false
+
+env:
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+jobs:
+  scrape:
+    name: Full scrape
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: KV namespaces
+        id: ns
+        run: bash .github/scripts/kv_ids.sh
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install requests httpx beautifulsoup4 lxml
+
+      - name: Run scraper
+        env:
+          CACHE_KV_NAMESPACE_ID: ${{ steps.ns.outputs.cache_ns_id }}
+          SCRAPE_DATA_KV_NAMESPACE_ID: ${{ steps.ns.outputs.scrape_ns_id }}
+          SCRAPE_BUDGET_SECONDS: '2000'     # stop starting new work at ~33 min so the run ends cleanly before the 40 min limit
+          MAX_KV_WRITES: '450'              # per-run write budget (live data is exempt)
+        run: python scraper_kv.py

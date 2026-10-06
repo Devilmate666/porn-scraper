@@ -354,28 +354,70 @@ export function extractItems(root: HTMLElement, anchors: HTMLElement[], base: st
   return items;
 }
 
+// ---- politeness + resilience for every outgoing fetch --------------------------------------------
+// Workers only keep ~6 connections open at once; extra fetches would stall, so queue them ourselves.
+let active = 0;
+const waiters: (() => void)[] = [];
+async function acquire() {
+  if (active < 6) { active++; return; }
+  await new Promise<void>((r) => waiters.push(r));       // slot is handed over by release(), `active` stays as is
+}
+function release() { const w = waiters.shift(); if (w) w(); else active--; }
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+export function isBlockedHost(host: string): boolean {
+  const h = host.toLowerCase();
+  return h === "localhost" || h.endsWith(".local") || h.endsWith(".internal") ||
+    /^(127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|0\.)/.test(h) || h.includes(":");
+}
+
+const looksLikeChallenge = (status: number, headers: Headers, body: string) =>
+  headers.get("cf-mitigated") === "challenge" ||
+  ((status === 403 || status === 503) && /just a moment|cf-chl|attention required|enable javascript and cookies/i.test(body.slice(0, 4000)));
+
 export async function fetchHtml(url: string, timeoutMs = 20000, signal?: AbortSignal, referer?: string) {
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), timeoutMs);
-  const onAbort = () => ac.abort();
-  signal?.addEventListener("abort", onAbort);
-  try {
-    const r = await fetch(url, {
-      headers: {
-        "User-Agent": UA,
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        ...(referer ? { Referer: referer } : {}),
-      },
-      redirect: "follow",
-      signal: ac.signal,
-    });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    return { html: await r.text(), final: r.url || url };
-  } finally {
-    clearTimeout(timer);
-    signal?.removeEventListener("abort", onAbort);
+  const u0 = new URL(url);
+  if (!/^https?:$/.test(u0.protocol) || isBlockedHost(u0.hostname)) throw new Error("blocked url");
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (signal?.aborted) throw new Error("aborted");
+    await acquire();
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    const onAbort = () => ac.abort();
+    signal?.addEventListener("abort", onAbort);
+    try {
+      const r = await fetch(url, {
+        headers: {
+          "User-Agent": UA,
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9",
+          ...(referer ? { Referer: referer } : {}),
+        },
+        redirect: "follow",
+        signal: ac.signal,
+      });
+      const text = await r.text();
+      if (looksLikeChallenge(r.status, r.headers, text)) throw new Error("blocked by bot challenge");
+      if (!r.ok) {
+        const err = new Error(`HTTP ${r.status}`);
+        if (r.status === 429 || r.status >= 500) { lastErr = err; throw Object.assign(err, { retry: true }); }
+        throw err;
+      }
+      if (new URL(r.url || url).hostname && isBlockedHost(new URL(r.url || url).hostname)) throw new Error("blocked redirect");
+      return { html: text, final: r.url || url };
+    } catch (e: any) {
+      lastErr = e;
+      const retryable = e?.retry || /network|fetch failed|connection/i.test(String(e?.message));
+      if (!retryable || attempt === 1 || signal?.aborted) throw e;
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      release();
+    }
+    await sleep(250 + Math.random() * 450);                // jitter before the single retry
   }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 export async function scrapePage(url: string, maxItems = 80, pageNum: number | null = null, timeoutMs = 20000, signal?: AbortSignal): Promise<PageResult> {

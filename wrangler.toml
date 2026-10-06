@@ -19,3 +19,7 @@ preview_id = "your-preview-scrape-data-kv-id"
 
 [observability]
 enabled = true
+# Cloudflare's own scheduler (reliable, unlike GitHub cron): every 10 minutes the Worker refreshes cams itself and
+# starts the GitHub scraper if channels/cams/visitor requests are stale.
+[triggers]
+crons = ["*/10 * * * *"]

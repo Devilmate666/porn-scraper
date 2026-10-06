@@ -12,6 +12,8 @@ import time
 import asyncio
 import hashlib
 import threading
+import functools
+import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse, quote, quote_plus
 
@@ -65,36 +67,80 @@ class KVClient:
         self.session = requests.Session()
         self.session.headers.update(self.headers)
 
+    def _request(self, method: str, url: str, **kw):
+        """HTTP with retry/backoff on 429 / 5xx / network errors (Cloudflare's API rate-limits bursts)."""
+        last = None
+        for attempt in range(5):
+            try:
+                resp = self.session.request(method, url, timeout=30, **kw)
+                if resp.status_code not in (429, 500, 502, 503, 504):
+                    return resp
+                last = RuntimeError(f"HTTP {resp.status_code}")
+                wait = float(resp.headers.get("Retry-After") or 0) or (1.5 * (2 ** attempt))
+            except requests.RequestException as e:
+                last, wait = e, 1.5 * (2 ** attempt)
+            time.sleep(min(wait, 30))
+        raise last or RuntimeError("request failed")
+
+    def load_expirations(self):
+        """Read every key's expiry once (list API, 1 request / 1000 keys). Lets skip_same refuse to 'skip' a write
+        for a key that is about to expire - the cause of data vanishing after a perfectly good scrape."""
+        exp, cursor = {}, None
+        try:
+            while True:
+                params = {"limit": 1000, **({"cursor": cursor} if cursor else {})}
+                r = self._request("GET", f"{self.base_url}/keys", params=params)
+                if r.status_code != 200:
+                    raise RuntimeError(f"list {r.status_code}")
+                j = r.json()
+                for k in j.get("result", []):
+                    exp[k["name"]] = k.get("expiration")          # None = never expires
+                cursor = (j.get("result_info") or {}).get("cursor")
+                if not cursor:
+                    break
+            self.exp = exp
+            print(f"  KV: {len(exp)} existing keys indexed")
+        except Exception as e:
+            self.exp = None
+            print(f"  KV key listing failed ({e}) - will rewrite instead of skipping identical values")
+
     def put(self, key: str, value: dict, expiration_ttl: int = 3600, skip_same: bool = True) -> bool:
         """Write to KV with TTL in seconds. Key MUST be URL-encoded (it contains '/' and ':').
-        Identical existing values are left alone (reads are free, writes are limited)."""
-        if skip_same:
-            try:
-                if self.get(key) == value:
-                    return True
-            except Exception:
-                pass
+        Identical values are only skipped when the existing entry still has > 14 days to live."""
+        if skip_same and getattr(self, "exp", None) is not None and key in self.exp:
+            left = (self.exp[key] - time.time()) if self.exp[key] else 1e12
+            if left > 14 * 86400:
+                try:
+                    if self.get(key) == value:
+                        return True
+                except Exception:
+                    pass
         url = f"{self.base_url}/values/{quote(key, safe='')}"
         params = {"expiration_ttl": max(expiration_ttl, 60)} if expiration_ttl else {}
-        resp = self.session.put(url, data=json.dumps(value), params=params)
+        try:
+            resp = self._request("PUT", url, data=json.dumps(value), params=params)
+        except Exception as e:
+            print(f"  KV PUT ERROR key={key[:90]} {e}", file=sys.stderr)
+            return False
         if resp.status_code not in (200, 201):
             print(f"  KV PUT FAILED {resp.status_code} key={key[:90]} body={resp.text[:200]}", file=sys.stderr)
             return False
+        if getattr(self, "exp", None) is not None:
+            self.exp[key] = time.time() + max(expiration_ttl, 60)
         return True
 
     def put_batch(self, entries: list[tuple[str, dict]], expiration_ttl: int = 3600) -> int:
-        """Write multiple entries. Returns success count."""
         success = 0
         for key, value in entries:
             if self.put(key, value, expiration_ttl):
                 success += 1
-            time.sleep(0.05)  # Rate limit
+            time.sleep(0.05)
         return success
 
     def get(self, key: str) -> dict | None:
         """None = key does not exist. Raises on any other failure (so callers never mistake an outage for 'empty')."""
         url = f"{self.base_url}/values/{quote(key, safe='')}"
-        resp = self.session.get(url)
+        resp = self._request("GET", url)
         if resp.status_code == 200:
             return resp.json()
         if resp.status_code == 404:
@@ -132,24 +178,117 @@ def kv_put_cache(key: str, value: dict, ttl: int = 3600):
         kv_cache.put(key, value, ttl)
 
 
+KV_LONG = 30 * 86400                                   # good data lives 30 days: the Worker serves stale data, never a hole
+LIVE_PREFIXES = ("livecams:", "channels-bundle:", "cam-thumb-origins", "catalog:", "test-sites")   # stamped with _ts
+PRIORITY_PREFIXES = LIVE_PREFIXES + ("scrape-status",)                                             # never skipped by the write budget
+MAX_WRITES = int(os.environ.get("MAX_KV_WRITES", "450"))                                            # per run (free tier: 1,000/day)
+KV_STATS.setdefault("skipped", 0)
+
+
+def _has_data(v) -> bool:
+    """True when a payload actually carries something worth serving."""
+    if not isinstance(v, dict):
+        return bool(v)
+    known = False
+    for k in ("items", "categories", "sections", "models", "combined", "pages", "sites", "origins"):
+        if k in v:
+            if v[k]:
+                return True
+            known = True
+    if "results" in v:
+        if any(isinstance(r, dict) and (r.get("items") or r.get("categories")) for r in (v["results"] or [])):
+            return True
+        known = True
+    if "video" in v or "all" in v:
+        return bool(v.get("video") or v.get("all"))
+    if "groups" in v:
+        return bool(v["groups"]) or bool(v.get("title"))
+    return not known                                   # unknown shape (e.g. the catalog dict) counts as data
+
+
 def kv_put_scrape(key: str, value: dict, ttl: int = 86400) -> bool:
     if not kv_scrape:
         KV_STATS["failed"] += 1
         return False
-    if isinstance(value, dict) and value.get("error"):
-        # a site hiccup must not wipe previously good data
+    priority = key.startswith(PRIORITY_PREFIXES)
+    is_err = isinstance(value, dict) and bool(value.get("error"))
+    empty = isinstance(value, dict) and not is_err and not _has_data(value)
+    if is_err or empty:
+        # a site hiccup / blocked IP / empty result must never wipe previously good data
         try:
             old = kv_scrape.get(key)
-            if old and not old.get("error"):
-                print(f"  keeping previous good data for {key[:80]} ({value.get('error')})")
-                return True
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"  KV unreadable ({e}) - not overwriting {key[:80]}")
+            return False
+        if old and not old.get("error") and _has_data(old):
+            print(f"  keeping previous good data for {key[:80]} ({value.get('error') or 'empty result'})")
+            return True
+        ttl = 3600 if empty else min(ttl, 900)         # nothing to protect: remember the failure only briefly
     else:
-        ttl = max(ttl, 7 * 86400) if ttl >= 86400 else ttl   # skipped-identical writes don't refresh TTL
+        ttl = KV_LONG
+        if key.startswith(LIVE_PREFIXES) and isinstance(value, dict):
+            value = {**value, "_ts": int(time.time())}  # also makes the value differ, so the TTL is always refreshed
+    if not priority and KV_STATS["ok"] >= MAX_WRITES:
+        KV_STATS["skipped"] += 1
+        return False
     ok = kv_scrape.put(key, value, ttl)
     KV_STATS["ok" if ok else "failed"] += 1
     return ok
+
+
+# ---------------------------------------------------------------- resilience helpers
+JOB_STATUS: dict = {}
+DEADLINE = time.time() + int(os.environ.get("SCRAPE_BUDGET_SECONDS", str(33 * 60)))
+
+
+def time_left() -> float:
+    return DEADLINE - time.time()
+
+
+def deadline_guard(fn):
+    """Skip work that would start after the run's time budget (the job is killed at 40 min; this exits cleanly first)."""
+    @functools.wraps(fn)
+    def wrapper(*a, **k):
+        if time_left() < 30:
+            return {"items": [], "count": 0, "error": "time budget reached"}
+        return fn(*a, **k)
+    return wrapper
+
+
+def retry_until(fn, ok=lambda r: True, tries: int = 3, delay: float = 4.0, what: str = "op"):
+    """Call fn() until ok(result) (or no exception); returns the last result. Exceptions are retried too."""
+    last, exc = None, None
+    for n in range(tries):
+        try:
+            last, exc = fn(), None
+            if ok(last):
+                return last
+        except Exception as e:
+            exc = e
+        if n < tries - 1:
+            print(f"  {what}: attempt {n + 1}/{tries} failed ({exc or (last or {}).get('error')}), retrying")
+            time.sleep(delay * (n + 1))
+    if exc and last is None:
+        raise exc
+    return last
+
+
+def safe_job(name: str, fn, *a, **k):
+    """One failing job never stops the others."""
+    if time_left() < 45:
+        print(f"[{name}] skipped: time budget used up")
+        JOB_STATUS[name] = {"ok": False, "skipped": "time budget"}
+        return None
+    t0 = time.time()
+    try:
+        r = fn(*a, **k)
+        JOB_STATUS.setdefault(name, {"ok": True})
+        JOB_STATUS[name]["s"] = round(time.time() - t0, 1)
+        return r
+    except Exception as e:
+        traceback.print_exc()
+        JOB_STATUS[name] = {"ok": False, "s": round(time.time() - t0, 1), "error": str(e)[:200]}
+        return None
 
 
 def search_key(site: str, query: str) -> str:
@@ -213,6 +352,7 @@ def remember_links(result):
 
 
 # Scrape functions that write to KV
+@deadline_guard
 def scrape_and_cache_url(url: str, page_num: int | None = None, fresh: bool = False):
     key = f"scrape:{url}"
     try:
@@ -273,6 +413,7 @@ def _score(it: dict, query: str) -> int:
     return s
 
 
+@deadline_guard
 def scrape_chain_from(url: str, first_num: int = 1, pages: int = 3):
     """Cache `url` (page `first_num`) and follow next_page for `pages` pages in total. Each page is stored
     under scrape:{its own url}, which is exactly what the frontend asks for while scrolling."""
@@ -288,6 +429,7 @@ def scrape_chain_from(url: str, first_num: int = 1, pages: int = 3):
         time.sleep(1)
 
 
+@deadline_guard
 def scrape_search_and_cache(site: str, query: str, max_items: int = 40, pages: int | None = None):
     """Pre-scrape one (site, query) pair under the key the Worker looks up (ranked like the local app)."""
     key = search_key(site, query)
@@ -321,6 +463,7 @@ def scrape_search_and_cache(site: str, query: str, max_items: int = 40, pages: i
         print(f"  Search error {site} {query!r}: {e}")
 
 
+@deadline_guard
 def scrape_resolve_and_cache(url: str, full: bool = False):
     key = f"resolve-full:{url}" if full else f"resolve:{url}"
     try:
@@ -372,18 +515,21 @@ def scrape_livecams_and_cache(url: str | None = None, force: bool = False):
     key = f"livecams:{url or 'default'}"
     if not fetch_livecams:
         return {"items": [], "count": 0, "error": "livecams module unavailable"}
-
     try:
-        data = fetch_livecams(url, force=force)
-        kv_put_scrape(key, data, ttl=1800)  # 30 min
+        # platforms sometimes refuse a GitHub IP for a minute: retry before giving up
+        data = retry_until(lambda: fetch_livecams(url, force=True), ok=lambda r: bool((r or {}).get("items")),
+                           tries=3, delay=6, what="livecams")
+        for note in (data or {}).get("diagnostics", [])[:12]:
+            print(f"    cams: {note}")
+        kv_put_scrape(key, data)                      # empty/error results keep the previous good copy
         origins = _cam_thumb_origins()
         if origins:
-            kv_put_scrape("cam-thumb-origins", {"origins": origins}, ttl=1800)
+            kv_put_scrape("cam-thumb-origins", {"origins": origins})
         print(f"  Cached livecams: {len(data.get('items', []))} items, {len(origins)} thumb origins")
         return data
     except Exception as e:
         error_data = {"items": [], "count": 0, "error": str(e)}
-        kv_put_scrape(key, error_data, ttl=600)
+        kv_put_scrape(key, error_data)
         return error_data
 
 
@@ -414,7 +560,11 @@ def scrape_channels_bundle(category: str | None = None, max_pages: int | None = 
     pages, err = {}, None
     for n in range(1, max_pages + 1):
         try:
-            data = fetch_channels(category, n, force=bool(force and n == 1))
+            if n == 1:
+                data = retry_until(lambda: fetch_channels(category, 1, force=True),
+                                   ok=lambda r: bool((r or {}).get("items")), tries=3, delay=6, what="channels")
+            else:
+                data = fetch_channels(category, n)
         except Exception as e:
             err = str(e)
             break
@@ -435,6 +585,7 @@ def scrape_channels_bundle(category: str | None = None, max_pages: int | None = 
     return bundle
 
 
+@deadline_guard
 def scrape_categories_and_cache(url: str, mode: str = "categories", page_num: int | None = None):
     key = f"categories:{url}:{mode}:{page_num or 1}"
     try:
@@ -576,12 +727,15 @@ def job_search_queries():
 
 
 def job_livecams_channels(with_categories: bool = False):
-    """Live cams + live TV channels: ALL channel pages in one bundle key, so scrolling never hits a gap.
-    3 KV writes per run (livecams, thumb origins, channels bundle). Category chips are refreshed on full runs."""
-    scrape_livecams_and_cache()
-    bundle = scrape_channels_bundle(None)
-    if with_categories:
-        first = (bundle.get("pages") or {}).get("1") or {}
+    """Live cams + ALL live-TV channel pages in one bundle key. 3 KV writes per run (livecams, thumb origins, channels).
+    Category chips are refreshed on full runs."""
+    cams = scrape_livecams_and_cache() or {}
+    JOB_STATUS["livecams"] = {"ok": bool(cams.get("items")), "count": len(cams.get("items") or []), "error": cams.get("error")}
+    bundle = scrape_channels_bundle(None) or {}
+    pages = bundle.get("pages") or {}
+    JOB_STATUS["channels"] = {"ok": bool(pages), "pages": len(pages), "error": bundle.get("error")}
+    if with_categories and pages:
+        first = pages.get("1") or {}
         slugs = [c.get("slug") for c in (first.get("categories") or []) if c.get("slug")]
         for slug in slugs[: int(os.environ.get("CHANNEL_CATEGORIES", "6"))]:
             scrape_channels_bundle(slug)
@@ -694,6 +848,17 @@ def job_metadata():
     print(f"Metadata: wrote {len(dirty)} shard(s), {sum(len(v) for v in shards.values())} videos stored")
 
 
+def write_status(only, started):
+    """One small record the Worker reads for /healthz and its watchdog."""
+    if not kv_cache:
+        return
+    try:
+        kv_cache.put("scrape-status", {"ts": int(time.time()), "mode": only or "full", "elapsed": round(time.time() - started, 1),
+                                       "jobs": JOB_STATUS, "kv": KV_STATS}, KV_LONG, skip_same=False)
+    except Exception as e:
+        print(f"could not write scrape-status: {e}")
+
+
 def main():
     if not init_kv_clients():
         sys.exit(1)
@@ -701,30 +866,36 @@ def main():
     only = sys.argv[sys.argv.index("--only") + 1] if "--only" in sys.argv else None
     print(f"Starting Cloudflare KV scraper{' (' + only + ' only)' if only else ''}...")
     start = time.time()
+    kv_scrape.load_expirations()
 
     if only == "live":
-        job_livecams_channels()
-        job_wanted()
+        safe_job("live", job_livecams_channels)
+        safe_job("wanted", job_wanted)
     elif only == "wanted":
-        job_wanted()
+        safe_job("wanted", job_wanted)
     else:
-        # Static data
-        job_catalog_urls()
-        job_test_sites()
-
-        # Dynamic scraping (what visitors asked for goes first)
-        job_wanted()
-        job_popular_feeds()
-        job_category_pages()
-        job_category_feeds()
-        job_search_queries()
-        job_livecams_channels(with_categories=True)
-        job_metadata()
+        # perishable data first, then what visitors asked for, then the long tail - each job isolated
+        safe_job("catalog", job_catalog_urls)
+        safe_job("test_sites", job_test_sites)
+        safe_job("live", job_livecams_channels, with_categories=True)
+        safe_job("wanted", job_wanted)
+        safe_job("feeds", job_popular_feeds)
+        safe_job("listings", job_category_pages)
+        safe_job("category_feeds", job_category_feeds)
+        safe_job("search", job_search_queries)
+        safe_job("metadata", job_metadata)
 
     elapsed = time.time() - start
-    print(f"\nCompleted in {elapsed:.1f}s - KV writes ok={KV_STATS['ok']} failed={KV_STATS['failed']}")
+    write_status(only, start)
+    print(f"\nCompleted in {elapsed:.1f}s - KV writes ok={KV_STATS['ok']} failed={KV_STATS['failed']} skipped={KV_STATS['skipped']}")
+    for name, st in JOB_STATUS.items():
+        print(f"  {'OK ' if st.get('ok') else 'FAIL'} {name}: {st}")
     if KV_STATS["failed"] and KV_STATS["failed"] >= KV_STATS["ok"]:
         print("Too many KV write failures", file=sys.stderr)
+        sys.exit(1)
+    # a live run where BOTH perishable sources failed should be red in GitHub (you get notified); data stays served from KV
+    if only == "live" and not JOB_STATUS.get("livecams", {}).get("ok") and not JOB_STATUS.get("channels", {}).get("ok"):
+        print("Both livecams and channels failed this run (previous data is still being served)", file=sys.stderr)
         sys.exit(1)
 
 

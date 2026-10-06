@@ -1,25 +1,18 @@
-name: Deploy & Scrape
+name: Deploy Worker + Frontend
 
+# Schedules live in scrape-live.yml and scrape-full.yml (separate concurrency groups, so they never block each other
+# or a deploy).
 on:
   push:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      only:
-        description: 'Scraper mode: empty = full, "live" = cams/TV + wanted queue, "wanted" = wanted queue only'
-        required: false
-        default: ''
-  schedule:
-    # KV free tier = 1,000 writes/day. Every 6h is ~4 runs/day. Use '0 * * * *' only on a paid plan.
-    - cron: '0 */6 * * *'   # full scrape (feeds, listings, search + result pages, channels, metadata)
-    - cron: '30 * * * *'    # live cams / ALL TV channel pages (3 KV writes) + whatever visitors asked for that was not cached
 
 permissions:
   contents: read
 
 concurrency:
-  group: deploy-and-scrape
-  cancel-in-progress: false
+  group: deploy
+  cancel-in-progress: true
 
 env:
   CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -33,41 +26,15 @@ jobs:
       cache_ns_id: ${{ steps.ns.outputs.cache_ns_id }}
       scrape_ns_id: ${{ steps.ns.outputs.scrape_ns_id }}
     steps:
-      - name: Find or create KV namespaces (Cloudflare API)
+      - uses: actions/checkout@v4
+      - name: Find or create KV namespaces
         id: ns
-        run: |
-          set -euo pipefail
-          API="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/storage/kv/namespaces"
-          AUTH="Authorization: Bearer ${CLOUDFLARE_API_TOKEN}"
-
-          LIST=$(curl -sS -H "$AUTH" "$API?per_page=100")
-          echo "$LIST" | jq -e '.success == true' >/dev/null || { echo "KV list failed: $LIST"; exit 1; }
-
-          ensure_ns() {
-            local name="$1" id
-            # accept old names too, so existing namespaces (and their data) are reused
-            id=$(echo "$LIST" | jq -r --arg a "$name" --arg b "porn-archive-api-$name" --arg c "porn-archive-$name" \
-              '[.result[] | select(.title==$a or .title==$b or .title==$c)][0].id // empty')
-            if [ -z "$id" ]; then
-              echo "Creating namespace porn-archive-$name" >&2
-              id=$(curl -sS -X POST -H "$AUTH" -H "Content-Type: application/json" \
-                -d "{\"title\":\"porn-archive-$name\"}" "$API" | jq -r '.result.id // empty')
-            fi
-            [ -n "$id" ] || { echo "Could not find/create namespace $name" >&2; exit 1; }
-            echo "$id"
-          }
-
-          CACHE_ID=$(ensure_ns CACHE)
-          SCRAPE_ID=$(ensure_ns SCRAPE_DATA)
-          echo "CACHE=$CACHE_ID SCRAPE_DATA=$SCRAPE_ID"
-          echo "cache_ns_id=$CACHE_ID" >> "$GITHUB_OUTPUT"
-          echo "scrape_ns_id=$SCRAPE_ID" >> "$GITHUB_OUTPUT"
+        run: bash .github/scripts/kv_ids.sh
 
   deploy-worker:
     name: Deploy Worker
     runs-on: ubuntu-latest
     needs: setup-kv
-    if: github.event_name != 'schedule'
     outputs:
       worker_url: ${{ steps.deploy.outputs.worker_url }}
     steps:
@@ -94,12 +61,14 @@ jobs:
       - name: Deploy Worker
         id: deploy
         env:
-          BACKEND_URL: ${{ secrets.BACKEND_URL }}   # optional: live Flask backend (Cloudflare Tunnel URL, see LIVE_MODE.md)
-          MODE: ${{ vars.WORKER_MODE }}             # optional repo variable: "live" (default) or "kv"
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}          # optional: live Flask backend (see LIVE_MODE.md)
+          MODE: ${{ vars.WORKER_MODE }}                    # optional repo variable: "live" (default) or "kv"
+          EXTRA_HOSTS: ${{ vars.ALLOWED_HOSTS }}           # optional repo variable: extra scrapable hosts, comma separated
         run: |
-          EXTRA=""
-          if [ -n "${BACKEND_URL:-}" ]; then EXTRA="--var BACKEND_URL:${BACKEND_URL}"; fi
+          EXTRA="--var GITHUB_REPO:${{ github.repository }} --var GITHUB_REF:${{ github.ref_name }}"
+          if [ -n "${BACKEND_URL:-}" ]; then EXTRA="$EXTRA --var BACKEND_URL:${BACKEND_URL}"; fi
           if [ -n "${MODE:-}" ]; then EXTRA="$EXTRA --var MODE:${MODE}"; fi
+          if [ -n "${EXTRA_HOSTS:-}" ]; then EXTRA="$EXTRA --var ALLOWED_HOSTS:${EXTRA_HOSTS}"; fi
           wrangler deploy $EXTRA 2>&1 | tee deploy.log
           URL=$(grep -oE 'https://[A-Za-z0-9._-]+\.workers\.dev' deploy.log | head -1 || true)
           if [ -z "$URL" ]; then
@@ -112,36 +81,26 @@ jobs:
           echo "Worker URL: $URL"
           echo "worker_url=$URL" >> "$GITHUB_OUTPUT"
 
-  run-scraper:
-    name: Run Scraper
-    runs-on: ubuntu-latest
-    needs: setup-kv
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: 'pip'
-
-      - name: Install dependencies
-        run: |
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          pip install requests httpx beautifulsoup4 lxml
-
-      - name: Run scraper
+      # Optional watchdog: lets the Worker's cron start the scraper workflow when data is stale.
+      # Create a fine-grained token (this repo, Actions: Read and write) and save it as the secret GH_DISPATCH_TOKEN.
+      - name: Give the Worker its watchdog token (optional)
         env:
-          CACHE_KV_NAMESPACE_ID: ${{ needs.setup-kv.outputs.cache_ns_id }}
-          SCRAPE_DATA_KV_NAMESPACE_ID: ${{ needs.setup-kv.outputs.scrape_ns_id }}
+          GH_DISPATCH_TOKEN: ${{ secrets.GH_DISPATCH_TOKEN }}
         run: |
-          ONLY="${{ github.event.inputs.only }}"
-          if [ "${{ github.event.schedule }}" = "30 * * * *" ]; then ONLY="live"; fi
-          if [ -n "$ONLY" ]; then
-            python scraper_kv.py --only "$ONLY"
+          if [ -n "${GH_DISPATCH_TOKEN:-}" ]; then
+            printf '%s' "$GH_DISPATCH_TOKEN" | wrangler secret put GITHUB_TOKEN
           else
-            python scraper_kv.py
+            echo "GH_DISPATCH_TOKEN not set - watchdog disabled (cams still self-refresh inside Cloudflare)"
           fi
+
+      - name: Smoke test
+        run: |
+          URL="${{ steps.deploy.outputs.worker_url }}"
+          for i in 1 2 3 4 5; do
+            if curl -fsS "$URL/healthz"; then echo; exit 0; fi
+            sleep 4
+          done
+          echo "healthz did not answer" >&2; exit 1
 
   frontend:
     name: Frontend -> Cloudflare Pages
@@ -172,3 +131,9 @@ jobs:
 
       - name: Deploy to Cloudflare Pages
         run: wrangler pages deploy static --project-name=porn-archive --branch=main
+
+  first-scrape:
+    name: Fill the cache after a deploy
+    needs: deploy-worker
+    uses: ./.github/workflows/scrape-full.yml
+    secrets: inherit

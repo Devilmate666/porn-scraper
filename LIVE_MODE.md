@@ -1,3 +1,37 @@
+# Reliability: why cams / live TV showed "Not in cache" and how it is fixed
+
+## Causes found
+1. Cams and channels were stored in KV for **30 minutes**, but the scraper only ran about once an hour and GitHub often delays or skips scheduled runs, so the key expired -> "Not in cache". The next successful run "brought it back by itself".
+2. "Skip write if identical" did not refresh the expiry, so unchanged data (typical for channels) expired even after a good scrape.
+3. The schedule used :00 and :30, the minutes where GitHub drops the most cron runs.
+4. The live cron shared a concurrency group with the 40-minute full scrape, so queued live runs were dropped.
+5. Cam platforms sometimes refuse GitHub's IPs; one failed run used to leave a hole.
+6. In a full run one exception in an early job aborted everything after it (cams/channels came late in the order).
+
+## Fixes (backend only)
+Worker (`src/`)
+* Good data lives 30 days; the Worker serves **stale data instantly** and refreshes in the background (stale-while-revalidate). Cams/channels never return an error while any copy exists (KV of any age, or a 3-day last-known-good copy at the edge).
+* **Cams refresh themselves inside Cloudflare** (`cams.ts`): on a cron trigger every 10 minutes and whenever a visitor hits stale data. Each platform is independent, a platform that fails keeps its previous cams. Cams no longer depend on GitHub at all.
+* **Watchdog**: the cron starts the GitHub live-scrape workflow when channels/cams are stale or visitor requests are queued (optional, needs the token below).
+* Negative caching (45 s) so a blocking site is not hammered, in-flight de-duplication, a 6-connection limiter, one retry with jitter on 429/5xx, bot-challenge detection, per-IP rate limit (`RATE_PER_MIN`, default 90/min).
+* SSRF protection: URLs sent by the browser must belong to the known sources (4 built-in + hosts in the scraper catalog + `ALLOWED_HOSTS`); private/localhost addresses are never fetched.
+* `/healthz` and `/api/status` show data age, queue size and the last scraper report. Response headers `X-Source` and `X-Cache-Age` show where an answer came from.
+
+Scraper (`scraper_kv.py`)
+* Every good value: 30-day TTL; live keys carry `_ts`. An error or **empty** result never overwrites good data; a KV outage never overwrites anything.
+* "Skip identical" only when the key still has > 14 days left (expiry read once per run).
+* Retries (cams/channels 3x, KV API 5x with backoff), a per-run write budget (live keys exempt), a time budget so runs end cleanly, every job isolated (`safe_job`), perishable jobs (cams/channels) run first, a `scrape-status` report for `/healthz`.
+* A live run where both cams and channels failed ends **red** in GitHub (you get the email) while the old data keeps being served.
+
+Workflows (`.github/`)
+* Split into `deploy.yml`, `scrape-live.yml` (:11/:41, own concurrency group, 15-min limit), `scrape-full.yml` (every 6 h at :17, own group). Deploy never blocks scraping and vice versa.
+* Keep-alive step so GitHub never disables the schedules after 60 days of inactivity.
+* Smoke test after deploy.
+
+## One-time setup for the watchdog (optional but recommended)
+GitHub -> Settings -> Developer settings -> Fine-grained tokens -> new token, **only this repo**, permission **Actions: Read and write**. Save it as repository secret `GH_DISPATCH_TOKEN`. The next deploy hands it to the Worker. Without it everything else still works, cams still self-heal.
+Optional repo variables: `ALLOWED_HOSTS` (more scrapable hosts), `WORKER_MODE=kv`.
+
 # Making the Cloudflare site behave like the always-running server
 
 ## What was wrong

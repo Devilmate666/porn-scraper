@@ -1,0 +1,72 @@
+name: Scrape live (cams + TV channels + visitor requests)
+
+# Why this is its own workflow: it used to share a concurrency group with the 40-minute full scrape, so GitHub
+# dropped queued live runs and the data expired. Now it never waits behind anything.
+# Minutes :11 and :41 on purpose - GitHub drops the most scheduled runs at :00 and :30.
+# Besides this schedule, the Worker's own cron starts this workflow (workflow_dispatch) when data gets stale.
+on:
+  schedule:
+    - cron: '11,41 * * * *'
+  workflow_dispatch:
+    inputs:
+      only:
+        description: 'live (default) or wanted'
+        required: false
+        default: 'live'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scrape-live
+  cancel-in-progress: false
+
+env:
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+jobs:
+  scrape:
+    name: Scrape live data
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: KV namespaces
+        id: ns
+        run: bash .github/scripts/kv_ids.sh
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install requests httpx beautifulsoup4 lxml
+
+      - name: Run scraper
+        env:
+          CACHE_KV_NAMESPACE_ID: ${{ steps.ns.outputs.cache_ns_id }}
+          SCRAPE_DATA_KV_NAMESPACE_ID: ${{ steps.ns.outputs.scrape_ns_id }}
+          SCRAPE_BUDGET_SECONDS: '600'
+          MAX_KV_WRITES: '40'
+        run: python scraper_kv.py --only "${{ github.event.inputs.only || 'live' }}"
+
+  # GitHub switches scheduled workflows off after 60 days without repo activity. This call resets that timer.
+  keepalive:
+    name: Keep schedules enabled
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    permissions:
+      actions: write
+    steps:
+      - name: Re-enable workflows (resets the 60-day inactivity timer)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for wf in scrape-live.yml scrape-full.yml; do
+            gh api -X PUT "repos/${{ github.repository }}/actions/workflows/$wf/enable" || true
+          done
