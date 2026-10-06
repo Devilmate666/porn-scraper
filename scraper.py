@@ -1000,6 +1000,8 @@ def _extract_categories_from_soup(soup, base, max_items=200):
         path = (urlparse(full).path or "/").rstrip("/").lower()
         if path in ("/categories", "/category", "/cats", "/sites"):
             continue
+        if re.match(r"^/videos(/\d+)?$", path):   # "all videos" listing and its pages are not categories/studios
+            continue
         if re.match(r"^/[a-z]{2}(/|$)", path) and (path.endswith("/sites") or path.endswith("/categories") or path.endswith("/cats")):
             continue
         key = full.split("?")[0]

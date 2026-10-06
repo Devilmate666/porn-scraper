@@ -87,6 +87,7 @@ export function extractCategories(root: HTMLElement, base: string, maxItems = 20
     if (same(full, base)) continue;
     const path = (new URL(full).pathname || "/").replace(/\/+$/, "").toLowerCase();
     if (["/categories", "/category", "/cats", "/sites"].includes(path)) continue;
+    if (/^\/videos(\/\d+)?$/.test(path)) continue;   // "all videos" listing and its pages (/videos/, /videos/2/ ...) are not categories/studios
     if (/^\/[a-z]{2}(\/|$)/.test(path) && /\/(sites|categories|cats)$/.test(path)) continue;
     const key = noQuery(full);
     const name = cleanCategoryName(findTitle(a)) || cleanCategoryName(titleFromUrl(full));

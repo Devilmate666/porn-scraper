@@ -3277,7 +3277,7 @@ async function openCategories(forceRefresh = false, opts = {}) {
         nextBySource[src.id] = json.next_page || '';
         for (const c of (json.categories || [])) {
           const key = (c.link || '').split('?')[0];
-          if (!key || seen.has(key)) continue;
+          if (!key || isAllVideosLink(key) || seen.has(key)) continue;
           seen.add(key);
           merged.push({ ...c, sourceId: src.id });
         }
@@ -3367,7 +3367,7 @@ function useStudioView(tab) {
   const saved = studioStash[tab];
   Object.assign(studioState, saved ? saved.state : {
     next_page: null, page_num: 1, loading: false, exhausted: false, retryCount: 0,
-    sections: [], nameQuery: '', searchToken: studioState.searchToken + 1, filter: 'all', nexts: {},
+    sections: [], nameQuery: '', searchToken: studioState.searchToken + 1, filter: 'general', nexts: {},
     searchLoading: false, searchExhausted: false, searchPages: 0,
   });
   studioState.searchToken++;
@@ -3385,7 +3385,7 @@ const studioState = {
   sections: [],
   nameQuery: '',
   searchToken: 0,
-  filter: 'all',          // Networks: all | general | bdsm
+  filter: 'general',      // Networks: general | bdsm (no 'all')
   nexts: {},              // Networks: next page URL per group
   searchLoading: false,
   searchExhausted: false,
@@ -3401,6 +3401,9 @@ const NETWORK_SOURCES = [
 ];
 const networkMode = (group) => (NETWORK_SOURCES.find(x => x.group === group) || {}).mode || null;
 
+/** BDSMHole's "all videos" listing (/videos/, /videos/2/, /videos/3/ ...) is not a studio/category: never show it. */
+const isAllVideosLink = (l) => { try { return /^\/videos(\/\d+)?$/i.test(new URL(l, 'https://x.invalid').pathname.replace(/\/+$/, '') || '/'); } catch { return false; } };
+
 /** One page of one source -> { sections, next }. Tiles (no mode) become video-less sections. */
 async function fetchStudioPage(url, mode, group) {
   const res = await fetch('/api/scrape-categories', {
@@ -3413,14 +3416,14 @@ async function fetchStudioPage(url, mode, group) {
   const raw = mode === 'sites' ? (json.sections || [])
     : (json.categories || []).map(c => ({ name: c.name, link: c.link, thumbnail: c.thumbnail,
                                           video_count: c.video_count || null, videos: [] }));
-  return { sections: raw.map(x => ({ ...x, group })), next: json.next_page || '' };
+  return { sections: raw.filter(x => !isAllVideosLink(x.link)).map(x => ({ ...x, group })), next: json.next_page || '' };
 }
 
 function studioChipsHtml() {
   if (studioTab !== NETWORKS_TAB) return '';
-  const f = studioState.filter || 'all';
+  const f = studioState.filter === 'bdsm' ? 'bdsm' : 'general';
   const chip = (id, label) => {
-    const state = f === id ? 'active' : (f === 'all' ? '' : 'dim');
+    const state = f === id ? 'active' : 'dim';
     return `<span data-studio-group="${id}" class="chip-btn chip-${id} ${state}">${label}</span>`;
   };
   return `<div class="badges studio-chips" style="padding:.6rem 1.4rem;gap:.5rem;display:flex;flex-wrap:wrap">
@@ -3445,8 +3448,8 @@ function applyStudioFilter() {
   if (activeTab !== studioTab || !results.querySelector('.studio-list')) return 0;   // another view is on screen
   const q = (studioState.nameQuery || '').trim();
   const words = queryWords(q);
-  const f = studioState.filter || 'all';
-  const flt = studioTab === NETWORKS_TAB && f !== 'all';
+  const f = studioState.filter === 'bdsm' ? 'bdsm' : 'general';
+  const flt = studioTab === NETWORKS_TAB;
   const searchActive = words.length > 0;
   const fLabel = f === 'bdsm' ? 'BDSM' : 'General';
   let shown = 0, total = 0;
@@ -3686,7 +3689,7 @@ function renderStudioSections(data, append = false) {
   });
   bindStudioSearch();
   bindStudioChips();
-  if (studioState.nameQuery || (studioTab === NETWORKS_TAB && studioState.filter !== 'all')) applyStudioFilter();
+  if (studioState.nameQuery || studioTab === NETWORKS_TAB) applyStudioFilter();
   observeCategorySentinel();
   setTimeout(updateNetworkBarActive, 0);
   scheduleStudioRecheck();
@@ -4461,7 +4464,7 @@ async function fetchCatalogPage(kind, i, url) {
     if (data.error) throw new Error(data.error);
     for (const c of (data.categories || [])) {
       const key = (c.link || '').split('?')[0];
-      if (!key || st.seen.has(key)) continue;
+      if (!key || isAllVideosLink(key) || st.seen.has(key)) continue;
       st.seen.add(key);
       st.items.push({ ...c, sourceId: src.id, group: src.group });
       added++;
