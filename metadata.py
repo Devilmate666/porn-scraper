@@ -365,6 +365,204 @@ def _json_ld_video_only(soup):
     return _json_ld(soup)
 
 
+# --------------------------------------------------------------------------- per-site extractors
+# Each of the four built-in sites has its own page layout; these read exactly what the page shows
+# (story, genres, tags, stars, series, uploader, duration, views, rating) with the site's own markup.
+def _t(el):
+    return re.sub(r"\s+", " ", el.get_text(" ", strip=True)).strip() if el is not None else ""
+
+
+def _norm(s):
+    return re.sub(r"[\W_]+", " ", (s or "").lower()).strip()
+
+
+def _chips(anchors, base):
+    out, seen = [], set()
+    for a in anchors:
+        href = (a.get("href") or "").strip()
+        name = _clean_name(_t(a) or a.get("title") or "")
+        if not name or name.lower() in seen:
+            continue
+        seen.add(name.lower())
+        link = urljoin(base, href).split("#")[0] if href and not href.startswith(("#", "javascript:")) else None
+        out.append({"name": name, "link": link})
+    return out
+
+
+def _plain(names):
+    out, seen = [], set()
+    for n in names:
+        n = _clean_name(n)
+        if n and n.lower() not in seen:
+            seen.add(n.lower())
+            out.append({"name": n, "link": None})
+    return out
+
+
+def _count(v):
+    m = re.match(r"^\s*([\d.,]+)\s*([kKmM]?)\s*$", v or "")
+    if not m:
+        return 0
+    n = float(m.group(1).replace(",", ""))
+    return int(n * {"": 1, "k": 1000, "m": 1000000}[m.group(2).lower()])
+
+
+def _site_metadata(soup, host, url, title):
+    """-> dict with any of title / description / duration_seconds / date / views / rating / groups.
+    A key that is present REPLACES the generic result (description None = the site has no story)."""
+    site, g = {}, {}
+    if host.endswith("freesexvideos.xxx"):
+        for item in soup.select(".block-details .item"):
+            label = _t(item.find("span")).rstrip(":").lower()
+            links = [a for a in item.find_all("a", href=True) if (a["href"] or "").strip() not in ("", "#")]
+            kind = {"channel": "studios", "network": "studios", "categories": "categories", "pornstars": "models"}.get(label)
+            if kind and links:
+                g.setdefault(kind, []).extend(_chips(links, url))
+        tags = [x for v in _meta(soup, "video:tag") for x in re.split(r"[,;]", v)]
+        if tags:
+            g["tags"] = _plain(tags)
+        site["description"] = None            # the page has no story, only a generic "Watch X on Free Sex Videos" line
+        # views / votes of THIS video live in its own action bar (the generic scan would pick a related video's)
+        site["views"] = site["rating"] = None
+        m = re.match(r"^([\d.,]+\s*[kKmM]?)", _t(soup.select_one(".info-buttons .views")))
+        if m:
+            site["views"] = m.group(1).replace(" ", "")
+        votes = [_count(_t(c)) for c in soup.select(".info-buttons .vote-wrapper .count")]
+        if len(votes) == 2 and sum(votes) > 0:
+            site["rating"] = f"{round(100 * votes[0] / sum(votes))}%"
+        h = soup.select_one("#tab_video_info h1") or soup.find("h1")
+        t = re.sub(r"\s*/\s*\d{1,2}\.\d{1,2}\.\d{4}\s*$", "", _t(h))
+        known = {_norm(x["name"]) for v in g.values() for x in v if x.get("name")}
+        parts = [p for p in t.split(" - ")]
+        while len(parts) > 1 and _norm(parts[0]) in known:
+            parts.pop(0)
+        if t:
+            site["title"] = " - ".join(parts).strip()
+    elif "pornvideobb" in host:
+        full = _t(soup.select_one("h1.block-name-porn"))
+        rows = {}
+        for row in soup.select(".category-spisok"):
+            lab = _t(row.select_one(".cat-zagolovok")).rstrip(":").lower()
+            rows[lab] = _chips(row.find_all("a", href=True), url)
+        for lab, kind in (("categories", "categories"), ("porn star", "models"), ("pornstar", "models"), ("studio", "studios")):
+            if rows.get(lab):
+                g.setdefault(kind, []).extend(rows[lab])
+        # "Tags:" only repeats the genres with synonyms (beautiful / beauties / ass / booty ...): not shown
+        for li in soup.select(".porn-info li"):
+            tx = _t(li)
+            m = re.match(r"Views:\s*([\d.,]+\s*[kKmM]?)", tx)
+            if m:
+                site["views"] = m.group(1).replace(" ", "")
+            m = re.match(r"Date:\s*(\d{4}-\d{2}-\d{2})", tx)
+            if m:
+                site["date"] = m.group(1)
+        if full:
+            t = re.sub(r"^porn video\s+", "", full, flags=re.I)
+            names = [x["name"] for k in ("models", "studios") for x in g.get(k, [])]
+            changed = True
+            while changed:                      # the page appends "<stars> <studios>" to the title: remove them
+                changed, t = False, t.rstrip(" ,")
+                for n in sorted(names, key=len, reverse=True):
+                    if t.lower().endswith(n.lower()) and len(t) > len(n) + 3:
+                        t, changed = t[:-len(n)].rstrip(" ,"), True
+                        break
+            site["title"] = t
+        desc = _t(soup.select_one(".mini-description"))
+        if full and desc.lower().startswith(full.lower()):
+            desc = desc[len(full):].strip()   # the story block starts with the title + names again
+        site["description"] = desc or None
+    elif host.endswith("superporn.com"):
+        player = soup.select_one("[data-video-duration]")
+        if player and _to_seconds(player.get("data-video-duration")):
+            site["duration_seconds"] = _to_seconds(player.get("data-video-duration"))
+        nv = soup.select_one("#n-views")
+        if nv and _t(nv):
+            site["views"] = _t(nv)
+        sub = _t(soup.select_one(".data-video .subido")).strip(" ·")
+        if sub:
+            site["date"] = sub
+        like = dislike = None
+        for a in soup.select(".data-video a"):
+            tx = _t(a)
+            m = re.match(r"^([\d.,]+\s*[kKmM]?)\s+I like it", tx)
+            if m:
+                like = _count(m.group(1))
+            m = re.match(r"^([\d.,]+\s*[kKmM]?)\s+I don'?t like it", tx)
+            if m:
+                dislike = _count(m.group(1))
+        if like is not None and (like + (dislike or 0)) > 0:
+            site["rating"] = f"{round(100 * like / (like + (dislike or 0)))}%"
+        chips = soup.select(".data-video .catlist .chip-link")
+        stars = [a for a in chips if re.search(r"/(?:pornstars?|models?|stars?)/", a.get("href") or "", re.I)]
+        cats = [a for a in chips if a not in stars]
+        if stars:
+            g["models"] = _chips(stars, url)
+        series = [a for a in soup.select(".data-video a[href*='/series/']") if _t(a)]
+        if series:
+            g["studios"] = _chips(series[:1], url)
+        up = soup.select(".data-video a.info-uploader")
+        if up:
+            g["uploaders"] = _chips(up[:1], url)
+        if cats:
+            g["categories"] = _chips(cats, url)
+        desc = _t(soup.select_one("#resume"))
+        site["description"] = None if (not desc or _norm(desc) == _norm(title)) else desc
+    elif host.endswith("bdsmhole.com"):
+        def mi(name):
+            tag = soup.find("meta", attrs={"itemprop": name})
+            return (tag.get("content") or "").strip() if tag else ""
+        cands = [_t(e) for e in soup.select(".product_desc")] + [mi("description")]
+        cands = [c for c in cands if c and not c.lower().startswith("pornstars")]
+        if cands:
+            site["description"] = max(cands, key=len)      # the full story, not the one-sentence meta description
+        m = re.search(r"(\d[\d,]*)", mi("interactionCount").replace(" ", ""))
+        if m:
+            site["views"] = f"{int(m.group(1).replace(',', '')):,}"
+        try:
+            rv, best = float(mi("ratingValue")), float(mi("bestRating") or 5)
+            if rv > 0:
+                site["rating"] = f"{round(100 * rv / best)}%"
+        except ValueError:
+            pass
+        if re.match(r"\d{4}-\d{2}-\d{2}", mi("uploadDate")):
+            site["date"] = mi("uploadDate")[:10]
+        if _to_seconds(mi("duration")):
+            site["duration_seconds"] = _to_seconds(mi("duration"))
+        for dl in soup.select(".datalist"):
+            label = _t(dl.select_one(".datalist_title")).lower()
+            links = dl.select(".datalist_content a[href]")
+            kind = {"channel": "studios", "pornstars": "models", "tags": "tags"}.get(label)
+            if kind and links:
+                g[kind] = _chips(links, url)
+        genres = [x for v in _meta(soup, "video:tag") for x in re.split(r"[,;]", v)]
+        if genres:
+            g["categories"] = _plain(genres)    # the site's own genre list; the page's Tags row is separate
+    else:
+        return {}
+    if g:
+        site["groups"] = g
+    return site
+
+
+def _dedupe_groups(groups):
+    """No name twice: inside a group, and tags/genres never repeat a star, studio, uploader or each other."""
+    for k in list(groups):
+        seen, keep = set(), []
+        for x in groups[k]:
+            key = x["name"].lower()
+            if key not in seen:
+                seen.add(key)
+                keep.append(x)
+        groups[k] = keep
+    people = {x["name"].lower() for k in ("models", "studios", "uploaders") for x in groups.get(k, [])}
+    if groups.get("categories"):
+        groups["categories"] = [x for x in groups["categories"] if x["name"].lower() not in people]
+    cats = {x["name"].lower() for x in groups.get("categories", [])}
+    if groups.get("tags"):
+        groups["tags"] = [x for x in groups["tags"] if x["name"].lower() not in people | cats]
+    return {k: v for k, v in groups.items() if v}
+
+
 _EMB_LISTS = {
     "models": ("pornstars", "pornStars", "performers", "models", "actors", "stars", "cast"),
     "categories": ("categories", "genres", "niches", "category", "genre"),
@@ -485,7 +683,7 @@ def extract_metadata(html, url):
 
     d = ld.get("description") if isinstance(ld.get("description"), str) else (_meta(soup, "description", "og:description") or [None])[0]
     if d:
-        out["description"] = re.sub(r"\s+", " ", _unescape_text(d)).strip()[:400]
+        out["description"] = re.sub(r"\s+", " ", _unescape_text(d)).strip()[:6000]
 
     # Labeled rows ("Categories:", "Tags:", "Porn star:", "Studio:") are trusted when present;
     # otherwise fall back to recognising links by their URL shape.
@@ -524,8 +722,19 @@ def extract_metadata(html, url):
     if not groups.get("tags") and not groups.get("categories"):
         add_names("tags", [x for k in _meta(soup, "keywords") for x in _names(k)][:20])
 
+    # the four built-in sites: exact, site-specific extraction replaces the generic guess
+    host = (urlparse(url).hostname or "").lower()
+    site = _site_metadata(soup, host, url, out["title"])
+    for k in ("title", "description", "date", "views", "rating"):
+        if k in site:
+            out[k] = site[k]
+    if site.get("duration_seconds"):
+        out["duration_seconds"], out["duration"] = site["duration_seconds"], _fmt_seconds(site["duration_seconds"])
+    if site.get("groups"):
+        groups = {k: list(v) for k, v in site["groups"].items()}
+
     # fill what the HTML did not give from the page's embedded JSON state (only this video's own object)
-    emb = _embedded_video(soup, out["title"])
+    emb = None if site else _embedded_video(soup, out["title"])
     if emb:
         def pick(*keys):
             for k in keys:
@@ -556,17 +765,9 @@ def extract_metadata(html, url):
                 add_names(kind, _emb_names(emb[k])[:30])
 
     # PornVideoBB shows the same words as "genre" and "tags": keep one list (Genres). Elsewhere, drop tags that repeat a genre.
-    host = (urlparse(url).hostname or "").lower()
-    if "pornvideobb" in host:
-        if groups.get("categories"):
-            groups.pop("tags", None)
-        elif groups.get("tags"):
-            groups["categories"] = groups.pop("tags")
-    elif groups.get("tags") and groups.get("categories"):
-        cat = {x["name"].lower() for x in groups["categories"]}
-        groups["tags"] = [t for t in groups["tags"] if t["name"].lower() not in cat]
-        if not groups["tags"]:
-            groups.pop("tags", None)
+    if "pornvideobb" in host and not site.get("groups"):     # unknown layout: its Tags only repeat the Genres
+        groups.pop("tags", None)
+    groups = _dedupe_groups(groups)
 
     out["groups"] = [{"kind": k, "label": _LABELS[k], "items": groups[k][:40]} for k in _ORDER if groups.get(k)]
     return out

@@ -107,6 +107,146 @@ const parentEl = (n: N): HTMLElement | null => ((n as any).parentNode as HTMLEle
 const inside = (n: N | null, scope: HTMLElement): boolean => { while (n) { if (n === scope) return true; n = parentEl(n); } return false; };
 const sameSite = (a: string, b: string) => { const reg = (u: string) => { try { return new URL(u).hostname.toLowerCase().split(".").slice(-2).join("."); } catch { return ""; } }; return reg(a) === reg(b); };
 
+// ------------------------------------------------------------------ per-site extractors
+// Each built-in site has its own page layout; these read exactly what the page shows (story, genres, tags, stars,
+// series, uploader, duration, views, rating) with the site's own markup. Same rules as metadata.py.
+type Chip = { name: string; link: string | null };
+const normT = (s: string) => (s || "").toLowerCase().replace(/[\W_]+/gu, " ").trim();
+function chipsOf(anchors: HTMLElement[], base: string): Chip[] {
+  const out: Chip[] = [], seen = new Set<string>();
+  for (const a of anchors) {
+    const href = attr(a, "href").trim();
+    const name = cleanName(textOf(a) || attr(a, "title"));
+    if (!name || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    out.push({ name, link: href && !/^(#|javascript:)/i.test(href) ? (absUrl(base, href) || "").split("#")[0] || null : null });
+  }
+  return out;
+}
+function plainChips(names: string[]): Chip[] {
+  const out: Chip[] = [], seen = new Set<string>();
+  for (const raw of names) { const n = cleanName(raw); if (n && !seen.has(n.toLowerCase())) { seen.add(n.toLowerCase()); out.push({ name: n, link: null }); } }
+  return out;
+}
+const countOf = (v: string): number => {
+  const m = /^\s*([\d.,]+)\s*([kKmM]?)\s*$/.exec(v || "");
+  if (!m) return 0;
+  return Math.floor(parseFloat(m[1].replace(/,/g, "")) * ({ "": 1, k: 1000, m: 1000000 } as Record<string, number>)[m[2].toLowerCase()]);
+};
+const stripColon = (s: string) => s.replace(/:\s*$/, "").toLowerCase();
+
+function siteMetadata(root: HTMLElement, host: string, url: string, title: string | null): any {
+  const site: any = {};
+  const g: Record<string, Chip[]> = {};
+  const add = (k: string, v: Chip[]) => { if (v.length) g[k] = (g[k] || []).concat(v); };
+  const mi = (n: string) => attr(root.querySelector(`meta[itemprop="${n}"]`), "content").trim();
+  if (host.endsWith("freesexvideos.xxx")) {
+    for (const item of root.querySelectorAll(".block-details .item")) {
+      const label = stripColon(textOf(item.querySelector("span")));
+      const links = item.querySelectorAll("a").filter((a) => { const h = attr(a, "href").trim(); return !!h && h !== "#"; });
+      const kind = ({ channel: "studios", network: "studios", categories: "categories", pornstars: "models" } as Record<string, string>)[label];
+      if (kind) add(kind, chipsOf(links, url));
+    }
+    const tags = metaVals(root, "video:tag").flatMap((v) => v.split(/[,;]/));
+    if (tags.length) g.tags = plainChips(tags);
+    site.description = null;          // the page has no story, only a generic "Watch X on Free Sex Videos" line
+    // views / votes of THIS video live in its own action bar (the generic scan would pick a related video's)
+    site.views = site.rating = null;
+    const vm = /^([\d.,]+\s*[kKmM]?)/.exec(textOf(root.querySelector(".info-buttons .views")));
+    if (vm) site.views = vm[1].replace(/\s/g, "");
+    const votes = root.querySelectorAll(".info-buttons .vote-wrapper .count").map((c) => countOf(textOf(c)));
+    if (votes.length === 2 && votes[0] + votes[1] > 0) site.rating = `${Math.round((100 * votes[0]) / (votes[0] + votes[1]))}%`;
+    const t = textOf(root.querySelector("#tab_video_info h1") || root.querySelector("h1")).replace(/\s*\/\s*\d{1,2}\.\d{1,2}\.\d{4}\s*$/, "");
+    const known = new Set(([] as Chip[]).concat(...Object.values(g)).map((x) => normT(x.name)));
+    const parts = t.split(" - ");
+    while (parts.length > 1 && known.has(normT(parts[0]))) parts.shift();
+    if (t) site.title = parts.join(" - ").trim();
+  } else if (host.includes("pornvideobb")) {
+    const full = textOf(root.querySelector("h1.block-name-porn"));
+    const rows: Record<string, Chip[]> = {};
+    for (const row of root.querySelectorAll(".category-spisok")) rows[stripColon(textOf(row.querySelector(".cat-zagolovok")))] = chipsOf(row.querySelectorAll("a[href]"), url);
+    add("categories", rows["categories"] || []);
+    add("models", rows["porn star"] || rows["pornstar"] || []);
+    add("studios", rows["studio"] || []);
+    // "Tags:" only repeats the genres with synonyms (beautiful / beauties / ass / booty ...): not shown
+    for (const li of root.querySelectorAll(".porn-info li")) {
+      const tx = textOf(li);
+      let m = /^Views:\s*([\d.,]+\s*[kKmM]?)/.exec(tx);
+      if (m) site.views = m[1].replace(/\s/g, "");
+      m = /^Date:\s*(\d{4}-\d{2}-\d{2})/.exec(tx);
+      if (m) site.date = m[1];
+    }
+    if (full) {
+      let t = full.replace(/^porn video\s+/i, "");
+      const names = [...(g.models || []), ...(g.studios || [])].map((x) => x.name).sort((a, b) => b.length - a.length);
+      for (let changed = true; changed;) {      // the page appends "<stars> <studios>" to the title: remove them
+        changed = false; t = t.replace(/[ ,]+$/, "");
+        for (const n of names) if (t.toLowerCase().endsWith(n.toLowerCase()) && t.length > n.length + 3) { t = t.slice(0, -n.length).replace(/[ ,]+$/, ""); changed = true; break; }
+      }
+      site.title = t;
+    }
+    let desc = textOf(root.querySelector(".mini-description"));
+    if (full && desc.toLowerCase().startsWith(full.toLowerCase())) desc = desc.slice(full.length).trim();   // story block starts with title + names again
+    site.description = desc || null;
+  } else if (host.endsWith("superporn.com")) {
+    const sec = toSeconds(attr(root.querySelector("[data-video-duration]"), "data-video-duration"));
+    if (sec) site.duration_seconds = sec;
+    const nv = textOf(root.querySelector("#n-views"));
+    if (nv) site.views = nv;
+    const sub = textOf(root.querySelector(".data-video .subido")).replace(/^[\s·]+|[\s·]+$/g, "");
+    if (sub) site.date = sub;
+    let like: number | null = null, dislike: number | null = null;
+    for (const a of root.querySelectorAll(".data-video a")) {
+      const tx = textOf(a);
+      let m = /^([\d.,]+\s*[kKmM]?)\s+I like it/.exec(tx); if (m) like = countOf(m[1]);
+      m = /^([\d.,]+\s*[kKmM]?)\s+I don'?t like it/.exec(tx); if (m) dislike = countOf(m[1]);
+    }
+    if (like !== null && like + (dislike || 0) > 0) site.rating = `${Math.round((100 * like) / (like + (dislike || 0)))}%`;
+    const chips = root.querySelectorAll(".data-video .catlist .chip-link");
+    const isStar = (a: HTMLElement) => /\/(?:pornstars?|models?|stars?)\//i.test(attr(a, "href"));
+    add("models", chipsOf(chips.filter(isStar), url));
+    const series = root.querySelectorAll(".data-video a[href*='/series/']").filter((a) => textOf(a));
+    add("studios", chipsOf(series.slice(0, 1), url));
+    add("uploaders", chipsOf(root.querySelectorAll(".data-video a.info-uploader").slice(0, 1), url));
+    add("categories", chipsOf(chips.filter((a) => !isStar(a)), url));
+    const desc = textOf(root.querySelector("#resume"));
+    site.description = !desc || normT(desc) === normT(title || "") ? null : desc;
+  } else if (host.endsWith("bdsmhole.com")) {
+    const cands = [...root.querySelectorAll(".product_desc").map((e) => textOf(e)), mi("description")].filter((c) => c && !c.toLowerCase().startsWith("pornstars"));
+    if (cands.length) site.description = cands.reduce((a, b) => (b.length > a.length ? b : a));   // full story, not the one-sentence meta description
+    const vm = /(\d[\d,]*)/.exec(mi("interactionCount").replace(/\s/g, ""));
+    if (vm) site.views = parseInt(vm[1].replace(/,/g, ""), 10).toLocaleString("en-US");
+    const rv = parseFloat(mi("ratingValue")), best = parseFloat(mi("bestRating") || "5");
+    if (rv > 0 && best > 0) site.rating = `${Math.round((100 * rv) / best)}%`;
+    if (/^\d{4}-\d{2}-\d{2}/.test(mi("uploadDate"))) site.date = mi("uploadDate").slice(0, 10);
+    const sec = toSeconds(mi("duration"));
+    if (sec) site.duration_seconds = sec;
+    for (const dl of root.querySelectorAll(".datalist")) {
+      const kind = ({ channel: "studios", pornstars: "models", tags: "tags" } as Record<string, string>)[textOf(dl.querySelector(".datalist_title")).toLowerCase()];
+      const links = dl.querySelectorAll(".datalist_content a[href]");
+      if (kind && links.length) g[kind] = chipsOf(links, url);
+    }
+    const genres = metaVals(root, "video:tag").flatMap((v) => v.split(/[,;]/));
+    if (genres.length) g.categories = plainChips(genres);   // the site's own genre list; the page's Tags row is separate
+  } else return {};
+  if (Object.keys(g).length) site.groups = g;
+  return site;
+}
+
+/** No name twice: inside a group, and tags/genres never repeat a star, studio, uploader or each other. */
+function dedupeGroups(groups: Record<string, any[]>) {
+  for (const k of Object.keys(groups)) {
+    const seen = new Set<string>();
+    groups[k] = groups[k].filter((x) => { const key = x.name.toLowerCase(); if (seen.has(key)) return false; seen.add(key); return true; });
+  }
+  const people = new Set<string>();
+  for (const k of ["models", "studios", "uploaders"]) for (const x of groups[k] || []) people.add(x.name.toLowerCase());
+  if (groups.categories) groups.categories = groups.categories.filter((x) => !people.has(x.name.toLowerCase()));
+  const cats = new Set((groups.categories || []).map((x) => x.name.toLowerCase()));
+  if (groups.tags) groups.tags = groups.tags.filter((x) => !people.has(x.name.toLowerCase()) && !cats.has(x.name.toLowerCase()));
+  for (const k of Object.keys(groups)) if (!groups[k].length) delete groups[k];
+}
+
 // Some sites (SPA-style pages) keep duration / stars / genres only in an embedded JSON state, not in the HTML.
 // Find the object of THIS video there (matched by title) and read its fields; never guesses from other videos.
 const EMB_LISTS: Record<string, string[]> = {
@@ -234,7 +374,7 @@ export function extractMetadata(html: string, url: string): any {
   const ar = ld.aggregateRating;
   if (ar && typeof ar === "object" && ar.ratingValue !== undefined && ar.ratingValue !== null) out.rating = String(ar.ratingValue);
   const d = typeof ld.description === "string" ? ld.description : metaVals(root, "description", "og:description")[0];
-  if (d) out.description = collapse(unesc(d)).slice(0, 400);
+  if (d) out.description = collapse(unesc(d)).slice(0, 6000);
 
   // --- labeled rows ("Categories:", "Tags:", "Porn star:" ...)
   const labeled: Record<string, { name: string; link: string }[]> = {};
@@ -359,8 +499,15 @@ export function extractMetadata(html: string, url: string): any {
   if (!(groups.tags || []).length) addNames("tags", [...names(ld.keywords), ...metaVals(root, "video:tag", "article:tag")]);
   if (!(groups.tags || []).length && !(groups.categories || []).length) addNames("tags", metaVals(root, "keywords").flatMap(names).slice(0, 20));
 
+  // the four built-in sites: exact, site-specific extraction replaces the generic guess
+  const host = (() => { try { return new URL(url).hostname.toLowerCase(); } catch { return ""; } })();
+  const site = siteMetadata(root, host, url, out.title);
+  for (const k of ["title", "description", "date", "views", "rating"]) if (k in site) out[k] = site[k];
+  if (site.duration_seconds) { out.duration_seconds = site.duration_seconds; out.duration = fmtSeconds(site.duration_seconds); }
+  if (site.groups) { for (const k of Object.keys(groups)) delete groups[k]; Object.assign(groups, site.groups); }
+
   // fill what the HTML did not give from the page's embedded JSON state (only this video's own object)
-  const emb = embeddedVideo(root, out.title);
+  const emb = Object.keys(site).length ? null : embeddedVideo(root, out.title);
   if (emb) {
     const pick = (keys: string[]) => { for (const k of keys) if (emb[k] !== undefined && emb[k] !== null && emb[k] !== "") return emb[k]; return null; };
     if (!out.duration_seconds) { const s = toSeconds(pick(["duration", "durationSeconds", "duration_seconds", "length", "lengthSeconds", "runtime"])); if (s) { out.duration_seconds = s; out.duration = fmtSeconds(s); } }
@@ -374,16 +521,8 @@ export function extractMetadata(html: string, url: string): any {
     }
   }
 
-  // PornVideoBB shows the same words as "genre" and "tags": keep one list (Genres). Elsewhere, drop tags that repeat a genre.
-  const host = (() => { try { return new URL(url).hostname.toLowerCase(); } catch { return ""; } })();
-  if (host.includes("pornvideobb")) {
-    if ((groups.categories || []).length) delete groups.tags;
-    else if (groups.tags) { groups.categories = groups.tags; delete groups.tags; }
-  } else if ((groups.tags || []).length && (groups.categories || []).length) {
-    const cat = new Set(groups.categories.map((x) => x.name.toLowerCase()));
-    groups.tags = groups.tags.filter((t) => !cat.has(t.name.toLowerCase()));
-    if (!groups.tags.length) delete groups.tags;
-  }
+  if (host.includes("pornvideobb") && !site.groups) delete groups.tags;   // unknown layout: its Tags only repeat the Genres
+  dedupeGroups(groups);
 
   out.groups = ORDER.filter((k) => (groups[k] || []).length).map((k) => ({ kind: k, label: LABELS[k], items: groups[k].slice(0, 40) }));
   return out;
