@@ -567,9 +567,14 @@ def scrape_channels_bundle(category: str | None = None, max_pages: int | None = 
                 data = fetch_channels(category, n)
         except Exception as e:
             err = str(e)
+            print(f"  channels[{cat}] page {n} raised: {err[:200]}")
             break
         if not data or data.get("error") or not data.get("items"):
             err = (data or {}).get("error") if n == 1 else None
+            if n == 1:
+                print(f"  channels[{cat}] page 1 failed: {err or 'page loaded but no channel cards found'}")
+                for note in ((data or {}).get("diagnostics") or [])[:8]:
+                    print(f"    channels: {note}")
             break
         pages[str(n)] = data
         if not data.get("next_page"):

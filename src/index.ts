@@ -4,6 +4,7 @@ import { scrapeListing } from "./listings";
 import { resolveVideo, resolveFull } from "./resolve";
 import { fetchMetadata } from "./metadata";
 import { fetchLiveCams } from "./cams";
+import { fetchChannelsNative } from "./channels";
 
 // ---------------------------------------------------------------------------------------------------------
 // API Worker - built so the site keeps working even when GitHub, a cam platform or your PC is down.
@@ -499,6 +500,14 @@ export default {
           if (legacy && !legacy.error) return send(legacy, "kv");
           const stale = await edgeGetJson(`lkg/channels/${cat}/${page}`);
           if (stale) return send(stale, "stale-edge");
+          // nothing from the scraper yet: fetch xlivetv.com right here (Cloudflare's network), then keep it in KV
+          if (nativeOn) {
+            const nat = await native(`channels/${cat}/${page}`, 600, () => fetchChannelsNative(cat === "all" ? null : cat, page), (d) => !!d.items?.length || !!d.end);
+            if (nat) {
+              if (nat.items?.length) ctx.waitUntil(env.SCRAPE_DATA.put(`channels:${cat}:${page}`, JSON.stringify({ ...nat, _ts: nowSec() }), { expirationTtl: 12 * 3600 }).catch(() => undefined));
+              return send(nat, "native", 0);
+            }
+          }
           const l = await missLive(); if (l) return l;
           want({ t: "channels", category: cat === "all" ? null : cat, page });
           ctx.waitUntil(dispatchGithub(env, "channels-missing").then(() => undefined));
