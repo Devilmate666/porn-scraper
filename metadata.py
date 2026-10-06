@@ -365,6 +365,69 @@ def _json_ld_video_only(soup):
     return _json_ld(soup)
 
 
+_EMB_LISTS = {
+    "models": ("pornstars", "pornStars", "performers", "models", "actors", "stars", "cast"),
+    "categories": ("categories", "genres", "niches", "category", "genre"),
+    "tags": ("tags", "keywords"),
+    "studios": ("channel", "studio", "network", "series", "site", "producer"),
+}
+
+
+def _norm_title(t):
+    return re.sub(r"[\W_]+", " ", (t or "").lower()).strip()
+
+
+def _embedded_video(soup, title):
+    """Some SPA-style pages keep duration / stars / genres only in an embedded JSON state. Find the object of THIS
+    video there (matched by title) and return it; never guesses from other videos."""
+    want = _norm_title(title)
+    if len(want) < 4:
+        return None
+    roots = []
+    for sc in soup.find_all("script"):
+        if "ld+json" in (sc.get("type") or "").lower():
+            continue
+        raw = (sc.string or sc.get_text() or "").strip()
+        if len(raw) < 40 or len(raw) > 3_000_000:
+            continue
+        txt = raw if raw[0] in "[{" else None
+        if txt is None:
+            m = re.search(r"(?:__[A-Z0-9_]+__|INITIAL_STATE|initialState)\s*=\s*([\[{].*[\]}])\s*;?\s*$", raw, re.S)
+            txt = m.group(1) if m else None
+        if not txt:
+            continue
+        try:
+            roots.append(json.loads(txt))
+        except ValueError:
+            pass
+    stack, n = list(roots), 0
+    while stack and n < 30000:
+        n += 1
+        x = stack.pop()
+        if isinstance(x, list):
+            stack.extend(v for v in x if isinstance(v, (dict, list)))
+            continue
+        if not isinstance(x, dict):
+            continue
+        t = x.get("title") if x.get("title") is not None else x.get("name")
+        if isinstance(t, str):
+            tn = _norm_title(t)
+            if tn == want or (len(tn) > 8 and (tn in want or want in tn)):
+                return x
+        stack.extend(v for v in x.values() if isinstance(v, (dict, list)))
+    return None
+
+
+def _emb_names(v):
+    if isinstance(v, str):
+        return [p.strip() for p in re.split(r"[,;|]", v) if p.strip()]
+    if isinstance(v, list):
+        return [n for x in v for n in _emb_names(x if isinstance(x, (str, dict)) else str(x))]
+    if isinstance(v, dict):
+        return _emb_names(v.get("name") or v.get("title") or v.get("slug") or "")
+    return []
+
+
 def extract_metadata(html, url):
     soup = BeautifulSoup(html, "lxml")
     ld = _json_ld_video_only(soup)
@@ -460,6 +523,50 @@ def extract_metadata(html, url):
         add_names("tags", _names(ld.get("keywords")) + _meta(soup, "video:tag", "article:tag"))
     if not groups.get("tags") and not groups.get("categories"):
         add_names("tags", [x for k in _meta(soup, "keywords") for x in _names(k)][:20])
+
+    # fill what the HTML did not give from the page's embedded JSON state (only this video's own object)
+    emb = _embedded_video(soup, out["title"])
+    if emb:
+        def pick(*keys):
+            for k in keys:
+                if emb.get(k) not in (None, ""):
+                    return emb[k]
+            return None
+        if not out["duration_seconds"]:
+            s = _to_seconds(pick("duration", "durationSeconds", "duration_seconds", "length", "lengthSeconds", "runtime"))
+            if s:
+                out["duration_seconds"], out["duration"] = s, _fmt_seconds(s)
+        if not out["views"]:
+            v = pick("views", "viewCount", "view_count", "viewsCount", "numViews")
+            if v is not None and not isinstance(v, (dict, list)):
+                out["views"] = f"{v:,}" if isinstance(v, int) and not isinstance(v, bool) else (str(v).strip() or None)
+        if not out["rating"]:
+            r = pick("rating", "ratingValue", "likesPercent", "likes_percent")
+            if r is not None and not isinstance(r, (dict, list)):
+                out["rating"] = str(r)
+        if not out["date"]:
+            d = pick("uploadDate", "createdAt", "created_at", "publishedAt", "published_at", "datePublished", "releaseDate", "added")
+            if isinstance(d, str) and re.match(r"\d{4}-\d{2}-\d{2}", d):
+                out["date"] = d[:10]
+        for kind, keys in _EMB_LISTS.items():
+            if groups.get(kind):
+                continue
+            k = next((x for x in keys if emb.get(x) not in (None, "")), None)
+            if k:
+                add_names(kind, _emb_names(emb[k])[:30])
+
+    # PornVideoBB shows the same words as "genre" and "tags": keep one list (Genres). Elsewhere, drop tags that repeat a genre.
+    host = (urlparse(url).hostname or "").lower()
+    if "pornvideobb" in host:
+        if groups.get("categories"):
+            groups.pop("tags", None)
+        elif groups.get("tags"):
+            groups["categories"] = groups.pop("tags")
+    elif groups.get("tags") and groups.get("categories"):
+        cat = {x["name"].lower() for x in groups["categories"]}
+        groups["tags"] = [t for t in groups["tags"] if t["name"].lower() not in cat]
+        if not groups["tags"]:
+            groups.pop("tags", None)
 
     out["groups"] = [{"kind": k, "label": _LABELS[k], "items": groups[k][:40]} for k in _ORDER if groups.get(k)]
     return out

@@ -2884,6 +2884,18 @@ function updateDescMore() {
   requestAnimationFrame(measure);       // once the panel has been laid out
 }
 
+/** PornVideoBB lists the same words as Genres and Tags: show them once, as Genres (also fixes cached answers). */
+function cleanPageMeta(detail, m) {
+  try {
+    if (!m || !Array.isArray(m.groups) || !/pornvideobb\./i.test(new URL(detail).hostname)) return m;
+    const has = k => m.groups.some(g => g.kind === k && g.items && g.items.length);
+    m.groups = has('categories')
+      ? m.groups.filter(g => g.kind !== 'tags')
+      : m.groups.map(g => g.kind === 'tags' ? { ...g, kind: 'categories' } : g);
+  } catch (e) { /* leave as is */ }
+  return m;
+}
+
 async function loadPlayerMeta(detail) {
   const token = ++playerMetaToken;
   const seed = playerMetaFromItem(cardItemByLink.get(detail));
@@ -2899,7 +2911,7 @@ async function loadPlayerMeta(detail) {
     const page = await res.json();
     if (page && !page.error) rememberPageMeta(detail, page);   // its tags / stars / description become searchable
     if (token !== playerMetaToken) return;               // another video / closed meanwhile
-    if (page && !page.error) renderPlayerMeta(mergePlayerMeta(seed, page));
+    if (page && !page.error) renderPlayerMeta(cleanPageMeta(detail, mergePlayerMeta(seed, cleanPageMeta(detail, page))));
   } catch { /* the seed (if any) stays; metadata is a bonus */ }
 }
 

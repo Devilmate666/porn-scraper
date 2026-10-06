@@ -107,6 +107,46 @@ const parentEl = (n: N): HTMLElement | null => ((n as any).parentNode as HTMLEle
 const inside = (n: N | null, scope: HTMLElement): boolean => { while (n) { if (n === scope) return true; n = parentEl(n); } return false; };
 const sameSite = (a: string, b: string) => { const reg = (u: string) => { try { return new URL(u).hostname.toLowerCase().split(".").slice(-2).join("."); } catch { return ""; } }; return reg(a) === reg(b); };
 
+// Some sites (SPA-style pages) keep duration / stars / genres only in an embedded JSON state, not in the HTML.
+// Find the object of THIS video there (matched by title) and read its fields; never guesses from other videos.
+const EMB_LISTS: Record<string, string[]> = {
+  models: ["pornstars", "pornStars", "performers", "models", "actors", "stars", "cast"],
+  categories: ["categories", "genres", "niches", "category", "genre"],
+  tags: ["tags", "keywords"],
+  studios: ["channel", "studio", "network", "series", "site", "producer"],
+};
+const normTitle = (t: string) => (t || "").toLowerCase().replace(/[\W_]+/gu, " ").trim();
+function embeddedVideo(root: HTMLElement, title: string | null): any | null {
+  const want = normTitle(title || "");
+  if (want.length < 4) return null;
+  const roots: any[] = [];
+  for (const sc of root.querySelectorAll("script")) {
+    if (/ld\+json/i.test(attr(sc, "type"))) continue;
+    const raw = (sc.rawText || "").trim();
+    if (raw.length < 40 || raw.length > 3_000_000) continue;
+    let txt: string | null = null;
+    if (/^[\[{]/.test(raw)) txt = raw;
+    else { const m = /(?:__[A-Z0-9_]+__|INITIAL_STATE|initialState)\s*=\s*([\[{][\s\S]*[\]}])\s*;?\s*$/.exec(raw); if (m) txt = m[1]; }
+    if (!txt) continue;
+    try { roots.push(JSON.parse(txt)); } catch { /* not json */ }
+  }
+  let n = 0;
+  const stack: any[] = [...roots];
+  while (stack.length && n++ < 30000) {
+    const x = stack.pop();
+    if (Array.isArray(x)) { for (const v of x) if (v && typeof v === "object") stack.push(v); continue; }
+    if (!x || typeof x !== "object") continue;
+    const t = x.title ?? x.name;
+    if (typeof t === "string") { const tn = normTitle(t); if (tn === want || (tn.length > 8 && (want.includes(tn) || tn.includes(want)))) return x; }
+    for (const v of Object.values(x)) if (v && typeof v === "object") stack.push(v);
+  }
+  return null;
+}
+const embNames = (v: any): string[] =>
+  typeof v === "string" ? v.split(/[,;|]/).map((x) => x.trim()).filter(Boolean)
+  : Array.isArray(v) ? v.flatMap((x) => (x && typeof x === "object" ? embNames(x.name ?? x.title ?? x.slug ?? "") : embNames(String(x ?? ""))))
+  : v && typeof v === "object" ? embNames(v.name ?? v.title ?? v.slug ?? "") : [];
+
 export function extractMetadata(html: string, url: string): any {
   const root = prepareFull(html);
   const ld = jsonLd(root);
@@ -318,6 +358,32 @@ export function extractMetadata(html: string, url: string): any {
   addNames("studios", [...names(ld.productionCompany), ...names(ld.publisher)]);
   if (!(groups.tags || []).length) addNames("tags", [...names(ld.keywords), ...metaVals(root, "video:tag", "article:tag")]);
   if (!(groups.tags || []).length && !(groups.categories || []).length) addNames("tags", metaVals(root, "keywords").flatMap(names).slice(0, 20));
+
+  // fill what the HTML did not give from the page's embedded JSON state (only this video's own object)
+  const emb = embeddedVideo(root, out.title);
+  if (emb) {
+    const pick = (keys: string[]) => { for (const k of keys) if (emb[k] !== undefined && emb[k] !== null && emb[k] !== "") return emb[k]; return null; };
+    if (!out.duration_seconds) { const s = toSeconds(pick(["duration", "durationSeconds", "duration_seconds", "length", "lengthSeconds", "runtime"])); if (s) { out.duration_seconds = s; out.duration = fmtSeconds(s); } }
+    if (!out.views) { const v = pick(["views", "viewCount", "view_count", "viewsCount", "numViews"]); if (v !== null && typeof v !== "object") out.views = typeof v === "number" ? v.toLocaleString("en-US") : String(v).trim() || null; }
+    if (!out.rating) { const r = pick(["rating", "ratingValue", "likesPercent", "likes_percent"]); if (r !== null && typeof r !== "object") out.rating = String(r); }
+    if (!out.date) { const d = pick(["uploadDate", "createdAt", "created_at", "publishedAt", "published_at", "datePublished", "releaseDate", "added"]); if (typeof d === "string" && /^\d{4}-\d{2}-\d{2}/.test(d)) out.date = d.slice(0, 10); }
+    for (const [kind, keys] of Object.entries(EMB_LISTS)) {
+      if ((groups[kind] || []).length) continue;
+      const k = keys.find((x) => emb[x] !== undefined && emb[x] !== null && emb[x] !== "");
+      if (k) addNames(kind, embNames(emb[k]).slice(0, 30));
+    }
+  }
+
+  // PornVideoBB shows the same words as "genre" and "tags": keep one list (Genres). Elsewhere, drop tags that repeat a genre.
+  const host = (() => { try { return new URL(url).hostname.toLowerCase(); } catch { return ""; } })();
+  if (host.includes("pornvideobb")) {
+    if ((groups.categories || []).length) delete groups.tags;
+    else if (groups.tags) { groups.categories = groups.tags; delete groups.tags; }
+  } else if ((groups.tags || []).length && (groups.categories || []).length) {
+    const cat = new Set(groups.categories.map((x) => x.name.toLowerCase()));
+    groups.tags = groups.tags.filter((t) => !cat.has(t.name.toLowerCase()));
+    if (!groups.tags.length) delete groups.tags;
+  }
 
   out.groups = ORDER.filter((k) => (groups[k] || []).length).map((k) => ({ kind: k, label: LABELS[k], items: groups[k].slice(0, 40) }));
   return out;
