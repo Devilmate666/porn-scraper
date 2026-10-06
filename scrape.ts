@@ -192,6 +192,7 @@ function isVideoPreview(a: HTMLElement, baseHost: string, base: string): boolean
   const low = path.toLowerCase();
   if (PHOTO_PATHS.some((f) => low.includes(f))) return false;
   if (SKIP_PATHS.some((s) => low.startsWith(s))) return false;
+  if (/^\/videos(\/(page\/)?\d+)?\/?$/.test(low)) return false;   // /videos/, /videos/2/ ... are listing pages of the site, not videos
   const cid = (clsOf(a) + " " + attr(a, "id").toLowerCase());
   if (NAV_CLASSES.some((k) => cid.includes(k))) return false;
   if (cardHasVideoHint(a)) return true;

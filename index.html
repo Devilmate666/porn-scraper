@@ -975,8 +975,29 @@ window.resetBackend = function () { try { localStorage.removeItem('api_base'); }
 (function () {
   const _fetch = window.fetch.bind(window);
   window.fetch = function (input, init) {
-    if (typeof input === 'string' && input.startsWith('/api/')) input = API_BASE + input;
-    return _fetch(input, init);
+    let isFeed = false;
+    if (typeof input === 'string' && input.startsWith('/api/')) {
+      isFeed = /^\/api\/(scrape|search)(\?|$)/.test(input);
+      input = API_BASE + input;
+    }
+    const p = _fetch(input, init);
+    if (!isFeed) return p;
+    // Listing pages of the site (/videos/, /videos/2/ ...) are not videos: drop them from every feed answer, even cached ones.
+    const PAGE_LINK = /^\/videos(\/(page\/)?\d+)?\/?$/i;
+    const bad = (it) => { try { return !!(it && it.link) && PAGE_LINK.test(new URL(it.link, 'https://x.invalid').pathname); } catch (e) { return false; } };
+    const strip = (o, d) => {
+      if (!o || typeof o !== 'object' || d > 3) return;
+      if (Array.isArray(o.items)) o.items = o.items.filter(it => !bad(it));
+      for (const v of Object.values(o)) if (v && typeof v === 'object') strip(v, d + 1);
+    };
+    return p.then(async (res) => {
+      try {
+        const data = await res.clone().json();
+        strip(data, 0);
+        const headers = new Headers(res.headers); headers.delete('content-length'); headers.delete('content-encoding');
+        return new Response(JSON.stringify(data), { status: res.status, statusText: res.statusText, headers });
+      } catch (e) { return res; }
+    });
   };
 })();
 </script>

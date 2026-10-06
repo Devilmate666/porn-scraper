@@ -518,6 +518,8 @@ def _is_video_preview(a, base_host):
     for skip in ("/login", "/signup", "/register", "/terms", "/privacy", "/contact", "/about", "/faq", "/dmca"):
         if path.lower().startswith(skip):
             return False
+    if re.match(r"^/videos(/(page/)?\d+)?/?$", path.lower()):   # /videos/, /videos/2/ ... are listing pages, not videos
+        return False
     cls_id = " ".join(list(a.get("class") or []) + [a.get("id") or ""]).lower()
     if any(k in cls_id for k in ("navbar", "nav-", "-nav", "menu", "header", "footer", "breadcrumb", "pagination")):
         return False
