@@ -1,5 +1,8 @@
 import { Env } from "./types";
 import { scrapePage, searchOne, combineResults } from "./scrape";
+import { scrapeListing } from "./listings";
+import { resolveVideo, resolveFull } from "./resolve";
+import { fetchMetadata } from "./metadata";
 
 // ---------------------------------------------------------------------------
 // API Worker. Two data sources, used like the always-running Flask server would:
@@ -215,6 +218,17 @@ export default {
       return out;
     };
 
+    /** Run a native scraper once per (key) and keep a good answer at the edge. Failures are never cached. */
+    const nativeCached = async (key: string, seconds: number, run: () => Promise<any>, good: (d: any) => boolean): Promise<any | null> => {
+      const k = `n/${await sha1Hex(key)}`;
+      if (!forced) { const c = await edgeGetJson(k); if (c) return c; }
+      const d = await run().catch(() => null);
+      if (!d || d.error || !good(d)) return null;
+      edgePutJson(k, d, seconds);
+      return d;
+    };
+    const nativeOut = (d: any) => { const o = json(d, 200, headers); o.headers.set("X-Source", "native"); return o; };
+
     try {
       switch (url.pathname) {
         case "/healthz":
@@ -302,12 +316,24 @@ export default {
           if (!isPost) break;
           const b = await body<{ url?: string }>();
           if (!b.url) return err("url is required", 400, headers);
+          const full = url.pathname === "/api/resolve-full";
           const live = await tryLive();
           if (live) return live;
-          const prefix = url.pathname === "/api/resolve" ? "resolve" : "resolve-full";
+          const prefix = full ? "resolve-full" : "resolve";
+          const hasVideo = (d: any) => !!d?.video;
+          const runNative = () => nativeCached(`${prefix}|${b.url}`, 300, async () => {
+            if (full) return resolveFull(b.url!);
+            const r = await resolveVideo(b.url!, true);                       // like Flask: light first ...
+            return !r.video && !r.error ? resolveVideo(b.url!, false) : r;     // ... then a deeper pass
+          }, hasVideo);
+          if (nativeFirst) { const n = await runNative(); if (n) return nativeOut(n); }
           const data = await kvGet(env.SCRAPE_DATA, `${prefix}:${b.url}`);
-          if (!data || (data as any).error) { const l = await missLive(); if (l) return l; }
-          if (!data) want({ t: "resolve", url: b.url, full: prefix === "resolve-full" });
+          if (!data || (data as any).error || !hasVideo(data)) {
+            const l = await missLive();
+            if (l) return l;
+            if (nativeOn && !nativeFirst) { const n = await runNative(); if (n) return nativeOut(n); }
+          }
+          if (!data) want({ t: "resolve", url: b.url, full });
           return json(data || { video: null, error: NOT_CACHED }, 200, headers);
         }
 
@@ -316,16 +342,20 @@ export default {
           const b = await body<{ url?: string }>();
           const u = (b.url || "").trim();
           if (!u) return err("valid url is required", 400, headers);
-          // metadata is cheap and stable: shard cache first, live only on a miss
+          // pre-scraped shard first (free + instant), then the page is scraped live
           const shard = (await sha1Hex(u))[0];
           const bundle = await kvGet<{ items?: Record<string, any> }>(env.SCRAPE_DATA, `meta-shard:${shard}`);
           const hit = bundle?.items?.[u] ?? (await kvGet<any>(env.SCRAPE_DATA, `meta:${u}`));
-          if (hit) {
+          if (hit && !forced) {
             const { _ts, ...meta } = hit;
             return json(meta, 200, headers);
           }
           const live = await viaBackend();
           if (live) return live;
+          if (nativeOn) {
+            const n = await nativeCached(`meta|${u}`, 3600, () => fetchMetadata(u), (d) => !!(d.title || d.duration || (d.groups || []).length));
+            if (n) return nativeOut(n);
+          }
           return json({ url: u, groups: [], error: NOT_CACHED }, 200, headers);
         }
 
@@ -377,8 +407,16 @@ export default {
           } catch { /* keep mode */ }
           const live = await tryLive();
           if (live) return live;
+          const pn = b.page_num ?? null;
+          const listingGood = (d: any) => !!((d.categories || []).length || (d.sections || []).length || (d.models || []).length);
+          const runNative = () => nativeCached(`cat|${b.url}|${mode}|${pn ?? 1}`, 900, () => scrapeListing(b.url!, mode, pn), listingGood);
+          if (nativeFirst) { const n = await runNative(); if (n) return nativeOut(n); }
           const data = await kvGet(env.SCRAPE_DATA, `categories:${b.url}:${mode}:${b.page_num || 1}`);
-          if (!data || (data as any).error) { const l = await missLive(); if (l) return l; }
+          if (!data || (data as any).error) {
+            const l = await missLive();
+            if (l) return l;
+            if (nativeOn && !nativeFirst) { const n = await runNative(); if (n) return nativeOut(n); }
+          }
           if (!data) want({ t: "categories", url: b.url, mode, page_num: b.page_num || 1 });
           return json(data || { categories: [], count: 0, error: NOT_CACHED }, 200, headers);
         }
