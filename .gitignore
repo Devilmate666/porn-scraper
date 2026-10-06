@@ -45,6 +45,13 @@ tunnel.log
 *.bat
 *.ps1
 *.sh
+# the GitHub workflows need these scripts:
+!.github/scripts/*.sh
 fly.toml
 Dockerfile
 .dockerignore
+
+# Local build / tool folders
+static/
+.kilo/
+
