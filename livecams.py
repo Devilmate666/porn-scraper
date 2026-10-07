@@ -21,6 +21,7 @@ Every step reports what happened in `diagnostics`, so a failure is explained ins
 import html as _html
 import json
 import os
+import random
 import re
 import threading
 import time
@@ -358,6 +359,18 @@ def _cam_from_dict(d, base, provider=None, need_thumb=True):
     }
 
 
+_STRONG_NAME = ("username", "user_name", "userName", "nickname", "nick", "displayName", "display_name", "model", "modelName")
+
+
+def _is_room(x):
+    """A real room has a username-like key, or a generic name PLUS viewers / a thumbnail: category and filter lists have neither."""
+    if not isinstance(x, dict):
+        return False
+    if any(isinstance(x.get(k), str) and x[k].strip() for k in _STRONG_NAME):
+        return True
+    return bool(_first(x, ("name", "slug"))) and (_first(x, _K_VIEWERS) is not None or _first(x, _K_THUMB) is not None)
+
+
 def _room_list(data):
     """The biggest list of room-like objects anywhere in a JSON document."""
     best = []
@@ -370,9 +383,10 @@ def _room_list(data):
             for v in n.values():
                 walk(v, depth + 1)
         elif isinstance(n, list):
-            ds = [x for x in n if isinstance(x, dict)]
-            if len(ds) >= 2 and sum(1 for x in ds if _first(x, _K_NAME)) >= len(ds) * 0.6 and len(ds) > len(best):
-                best = ds
+            dicts = [x for x in n if isinstance(x, dict)]
+            rooms = [x for x in dicts if _is_room(x)]
+            if len(rooms) >= 2 and len(rooms) >= len(dicts) * 0.6 and len(rooms) > len(best):
+                best = rooms
             for v in n[:5]:
                 walk(v, depth + 1)
 
@@ -407,11 +421,35 @@ def _count(result):
     return len((result or {}).get("items", []))
 
 
+class _HttpError(RuntimeError):
+    def __init__(self, status, msg):
+        super().__init__(msg)
+        self.status = status
+
+
 def _get_json(client, url):
     r = client.get(url)
     if r.status_code >= 400:
-        raise RuntimeError(f"HTTP {r.status_code}")
+        raise _HttpError(r.status_code, f"HTTP {r.status_code}")
+    text = r.text
+    if text.lstrip()[:1] == "<":           # a blocked IP gets an HTML challenge page with status 200
+        low = text[:4000].lower()
+        raise _HttpError(403, "bot challenge" if any(k in low for k in ("just a moment", "cf-chl", "captcha", "attention required"))
+                         else "HTML instead of JSON")
     return r.json()
+
+
+def _get_json_retry(client, url):
+    """One retry (with jitter) for the failures that are usually momentary: 429, 5xx, timeouts, dropped connections."""
+    try:
+        return _get_json(client, url)
+    except Exception as e:
+        st = getattr(e, "status", 0)
+        transient = st == 429 or st >= 500 or isinstance(e, (httpx.TimeoutException, httpx.TransportError))
+        if not transient:
+            raise
+        time.sleep(0.3 + random.random() * 0.6)
+        return _get_json(client, url)
 
 
 def _try_api(api_urls, base, diag):
@@ -638,34 +676,42 @@ def _enabled_providers():
 
 
 def _fetch_direct(name):
-    """-> (cams, notes) for one platform. Never raises."""
+    """-> (cams, notes) for one platform. Never raises. Every page of a candidate is requested in parallel; the first
+    candidate that yields cams wins (the others are fallbacks for when an endpoint changes or is blocked)."""
     spec = _DIRECT[name]
     base = spec["base"]
     headers = {"User-Agent": UA, "Accept": "application/json, text/plain, */*", "Accept-Language": "en-US,en;q=0.9",
                "Referer": base + "/", "Origin": base, "X-Requested-With": "XMLHttpRequest"}
     notes = []
-    with httpx.Client(timeout=15.0, follow_redirects=True, headers=headers) as c:
-        for cand in spec["candidates"]:
-            cams, seen = [], set()
-            for u in cand:
-                try:
-                    data = _get_json(c, u)
-                except Exception as e:
-                    notes.append(f"{name}: {u.split('?')[0]} -> {type(e).__name__}: {str(e)[:80]}")
-                    break
-                new = 0
-                for d in _room_list(data):
-                    cam = _cam_from_dict(d, base, name, need_thumb=False)
-                    if cam and cam["username"].lower() not in seen:
-                        seen.add(cam["username"].lower())
-                        cams.append(cam)
-                        new += 1
-                if not new:
-                    notes.append(f"{name}: {u.split('?')[0]} returned no usable rooms")
-                    break
-            if cams:
-                notes.append(f"{name}: {len(cams)} cams")
-                return cams, notes
+
+    def one(u):
+        try:
+            with httpx.Client(timeout=15.0, follow_redirects=True, headers=headers) as c:
+                return u, _get_json_retry(c, u), None
+        except Exception as e:
+            return u, None, e
+
+    for cand in spec["candidates"]:
+        with ThreadPoolExecutor(max_workers=len(cand)) as pool:
+            fetched = list(pool.map(one, cand))              # keeps page order
+        cams, seen = [], set()
+        for u, data, exc in fetched:
+            where = u.split("?")[0]
+            if exc is not None:
+                notes.append(f"{name}: {where} -> {type(exc).__name__}: {str(exc)[:80]}")
+                continue
+            new = 0
+            for d in _room_list(data):
+                cam = _cam_from_dict(d, base, name, need_thumb=False)
+                if cam and cam["username"].lower() not in seen:
+                    seen.add(cam["username"].lower())
+                    cams.append(cam)
+                    new += 1
+            if not new:
+                notes.append(f"{name}: {where} returned no usable rooms")
+        if cams:
+            notes.append(f"{name}: {len(cams)} cams")
+            return cams, notes
     return [], notes
 
 
@@ -717,6 +763,7 @@ def _finish(cam):
         _add_thumb(thumbs, u)
     cam["thumbnails"] = thumbs[:5]
     cam["thumbnail"] = thumbs[0] if thumbs else None
+    cam.setdefault("_seen", int(time.time()))
     for k in ("categories", "tags", "languages"):
         cam[k] = cam.get(k) or []
     for k in ("country_code", "flag_emoji", "gender", "location", "hd", "is_new"):
@@ -796,6 +843,7 @@ def fetch_livecams(url=None, force=False):
     for c in items:
         by[c.get("provider_name") or c.get("provider") or "?"] = by.get(c.get("provider_name") or c.get("provider") or "?", 0) + 1
     out = {"page": HOME_URL, "items": items, "count": len(items), "providers": by, "source": "direct",
+           "platform_status": {p: {"ok": bool(groups.get(p)), "count": len(groups.get(p) or [])} for p in providers},
            "diagnostics": diag, "fetched_at": int(time.time())}
     _register_thumbs(items)
     _ALL_CACHE.update(ts=time.time(), out=out)

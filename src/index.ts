@@ -1,5 +1,6 @@
 import { Env } from "./types";
-import { scrapePage, searchOne, combineResults, isBlockedHost } from "./scrape";
+import { scrapePage, searchOne, isBlockedHost } from "./scrape";
+import { parseQuery, queryKey, loadIndex, loadTaxonomy, searchIndex, matchTaxonomy, learnShapes, rankCombined, memoKV, hostOfUrl, type Query, type TaxEntry } from "./search";
 import { scrapeListing } from "./listings";
 import { resolveVideo, resolveFull } from "./resolve";
 import { fetchMetadata } from "./metadata";
@@ -34,7 +35,9 @@ const WANTED_KEY = "wanted:queue";
 const WANTED_MAX = 200;
 const WANTED_PER_DAY = 120;
 const CAMS_KEY = "livecams:default";
-const CAMS_STALE = 20 * 60;               // refresh cams in the background when older than this
+const CAMS_STALE = 10 * 60;               // a visitor hitting cams older than this triggers a background refresh
+const CAMS_CRON_STALE = 8 * 60;           // the 10-minute cron refreshes anything older than this (so every tick refreshes)
+const CAMS_CARRY = 3 * 3600;              // a platform that fails keeps ITS OWN previous cams for at most this long
 const CHANNELS_STALE = 2 * 60 * 60;       // ask GitHub for a channel refresh when older than this
 const KV_LONG = 30 * 86400;               // Worker-written KV entries live 30 days
 const LKG_TTL = 3 * 86400;
@@ -73,6 +76,13 @@ function corsHeaders(origin: string | null): Record<string, string> {
 async function kvGet<T = any>(kv: KVNamespace, key: string, cacheTtl = EDGE_TTL): Promise<T | null> {
   try { return (await kv.get(key, { type: "json", cacheTtl })) as T | null; } catch { return null; }   // a KV hiccup must not be a 500
 }
+/** raw JSON text from KV: big payloads (cams ~500 KB) are passed through without a parse + stringify round trip */
+async function kvText(kv: KVNamespace, key: string, cacheTtl = EDGE_TTL): Promise<string | null> {
+  try { return await kv.get(key, { type: "text", cacheTtl }); } catch { return null; }
+}
+/** `_ts` sits at the end of live payloads, so the age is read from the tail of the text (no parse) */
+const tsOfText = (t: string): number | null => { let last: RegExpExecArray | null = null; for (const m of t.slice(-1000).matchAll(/"_ts":\s*(\d+)/g)) last = m; return last ? Number(last[1]) : null; };
+const hasItemsText = (t: string) => /"items":\s*\[\s*\{/.test(t);
 function json(data: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json", ...headers } });
 }
@@ -144,15 +154,23 @@ async function refreshCams(env: Env, force = false): Promise<any | null> {
     let cur: any = null;
     try { cur = await env.SCRAPE_DATA.get(CAMS_KEY, { type: "json" }); } catch { /* treat as empty */ }
     const age = ageOf(cur);
-    if (!force && cur?.items?.length && age !== null && age < 300) return cur;          // refreshed a moment ago
-    const fresh = await fetchLiveCams().catch(() => null);
+    if (!force && cur?.items?.length && age !== null && age < 240) return cur;          // refreshed a moment ago
+    const fresh = await fetchLiveCams({ wm: env.CHATURBATE_WM, providers: env.CAM_PROVIDERS }).catch(() => null);
     if (!fresh || !fresh.items?.length) return null;
-    // a platform that failed this time keeps its previous (recent) cams so the page never shrinks to one platform
-    if (cur?.items?.length && age !== null && age < 3 * 3600) {
+    // A platform that failed this time keeps ITS previous cams - but only cams that were really seen in the last
+    // CAMS_CARRY seconds (each cam has its own `_seen`, which a carry-over does not renew), so a platform that stays
+    // down fades out after 3 h instead of being served forever.
+    if (cur?.items?.length) {
       const got = new Set(fresh.items.map((c: any) => c.provider));
-      const extra = cur.items.filter((c: any) => c.provider && !got.has(c.provider));
-      if (extra.length) { fresh.items = fresh.items.concat(extra).slice(0, 500); fresh.count = fresh.items.length; fresh.carried_over = [...new Set(extra.map((c: any) => c.provider_name || c.provider))]; }
+      const cutoff = nowSec() - CAMS_CARRY;
+      const extra = cur.items.filter((c: any) => c.provider && !got.has(c.provider) && typeof c._seen === "number" && c._seen >= cutoff);
+      if (extra.length) {
+        fresh.items = fresh.items.concat(extra).slice(0, 500);
+        fresh.count = fresh.items.length;
+        fresh.carried_over = [...new Set(extra.map((c: any) => c.provider_name || c.provider))];
+      }
     }
+    const ts = fresh._ts ?? nowSec(); delete fresh._ts; fresh._ts = ts;                      // keep `_ts` the LAST key (age is read from the tail of the text)
     try { await env.SCRAPE_DATA.put(CAMS_KEY, JSON.stringify(fresh), { expirationTtl: KV_LONG }); } catch { /* serve it anyway */ }
     return fresh;
   });
@@ -191,7 +209,7 @@ async function freshness(env: Env) {
 async function maintenance(env: Env): Promise<void> {
   const cams = await kvGet<any>(env.SCRAPE_DATA, CAMS_KEY, 60);
   const camAge = ageOf(cams);
-  if (!cams?.items?.length || camAge === null || camAge > CAMS_STALE) await refreshCams(env);
+  if (!cams?.items?.length || camAge === null || camAge > CAMS_CRON_STALE) await refreshCams(env);
   const f = await freshness(env);
   const camsStillStale = !f.livecams.items || f.livecams.age_s === null || f.livecams.age_s > 2 * CAMS_STALE;
   const chStale = !f.channels.pages || f.channels.age_s === null || f.channels.age_s > CHANNELS_STALE;
@@ -306,21 +324,69 @@ export default {
     };
     const nativePage = async (u: string, pageNum: number | null) =>
       (await urlAllowed(env, u)) ? native(`page/${await sha1Hex(u + "|" + (pageNum ?? ""))}`, 600, () => scrapePage(u, 80, pageNum), (d) => !!d.items?.length) : null;
+    /** the site's OWN search page (shape remembered per site by id: 1 request instead of 6-8 next time) */
     const nativeSearchSite = async (site: string, query: string) => {
       if (!(await urlAllowed(env, site))) return null;
       const shapeKey = `shape/${await sha1Hex(site)}`;
       return native(`search/${await sha1Hex(site + "|" + query)}`, 300, async () => {
         const pref = await edgeGetJson(shapeKey);
-        const { result, winner } = await searchOne(site, query, 40, typeof pref?.i === "number" ? pref.i : null);
-        if (winner !== null) edgePutJson(shapeKey, { i: winner }, 7 * 86400);
+        const { result, winner } = await searchOne(site, query, 40, typeof pref?.id === "string" ? pref.id : null);
+        if (winner !== null) edgePutJson(shapeKey, { id: winner }, 7 * 86400);
         return result;
       }, (d) => !!d.items?.length);
     };
-    const nativeSearch = async (sites: string[], query: string): Promise<Response | null> => {
-      const rs = (await Promise.all(sites.slice(0, 8).map((x) => nativeSearchSite(x, query).catch(() => null)))).filter(Boolean) as any[];
+
+    /** TAXONOMY: when the keyword is (or contains) a category / tag / star / studio name of this site, open that page's
+     *  feed - this is what makes "milf", "ebony", a star's name or a studio find videos whose TITLE never says it.
+     *  Order: pre-scraped feed in KV (free) -> live page (1 subrequest). Unknown keywords try the site's learnt URL shape. */
+    const nativeTaxonomy = async (site: string, q: Query, tax: TaxEntry[], budget: { guesses: number }): Promise<any[]> => {
+      const host = hostOfUrl(site);
+      if (!host || !tax.length || !(await urlAllowed(env, site))) return [];
+      const picks: { url: string; name: string; kind: string }[] =
+        matchTaxonomy(tax, host, q, 2).map((m) => ({ url: m.entry.u, name: m.entry.n, kind: m.entry.k }));
+      const exact = matchTaxonomy(tax, host, q, 1)[0]?.score >= 3;
+      if (!exact && q.slug && budget.guesses > 0) {
+        const sh = learnShapes(tax, host).find((x) => x.kind === "category" || x.kind === "tag");
+        if (sh) {
+          const url = `${sh.origin}${sh.prefix}${q.slug}${sh.slash ? "/" : ""}`;
+          if (!picks.some((p) => p.url === url) && !(await edgeGetJson(`neg-guess/${await sha1Hex(url)}`))) { picks.push({ url, name: q.raw, kind: `${sh.kind}?` }); budget.guesses--; }
+        }
+      }
+      const out: any[] = [];
+      for (const p of picks.slice(0, 3)) {
+        const guessed = p.kind.endsWith("?");
+        let page: any = guessed ? null : await kvGet<any>(env.SCRAPE_DATA, `scrape:${p.url}`);
+        if (!page?.items?.length) page = await nativePage(p.url, null).catch(() => null);
+        // a guessed URL that redirected to the home page / a search page is not the taxonomy page: ignore it
+        const real = !guessed || (page?.items?.length >= 4 && (() => { try { return new URL(page.page).pathname.toLowerCase().includes(q.slug.split("-")[0]); } catch { return false; } })());
+        if (!page?.items?.length || !real) { if (guessed) edgePutJson(`neg-guess/${await sha1Hex(p.url)}`, { f: 1 }, 6 * 3600); continue; }
+        const label = p.name;
+        const items = page.items.map((it: any) => ({ ...it, _via: label, tags: it.tags?.length ? it.tags : p.kind.startsWith("tag") ? [label] : it.tags }));
+        out.push({ ...page, items, count: items.length, site, query: q.raw, source: "taxonomy", via: label, taxonomy_kind: p.kind.replace("?", ""), search_url: p.url });
+      }
+      return out;
+    };
+
+    const nativeSearch = async (sites: string[], query: string, q: Query, indexHits: any[]): Promise<Response | null> => {
+      const tax = await loadTaxonomy(env.SCRAPE_DATA);
+      const budget = { guesses: 4 };
+      const per = await Promise.all(sites.slice(0, 8).map(async (x) => {
+        const [site, taxo] = await Promise.all([nativeSearchSite(x, query).catch(() => null), nativeTaxonomy(x, q, tax, budget).catch(() => [])]);
+        return [site, ...taxo].filter(Boolean) as any[];
+      }));
+      const rs = per.flat();
       if (!rs.length) return null;
-      const combined = combineResults(rs, query);
-      return combined.length ? send({ results: rs, query, combined, count: combined.length }, "native") : null;
+      return respondSearch(rs, query, q, indexHits, "native");
+    };
+    /** one answer shape for every source: per-site results + ONE ranked list over title, tags, genres, stars, studios */
+    const respondSearch = (rs: any[], query: string, q: Query, indexHits: any[], source: string): Response | null => {
+      const combined = rankCombined(rs, q, indexHits);
+      if (!combined.length) return null;
+      const count = (f: (r: any) => boolean) => rs.filter(f).reduce((n, r) => n + (r.items?.length || 0), 0);
+      return send({
+        results: rs, query, combined, count: combined.length,
+        sources: { site: count((r) => r.source !== "taxonomy"), taxonomy: count((r) => r.source === "taxonomy"), index: indexHits.length },
+      }, source);
     };
     const nativeGuarded = async (u: string, k: string, seconds: number, run: () => Promise<any>, good: (d: any) => boolean) =>
       (await urlAllowed(env, u)) ? native(k, seconds, run, good) : null;
@@ -385,23 +451,46 @@ export default {
           if (!isPost) break;
           const b = await body<{ sites?: string[]; query?: string }>();
           const sites = (b.sites || []).filter(Boolean);
-          const query = (b.query || "").trim().toLowerCase();
+          const query = queryKey(b.query || "");                 // trimmed, lower-cased, single spaces = same key the scraper writes
           if (!sites.length || !query) return err("sites and query are required", 400, headers);
+          const q = parseQuery(query);
+
+          // the local index answers instantly (no network): everything the scraper has seen, matched on title + tags + genres + stars + studios
+          const indexHits = searchIndex(await loadIndex(env.SCRAPE_DATA), q);
+
           const live = await tryLive();
-          if (live) return live;
-          if (nativeFirst) { const n = await nativeSearch(sites, query); if (n) return n; }
+          if (live) {
+            // Flask only searches the sites' own search boxes: merge the index + taxonomy hits and re-rank so tags/genres count here too
+            try {
+              const flask = await live.clone().json() as any;
+              const rs: any[] = Array.isArray(flask?.results) ? flask.results : [];
+              const tax = await loadTaxonomy(env.SCRAPE_DATA);
+              const extra = (await Promise.all(sites.slice(0, 8).map((x) => nativeTaxonomy(x, q, tax, { guesses: 0 }).catch(() => [])))).flat();
+              const merged = respondSearch([...rs, ...extra], query, q, indexHits, "live");
+              if (merged) return merged;
+            } catch { /* keep Flask's own answer */ }
+            return live;
+          }
+          if (nativeFirst) { const n = await nativeSearch(sites, query, q, indexHits); if (n) return n; }
+
           const all = await Promise.all(sites.map((s) => kvGet<any>(env.SCRAPE_DATA, `search:${s}:${query}`)));
           sites.forEach((s, i) => { if (!all[i] || all[i].error) want({ t: "search", site: s, query }); });
           const parts = all.filter((p) => p && !p.error) as any[];
           if (!parts.length) {
             const l = await missLive(); if (l) return l;
-            if (nativeOn && !nativeFirst) { const n = await nativeSearch(sites, query); if (n) return n; }
+            if (nativeOn && !nativeFirst) { const n = await nativeSearch(sites, query, q, indexHits); if (n) return n; }
+            // nothing cached for this exact (site, keyword) - but the index may know it from tags / genres / stars: answer from that
+            const fromIndex = respondSearch([], query, q, indexHits, "index");
+            if (fromIndex) return fromIndex;
             return lkgOr({ results: [], query, combined: [], count: 0, error: NOT_CACHED });
           }
-          const combined = parts.flatMap((p) => p.combined || []).sort((a, b) => (b._score || 0) - (a._score || 0));
-          const out = { results: parts.flatMap((p) => p.results || []), query, combined, count: combined.length };
-          edgePutJson("lkg/" + routeKey, out, LKG_TTL);
-          return send(out, "kv");
+          // cached per-site results are re-ranked together with the index (the scraper's old ranking only looked at titles)
+          const rs = parts.flatMap((p) => p.results || []);
+          const out = respondSearch(rs, query, q, indexHits, "kv");
+          if (out) { edgePutJson("lkg/" + routeKey, await out.clone().json(), LKG_TTL); return out; }
+          const legacy = { results: rs, query, combined: parts.flatMap((p) => p.combined || []), count: 0 };
+          legacy.count = legacy.combined.length;
+          return send(legacy, "kv");
         }
 
         case "/api/resolve":
@@ -434,7 +523,7 @@ export default {
           const u = (b.url || "").trim();
           if (!u) return err("valid url is required", 400, headers);
           const shard = (await sha1Hex(u))[0];
-          const bundle = await kvGet<{ items?: Record<string, any> }>(env.SCRAPE_DATA, `meta-shard:${shard}`);
+          const bundle = await memoKV<{ items?: Record<string, any> }>(env.SCRAPE_DATA, `meta-shard:${shard}`, 5 * 60_000);   // parsed once per isolate, not per click
           const hit = bundle?.items?.[u] ?? (await kvGet<any>(env.SCRAPE_DATA, `meta:${u}`));
           if (hit && !forced) { const { _ts, ...meta } = hit; return send(meta, "kv"); }
           const live = await viaBackend(); if (live) return live;
@@ -442,6 +531,7 @@ export default {
             const n = await nativeGuarded(u, `meta|${await sha1Hex(u)}`, 3600, () => fetchMetadata(u), (d) => !!(d.title || d.duration || (d.groups || []).length));
             if (n) return send(n, "native");
           }
+          want({ t: "meta", url: u });          // not stored yet: the next scraper run fetches it into the metadata shards (and the search index)
           return lkgOr({ url: u, groups: [], error: NOT_CACHED });
         }
 
@@ -454,28 +544,43 @@ export default {
           const live = await tryLive();
           if (live) return live;
 
-          const data = await kvGet<any>(env.SCRAPE_DATA, key, LIVE_EDGE_TTL);
-          const have = !!data?.items?.length;
-          const age = ageOf(data);
-          if (have) {
+          const sendText = (text: string, source: string, age: number | null) => {
+            const o = new Response(text, { status: 200, headers: { ...headers, "Content-Type": "application/json" } });
+            o.headers.set("X-Source", source);
+            if (age !== null) o.headers.set("X-Cache-Age", String(age));
+            return o;
+          };
+          /** keep ONE last-known-good copy at the edge; refreshed at most every 5 minutes (not on every hit) */
+          const keepLkg = (text: string) => ctx.waitUntil((async () => {
+            if (await edgeCache.match(ek("lkgm/" + routeKey)).catch(() => undefined)) return;
+            await edgeCache.put(ek("lkgm/" + routeKey), new Response("1", { headers: { "Cache-Control": "public, max-age=300" } }));
+            await edgeCache.put(ek("lkg/" + routeKey), new Response(text, { headers: { "Content-Type": "application/json", "Cache-Control": `public, max-age=${LKG_TTL}` } }));
+          })().catch(() => undefined));
+
+          const text = await kvText(env.SCRAPE_DATA, key, LIVE_EDGE_TTL);
+          if (text && hasItemsText(text)) {
+            const age = (() => { const t = tsOfText(text); return t === null ? null : Math.max(0, nowSec() - t); })();
             // stale-while-revalidate: answer now, refresh in the background
             if (isDefault && nativeOn && (age === null || age > CAMS_STALE)) ctx.waitUntil(refreshCams(env).then(() => undefined).catch(() => undefined));
-            edgePutJson("lkg/" + routeKey, data, LKG_TTL);
-            return send(data, "kv", age);
+            keepLkg(text);
+            return sendText(text, "kv", age);
           }
           // KV empty / expired / only an error: the edge copy, then fetch right now
-          const stale = await edgeGetJson("lkg/" + routeKey);
-          if (stale?.items?.length) {
+          const stale = await edgeCache.match(ek("lkg/" + routeKey)).catch(() => undefined);
+          const staleText = stale ? await stale.text() : null;
+          if (staleText && hasItemsText(staleText)) {
             if (isDefault && nativeOn) ctx.waitUntil(refreshCams(env).then(() => undefined).catch(() => undefined));
-            return send(stale, "stale-edge");
+            return sendText(staleText, "stale-edge", null);
           }
           if (isDefault && nativeOn) {
             const fresh = await refreshCams(env);
-            if (fresh?.items?.length) { edgePutJson("lkg/" + routeKey, fresh, LKG_TTL); return send(fresh, "native", 0); }
+            if (fresh?.items?.length) { keepLkg(JSON.stringify(fresh)); return send(fresh, "native", 0); }
           }
           const l = await missLive(); if (l) return l;
           ctx.waitUntil(dispatchGithub(env, "cams-missing").then(() => undefined));
-          return json(data || { items: [], count: 0, error: NOT_CACHED }, 200, headers);
+          let errBody: any = { items: [], count: 0, error: NOT_CACHED };
+          try { if (text) errBody = { ...JSON.parse(text), error: JSON.parse(text).error || NOT_CACHED }; } catch { /* keep default */ }
+          return json(errBody, 200, headers);
         }
 
         // ---------------------------------------------------------------- live TV channels (bundle, stale-forever)
@@ -487,7 +592,7 @@ export default {
           const live = await tryLive();
           if (live) return live;
 
-          const bundle = await kvGet<{ pages?: Record<string, any>; _ts?: number }>(env.SCRAPE_DATA, `channels-bundle:${cat}`, LIVE_EDGE_TTL);
+          const bundle = await memoKV<{ pages?: Record<string, any>; _ts?: number }>(env.SCRAPE_DATA, `channels-bundle:${cat}`, LIVE_EDGE_TTL * 1000);
           const age = ageOf(bundle);
           if (bundle?.pages && Object.keys(bundle.pages).length) {
             if (cat === "all" && (age === null || age > CHANNELS_STALE)) ctx.waitUntil(dispatchGithub(env, "channels-stale").then(() => undefined));
@@ -541,15 +646,19 @@ export default {
           let target: URL;
           try { target = new URL(raw); } catch { return err("bad url", 400, headers); }
           if (target.protocol !== "https:" || isBlockedHost(target.hostname)) return err("blocked url", 400, headers);
-          const map = await kvGet<{ origins?: Record<string, string> }>(env.SCRAPE_DATA, "cam-thumb-origins", LIVE_EDGE_TTL);
+          const map = await memoKV<{ origins?: Record<string, string> }>(env.SCRAPE_DATA, "cam-thumb-origins", 60_000);
           const byHost = THUMB_REFERERS.find(([rx]) => rx.test(target.hostname))?.[1];
+          // not an open proxy: only image hosts of the cam platforms / TV sites, URLs the scraper recorded, or allowed sites
+          const known = !!map?.origins?.[raw] || !!byHost || (await urlAllowed(env, raw));
+          if (!known) return err("host not allowed", 403, headers);
           const referer = map?.origins?.[raw] || byHost || target.origin + "/";
           const upstream = await fetch(target.toString(), {
             headers: { "User-Agent": "Mozilla/5.0", Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8", Referer: referer, Origin: referer.replace(/\/$/, "") },
             cf: { cacheTtl: 30, cacheEverything: true },
           } as RequestInit).catch(() => null);
           const type = (upstream?.headers.get("Content-Type") || "").split(";")[0].trim().toLowerCase();
-          if (!upstream || !upstream.ok || !type.startsWith("image/")) return new Response(null, { status: 404, headers: { ...headers, "Cache-Control": "public, max-age=30" } });
+          const len = Number(upstream?.headers.get("Content-Length") || 0);
+          if (!upstream || !upstream.ok || !type.startsWith("image/") || len > 4_000_000) return new Response(null, { status: 404, headers: { ...headers, "Cache-Control": "public, max-age=30" } });
           return new Response(upstream.body, { status: 200, headers: { ...headers, "Content-Type": type, "Cache-Control": "public, max-age=30" } });
         }
 

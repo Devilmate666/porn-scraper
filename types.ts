@@ -15,6 +15,10 @@ export interface Env {
   ALLOW_ANY?: string;
   /** Max native scrapes per client IP per minute (default 90). */
   RATE_PER_MIN?: string;
+  /** Chaturbate affiliate campaign slug for the fallback endpoint (default "dvafl"). */
+  CHATURBATE_WM?: string;
+  /** Comma list of direct cam platforms to fetch, default "chaturbate,stripchat,cam4,camsoda". */
+  CAM_PROVIDERS?: string;
   /** Watchdog: lets the Worker's cron start the GitHub scraper workflow when data is stale. */
   GITHUB_TOKEN?: string;      // fine-grained PAT with Actions: read & write (set as secret)
   GITHUB_REPO?: string;       // "owner/name"

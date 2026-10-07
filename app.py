@@ -19,6 +19,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse, quote
 
+from searchkit import parse_query, rank_combined
 from flask import Flask, Response, jsonify, request, send_file
 from flask_cors import CORS
 
@@ -390,34 +391,9 @@ def api_search():
         return _err("Search failed", 500, detail=str(e))
     results = [translate_result(r) if isinstance(r, dict) else r for r in results]
 
-    def _score(it):
-        s = 0
-        if it.get("thumbnail"):
-            s += 10
-        if it.get("duration"):
-            s += 4
-        if it.get("views"):
-            s += 2
-        if it.get("rating"):
-            s += 1
-        t = (it.get("title") or "").lower()
-        q = query.lower()
-        if t.startswith(q):
-            s += 8
-        elif q in t:
-            s += 4
-        return s
-
-    combined, seen = [], set()
-    for r in results:
-        site = r.get("site") or r.get("page") or ""
-        for it in (r.get("items") or []):
-            k = (it.get("link") or "").split("?")[0]
-            if not k or k in seen:
-                continue
-            seen.add(k)
-            combined.append({**it, "_site": site, "_score": _score(it)})
-    combined.sort(key=lambda x: -x["_score"])
+    # "search everything": rank on title, tags, genres, stars, studios, description and URL (searchkit = twin of the Worker's search.ts);
+    # the site's own search results stay (it matched them on something), so a tag-only hit is not thrown away
+    combined = rank_combined([r for r in results if isinstance(r, dict)], parse_query(query))
     payload = {"results": results, "query": query, "combined": combined,
                "count": len(combined)}
     with _SEARCH_CACHE_LOCK:

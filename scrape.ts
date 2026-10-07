@@ -447,54 +447,75 @@ export async function scrapePage(url: string, maxItems = 80, pageNum: number | n
 }
 
 // ------------------------------------------------------------------ search
-export function buildSearchUrls(site: string, query: string): string[] {
+export interface SearchShape { id: string; url: string }
+
+/** The URL shapes sites use for their own search. Ids are stable (shape memory stores the id, not an index), and
+ *  multi-word queries get the dash-slug shapes many sites expect (/search/big-tits/). */
+export function buildSearchShapes(site: string, query: string): SearchShape[] {
   let s = site.replace(/\/+$/, "");
   if (!/^https?:/i.test(s)) s = "https://" + s;
-  const q = encodeURIComponent(query).replace(/%20/g, "+");
-  return [`${s}/?s=${q}`, `${s}/search?q=${q}`, `${s}/search/${q}`, `${s}/search/${q}/`, `${s}/?q=${q}`, `${s}/videos/search?q=${q}`];
+  const words = query.trim().split(/\s+/).filter(Boolean);
+  const plus = encodeURIComponent(words.join(" ")).replace(/%20/g, "+");
+  const dash = words.map((w) => encodeURIComponent(w)).join("-");
+  const all: SearchShape[] = [
+    { id: "s", url: `${s}/?s=${plus}` },
+    { id: "search-q", url: `${s}/search?q=${plus}` },
+    { id: "search-path", url: `${s}/search/${plus}` },
+    { id: "search-path-slash", url: `${s}/search/${plus}/` },
+    { id: "q", url: `${s}/?q=${plus}` },
+    { id: "videos-search", url: `${s}/videos/search?q=${plus}` },
+    { id: "search-dash-slash", url: `${s}/search/${dash}/` },
+    { id: "search-dash", url: `${s}/search/${dash}` },
+  ];
+  const seen = new Set<string>();
+  return all.filter((x) => (seen.has(x.url) ? false : (seen.add(x.url), true)));
 }
+export const buildSearchUrls = (site: string, query: string): string[] => buildSearchShapes(site, query).map((x) => x.url);
 
-/** Races the URL shapes like search_one(): the lowest-index shape that returns videos wins. */
+/** Races the URL shapes like search_one(): the earliest shape that returns videos wins.
+ *  `preferredId` (the shape that worked last time for this site) is tried alone first: 1 request instead of 6-8. */
 export async function searchOne(
-  site: string, query: string, maxItems = 40, preferred: number | null = null
-): Promise<{ result: PageResult & { query: string; site: string; search_url: string; source: string }; winner: number | null }> {
-  const urls = buildSearchUrls(site, query);
+  site: string, query: string, maxItems = 40, preferredId: string | null = null
+): Promise<{ result: PageResult & { query: string; site: string; search_url: string; source: string }; winner: string | null }> {
+  const shapes = buildSearchShapes(site, query);
   const ac = new AbortController();
-  const results: (PageResult | null)[] = urls.map(() => null);
+  const results: (PageResult | null)[] = shapes.map(() => null);
   const run = async (i: number) => {
-    const r = await scrapePage(urls[i], maxItems, null, 7000, ac.signal);
+    const r = await scrapePage(shapes[i].url, maxItems, null, 7000, ac.signal);
     results[i] = r;
     return r;
   };
+  const pref = preferredId ? shapes.findIndex((x) => x.id === preferredId) : -1;
   let hit = false;
-  if (preferred !== null && preferred >= 0 && preferred < urls.length) {
-    hit = !!(await run(preferred)).items.length;
-  }
+  if (pref >= 0) hit = !!(await run(pref)).items.length;
   if (!hit) {
-    const idx = urls.map((_, i) => i).filter((i) => results[i] === null);
+    const idx = shapes.map((_, i) => i).filter((i) => results[i] === null);
     await new Promise<void>((resolve) => {
       let pending = idx.length;
       let timer: ReturnType<typeof setTimeout> | undefined;
+      let done = false;
+      const finish = () => { if (!done) { done = true; if (timer) clearTimeout(timer); resolve(); } };
       const check = () => {
         const best = results.findIndex((r) => r && r.items.length);
         if (best >= 0) {
-          if (!results.slice(0, best).some((r) => r === null)) return resolve();
-          if (!timer) timer = setTimeout(resolve, 600);
+          if (!results.slice(0, best).some((r) => r === null)) return finish();   // every earlier shape already answered
+          if (!timer) timer = setTimeout(finish, 600);                            // give the earlier shapes a moment
         }
-        if (pending === 0) resolve();
+        if (pending === 0) finish();
       };
+      if (!idx.length) return finish();
       for (const i of idx) run(i).then(() => { pending--; check(); });
     });
     ac.abort();                                   // stop the shapes that are still running
-    if (hit === false) { /* keep results as collected */ }
   }
   const winner = results.findIndex((r) => r && r.items.length);
   const out = (winner >= 0 ? results[winner] : results.find((r) => r) || results[0]) as PageResult;
-  const searchUrl = urls[winner >= 0 ? winner : Math.max(0, results.indexOf(out))];
+  const at = winner >= 0 ? winner : Math.max(0, results.indexOf(out));
+  const searchUrl = shapes[at].url;
   const next = out.items.length && !out.next_page ? guessNextPage(searchUrl, out.page_num || 1) : out.next_page;
   return {
     result: { ...out, next_page: next, query, site, search_url: searchUrl, source: out.items.length ? "site-search" : "none" },
-    winner: winner >= 0 ? winner : null,
+    winner: winner >= 0 ? shapes[winner].id : null,
   };
 }
 

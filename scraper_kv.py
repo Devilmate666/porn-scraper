@@ -37,6 +37,7 @@ FRONTEND_SOURCES = [
 ]
 
 # Also include TEST_SITES for search fallback
+from searchkit import (parse_query, query_key, rank_combined, index_record, reg_host, norm as _sk_norm, stems as _sk_stems)
 from sourcetest import TEST_SITES, search_site, site_from_url
 from extras import scrape_plus, deep_resolve, is_smart
 try:
@@ -179,7 +180,7 @@ def kv_put_cache(key: str, value: dict, ttl: int = 3600):
 
 
 KV_LONG = 30 * 86400                                   # good data lives 30 days: the Worker serves stale data, never a hole
-LIVE_PREFIXES = ("livecams:", "channels-bundle:", "cam-thumb-origins", "catalog:", "test-sites")   # stamped with _ts
+LIVE_PREFIXES = ("livecams:", "channels-bundle:", "cam-thumb-origins", "catalog:", "test-sites", "search-index", "taxonomy-index")   # stamped with _ts
 PRIORITY_PREFIXES = LIVE_PREFIXES + ("scrape-status",)                                             # never skipped by the write budget
 MAX_WRITES = int(os.environ.get("MAX_KV_WRITES", "450"))                                            # per run (free tier: 1,000/day)
 KV_STATS.setdefault("skipped", 0)
@@ -190,7 +191,7 @@ def _has_data(v) -> bool:
     if not isinstance(v, dict):
         return bool(v)
     known = False
-    for k in ("items", "categories", "sections", "models", "combined", "pages", "sites", "origins"):
+    for k in ("items", "categories", "sections", "models", "combined", "pages", "sites", "origins", "records", "entries"):
         if k in v:
             if v[k]:
                 return True
@@ -292,8 +293,8 @@ def safe_job(name: str, fn, *a, **k):
 
 
 def search_key(site: str, query: str) -> str:
-    # Must match the Worker: `search:${site}:${query.trim().toLowerCase()}`
-    return f"search:{site}:{query.strip().lower()}"
+    # Must match the Worker: `search:${site}:${queryKey(query)}` (trim, lower-case, collapse whitespace)
+    return f"search:{site}:{query_key(query)}"
 
 
 try:
@@ -338,9 +339,12 @@ def use_plus(url: str) -> bool:
 VIDEO_LINKS: list = []
 _VL_SEEN: set = set()
 _VL_LOCK = threading.Lock()
+VIDEO_ITEMS: dict = {}            # link -> the card (title, thumbnail, duration ...) = the raw material of the search index
+LINK_VIA: dict = {}               # link -> labels it was found under: the category/tag feed it came from, the keyword that found it
+PRIORITY_META: list = []          # video pages visitors opened that had no metadata yet (the Worker queues {t: "meta"})
 
 
-def remember_links(result):
+def remember_links(result, via=None):
     for it in (result or {}).get("items") or []:
         link = it.get("link")
         if not link or it.get("_cam") or it.get("_chan"):
@@ -349,11 +353,17 @@ def remember_links(result):
             if link not in _VL_SEEN:
                 _VL_SEEN.add(link)
                 VIDEO_LINKS.append(link)
+            VIDEO_ITEMS.setdefault(link, it)
+            if via:
+                tags = LINK_VIA.setdefault(link, [])
+                for v in ([via] if isinstance(via, str) else via):
+                    if v and v not in tags and len(tags) < 6:
+                        tags.append(v)
 
 
 # Scrape functions that write to KV
 @deadline_guard
-def scrape_and_cache_url(url: str, page_num: int | None = None, fresh: bool = False):
+def scrape_and_cache_url(url: str, page_num: int | None = None, fresh: bool = False, via=None):
     key = f"scrape:{url}"
     try:
         if use_plus(url):
@@ -370,7 +380,7 @@ def scrape_and_cache_url(url: str, page_num: int | None = None, fresh: bool = Fa
             result = scrape_page(url, max_items=80, page_num=page_num)
 
         result = translate_result(result)
-        remember_links(result)
+        remember_links(result, via)
         if kv_put_scrape(key, result, ttl=86400):
             print(f"  Cached: {url} ({result.get('count', 0)} items)")
         return result
@@ -400,21 +410,59 @@ def _plus_search(site: str, query: str) -> dict:
     return r
 
 
-def _score(it: dict, query: str) -> int:
-    s = 0
-    if it.get("thumbnail"): s += 10
-    if it.get("duration"): s += 4
-    if it.get("views"): s += 2
-    if it.get("rating"): s += 1
-    t = (it.get("title") or "").lower()
-    q = query.lower()
-    if t.startswith(q): s += 8
-    elif q in t: s += 4
-    return s
+TAXONOMY: dict = {}               # page url -> {"n": name, "u": url, "k": category|tag|model|studio, "h": registrable host}
+CATEGORY_NAMES: dict = {}         # feed url -> its category / star / studio name (labels the videos scraped from that feed)
+_KIND_OF_MODE = {"categories": "category", "tags": "tag", "models": "model", "pornstars": "model", "sites": "studio"}
+
+
+def register_taxonomy(items, mode):
+    kind = _KIND_OF_MODE.get(mode, "category")
+    for i in items or []:
+        link, name = i.get("link"), (i.get("name") or i.get("title") or "").strip()
+        if link and name and len(name) <= 60 and link not in TAXONOMY:
+            TAXONOMY[link] = {"n": name, "u": link, "k": kind, "h": reg_host(link)}
+        if link and name:
+            CATEGORY_NAMES.setdefault(link.split("?")[0], name)
+
+
+def load_taxonomy_from_kv():
+    """Live / wanted runs do not scrape the listings: start from what the last full run stored."""
+    try:
+        cur = kv_scrape.get("taxonomy-index") if kv_scrape else None
+    except Exception as e:
+        print(f"  taxonomy-index unreadable ({e})")
+        return
+    for e in (cur or {}).get("entries") or []:
+        if e.get("u"):
+            TAXONOMY.setdefault(e["u"], e)
+    print(f"  taxonomy: {len(TAXONOMY)} pages known")
+
+
+def taxonomy_for(site: str, q: dict, limit: int = 2) -> list:
+    """Category / tag / star / studio pages of `site` whose name equals / contains / is contained in the keyword.
+    Same rules as matchTaxonomy() in src/search.ts."""
+    host, out = reg_host(site), []
+    for e in TAXONOMY.values():
+        if e.get("h") != host:
+            continue
+        ns = _sk_stems(e["n"])
+        if not ns:
+            continue
+        if ns == q["stems"]:
+            sc = 3
+        elif all(x in ns for x in q["stems"]):
+            sc = 2
+        elif all(x in q["stems"] for x in ns) and len("".join(ns)) >= 4:
+            sc = 1
+        else:
+            continue
+        out.append((sc + (0.2 if e.get("k") in ("category", "tag") else 0), e))
+    out.sort(key=lambda t: -t[0])
+    return [e for _, e in out[:limit]]
 
 
 @deadline_guard
-def scrape_chain_from(url: str, first_num: int = 1, pages: int = 3):
+def scrape_chain_from(url: str, first_num: int = 1, pages: int = 3, via=None):
     """Cache `url` (page `first_num`) and follow next_page for `pages` pages in total. Each page is stored
     under scrape:{its own url}, which is exactly what the frontend asks for while scrolling."""
     cur, n, seen = url, first_num, set()
@@ -422,7 +470,7 @@ def scrape_chain_from(url: str, first_num: int = 1, pages: int = 3):
         if not cur or cur in seen:
             break
         seen.add(cur)
-        result = scrape_and_cache_url(cur, page_num=n)
+        result = scrape_and_cache_url(cur, page_num=n, via=via)
         if not result or result.get("error") or not result.get("items"):
             break
         cur, n = result.get("next_page"), n + 1
@@ -431,32 +479,42 @@ def scrape_chain_from(url: str, first_num: int = 1, pages: int = 3):
 
 @deadline_guard
 def scrape_search_and_cache(site: str, query: str, max_items: int = 40, pages: int | None = None):
-    """Pre-scrape one (site, query) pair under the key the Worker looks up (ranked like the local app)."""
+    """Pre-scrape one (site, keyword) pair under the key the Worker looks up.
+    "Search everything": the site's own search page PLUS the category / tag / star / studio page that carries the keyword's
+    name, ranked together on title, tags, genres, stars, studios and description (searchkit.rank_combined)."""
+    query = query_key(query)
     key = search_key(site, query)
+    q = parse_query(query)
     try:
         if use_plus(site):
             results = [_plus_search(site, query)]
         else:
             results = search_many([site], query, max_items=max_items, verify=False)
         results = [translate_result(r) if isinstance(r, dict) else r for r in results]
-        combined, seen = [], set()
         for r in results:
-            site_name = r.get("site") or r.get("page") or site
-            for it in (r.get("items") or []):
-                k = (it.get("link") or "").split("?")[0]
-                if not k or k in seen:
-                    continue
-                seen.add(k)
-                combined.append({**it, "_site": site_name, "_score": _score(it, query)})
-        combined.sort(key=lambda x: -x["_score"])
+            remember_links(r, q["norm"])                   # the site's search matched it: the keyword becomes an index term for the video
+        for e in taxonomy_for(site, q):
+            page = None
+            try:
+                page = kv_scrape.get(f"scrape:{e['u']}") if kv_scrape else None   # usually pre-scraped by the category-feed job
+            except Exception:
+                pass
+            if not (page and page.get("items")):
+                page = scrape_and_cache_url(e["u"], via=e["n"])
+            if page and page.get("items") and not page.get("error"):
+                remember_links(page, e["n"])
+                results.append({**page, "items": [{**it, "_via": e["n"]} for it in page["items"]], "site": site, "query": query,
+                                "source": "taxonomy", "via": e["n"], "search_url": e["u"]})
+                print(f"    + {e['k']} page {e['n']!r}: {len(page['items'])} items")
+        combined = rank_combined([r for r in results if isinstance(r, dict)], q)
         payload = {"results": results, "query": query, "combined": combined, "count": len(combined)}
         if kv_put_scrape(key, payload, ttl=86400):
             print(f"  Cached search: {query!r} on {site} ({len(combined)} items)")
         # infinite scroll on a search = the following result pages, fetched through /api/scrape
         pages = pages if pages is not None else int(os.environ.get("SEARCH_PAGES", "3"))
-        first = (results[0] if results else {}) or {}
+        first = next((r for r in results if isinstance(r, dict) and r.get("source") != "taxonomy"), {}) or {}
         if pages > 1 and combined and first.get("next_page"):
-            scrape_chain_from(first["next_page"], int(first.get("page_num") or 1) + 1, pages - 1)
+            scrape_chain_from(first["next_page"], int(first.get("page_num") or 1) + 1, pages - 1, via=q["norm"])
         return payload
     except Exception as e:
         kv_put_scrape(key, {"results": [], "query": query, "combined": [], "count": 0, "error": str(e)}, ttl=3600)
@@ -511,16 +569,47 @@ def _cam_thumb_origins() -> dict:
         return {}
 
 
+def _kv_doc(key: str):
+    """(document|None, age in seconds|None). Never raises."""
+    try:
+        d = kv_scrape.get(key) if kv_scrape else None
+    except Exception:
+        return None, None
+    ts = (d or {}).get("_ts")
+    return d, (time.time() - ts) if ts else None
+
+
+def _carry_cams(old: dict | None, new: dict) -> dict:
+    """GitHub's IPs are refused by some platforms, so a run here often sees fewer platforms than the Worker did.
+    Keep each missing platform's cams from the stored copy (only cams actually seen in the last 3 h)."""
+    if not old or not old.get("items"):
+        return new
+    got = {c.get("provider") for c in new.get("items", [])}
+    cutoff = time.time() - 3 * 3600
+    extra = [c for c in old["items"] if c.get("provider") and c["provider"] not in got and (c.get("_seen") or 0) >= cutoff]
+    if extra:
+        new = {**new, "items": (new.get("items", []) + extra)[:500], "carried_over": sorted({c.get("provider_name") or c["provider"] for c in extra})}
+        new["count"] = len(new["items"])
+    return new
+
+
 def scrape_livecams_and_cache(url: str | None = None, force: bool = False):
     key = f"livecams:{url or 'default'}"
     if not fetch_livecams:
         return {"items": [], "count": 0, "error": "livecams module unavailable"}
+    old, age = _kv_doc(key)
+    # the Worker refreshes cams itself every 10 minutes: a fresh copy is not rewritten (saves KV writes and the retries below)
+    if not url and not force and old and old.get("items") and age is not None and age < int(os.environ.get("CAMS_MIN_AGE", "600")):
+        print(f"  livecams: stored copy is {int(age)}s old (kept by the Worker) - skipped")
+        return old
     try:
         # platforms sometimes refuse a GitHub IP for a minute: retry before giving up
         data = retry_until(lambda: fetch_livecams(url, force=True), ok=lambda r: bool((r or {}).get("items")),
                            tries=3, delay=6, what="livecams")
         for note in (data or {}).get("diagnostics", [])[:12]:
             print(f"    cams: {note}")
+        if not url:
+            data = _carry_cams(old, data)
         kv_put_scrape(key, data)                      # empty/error results keep the previous good copy
         origins = _cam_thumb_origins()
         if origins:
@@ -555,6 +644,10 @@ def scrape_channels_bundle(category: str | None = None, max_pages: int | None = 
     cat = category or "all"
     max_pages = max_pages or int(os.environ.get("CHANNEL_PAGES", "20"))
     key = f"channels-bundle:{cat}"
+    old, age = _kv_doc(key)
+    if not force and old and old.get("pages") and age is not None and age < int(os.environ.get("CHANNELS_MIN_AGE", "3000")):
+        print(f"  channels[{cat}]: stored copy is {int(age)}s old - skipped")
+        return old
     if not fetch_channels:
         return {"pages": {}, "error": "channels module unavailable"}
     pages, err = {}, None
@@ -633,10 +726,10 @@ def job_test_sites():
     print(f"Cached {len(sites)} test sites")
 
 
-def scrape_feed_chain(url: str, pages: int | None = None):
+def scrape_feed_chain(url: str, pages: int | None = None, via=None):
     """Scrape page 1 and follow next_page so infinite scroll keeps hitting the cache."""
     pages = pages or int(os.environ.get("FEED_PAGES", "8"))
-    result = scrape_and_cache_url(url)
+    result = scrape_and_cache_url(url, via=via)
     seen = {url}
     for n in range(2, pages + 1):
         nxt = (result or {}).get("next_page")
@@ -644,7 +737,7 @@ def scrape_feed_chain(url: str, pages: int | None = None):
             break
         seen.add(nxt)
         time.sleep(1)
-        result = scrape_and_cache_url(nxt, page_num=n)
+        result = scrape_and_cache_url(nxt, page_num=n, via=via)
 
 
 def job_popular_feeds():
@@ -694,6 +787,7 @@ def cache_listing_chain(url: str, mode: str, pages: int) -> list[str]:
         data = scrape_categories_and_cache(cur, mode)
         if not data or data.get("error"):
             break
+        register_taxonomy(_items_of(data), mode)
         links += [i.get("link") for i in _items_of(data) if i.get("link")]
         cur = data.get("next_page")
         time.sleep(1)
@@ -719,7 +813,7 @@ def job_category_feeds():
         done.update(links)
         print(f"Feeds for {index_url}: {len(links)}")
         with ThreadPoolExecutor(max_workers=4) as ex:
-            list(ex.map(lambda l: scrape_feed_chain(l, cat_pages), links))
+            list(ex.map(lambda l: scrape_feed_chain(l, cat_pages, via=CATEGORY_NAMES.get((l or "").split("?")[0])), links))
 
 
 def job_search_queries():
@@ -764,6 +858,9 @@ def _run_wanted(it: dict):
             scrape_channels_bundle(it.get("category"))
         elif t == "categories" and it.get("url"):
             scrape_categories_and_cache(it["url"], it.get("mode") or "categories", it.get("page_num"))
+        elif t == "meta" and it.get("url"):
+            if it["url"] not in PRIORITY_META:
+                PRIORITY_META.append(it["url"])            # a visitor opened this video and it had no metadata: fetch it first
     except Exception as e:
         print(f"  wanted {t} failed: {e}")
 
@@ -814,13 +911,16 @@ def _fetch_one_meta(url: str):
     return url, data
 
 
-def job_metadata():
-    """Fetch duration / date / views / rating / tags / stars for videos seen this run.
-    Stored in 16 shard keys (meta-shard:<hex>) = at most 16 KV writes per run."""
+META_ALL: dict = {}               # video url -> metadata (every shard after job_metadata ran): feeds the search index
+
+
+def job_metadata(limit: int | None = None):
+    """Fetch duration / date / views / rating / tags / genres / stars / studios for videos seen this run, and FIRST for the
+    ones visitors opened that had none (PRIORITY_META). Stored in 16 shard keys (meta-shard:<hex>) = at most 16 KV writes."""
     if not fetch_metadata:
         print("metadata module unavailable - skipping")
         return
-    limit = int(os.environ.get("MAX_METADATA", "400"))
+    limit = limit or int(os.environ.get("MAX_METADATA", "400"))
     per_shard = int(os.environ.get("META_PER_SHARD", "250"))
     max_age = 14 * 86400
     now = int(time.time())
@@ -830,8 +930,9 @@ def job_metadata():
         cur = kv_scrape.get(f"meta-shard:{c}")          # raises on outage -> nothing gets overwritten
         shards[c] = dict(cur.get("items", {})) if isinstance(cur, dict) else {}
 
-    todo = [l for l in VIDEO_LINKS if l not in shards[meta_shard(l)]][:limit]
-    print(f"Metadata: {len(VIDEO_LINKS)} videos seen, {len(todo)} to fetch")
+    queue = list(dict.fromkeys(PRIORITY_META + VIDEO_LINKS))
+    todo = [l for l in queue if l not in shards[meta_shard(l)]][:limit]
+    print(f"Metadata: {len(VIDEO_LINKS)} videos seen, {len(PRIORITY_META)} requested by visitors, {len(todo)} to fetch")
     dirty = set()
     with ThreadPoolExecutor(max_workers=6) as pool:
         for url, data in pool.map(_fetch_one_meta, todo):
@@ -850,7 +951,55 @@ def job_metadata():
         shards[c] = fresh
     for c in sorted(dirty):
         kv_put_scrape(f"meta-shard:{c}", {"items": shards[c]}, ttl=30 * 86400)
+    for items in shards.values():
+        META_ALL.update(items)
     print(f"Metadata: wrote {len(dirty)} shard(s), {sum(len(v) for v in shards.values())} videos stored")
+
+
+def job_taxonomy_index():
+    """ONE key with every category / tag / star / studio page the scraper has seen. The Worker opens the page whose name
+    matches the typed keyword, so a keyword that is a genre or a star finds videos whose title never says it."""
+    cap = int(os.environ.get("TAXONOMY_MAX", "4000"))
+    entries = list(TAXONOMY.values())[:cap]
+    if entries:
+        kv_put_scrape("taxonomy-index", {"entries": entries})
+        print(f"Taxonomy index: {len(entries)} pages")
+
+
+def job_search_index():
+    """ONE key (`search-index`) = every video the scraper has seen, with the tags / genres / stars / studios from its
+    metadata and the category feed or keyword it was found under. The Worker searches it with zero network cost.
+    Accumulates across runs (new data wins, fields the new run lacks are kept), expires after 21 days, capped."""
+    if not kv_scrape:
+        return
+    cap = int(os.environ.get("INDEX_MAX", "2500"))
+    max_age, now = 21 * 86400, int(time.time())
+    try:
+        cur = kv_scrape.get("search-index")                  # raises on outage -> never overwrite on a failed read
+    except Exception as e:
+        print(f"search-index unreadable ({e}) - not rebuilding")
+        return
+    old = {r["l"]: r for r in (cur or {}).get("records") or [] if r.get("l")}
+    records = {}
+    for link in set(old) | set(VIDEO_ITEMS):
+        prev, item = old.get(link), VIDEO_ITEMS.get(link)
+        if item is None:                                      # not seen this run: rebuild the card from the stored record
+            item = {"link": link, "title": prev.get("t"), "thumbnail": prev.get("i"), "duration": prev.get("du"), "views": prev.get("vw"),
+                    "rating": prev.get("rt"), "added": prev.get("ad"), "quality": prev.get("ql"), "page": prev.get("p")}
+        via = list(dict.fromkeys(LINK_VIA.get(link, []) + ((prev or {}).get("vi") or [])))
+        rec = index_record(item, META_ALL.get(link), via=via, ts=now if link in VIDEO_ITEMS else (prev or {}).get("ts", now))
+        for k in ("tg", "ct", "md", "st", "ds"):              # keep what an earlier run learnt when this one has nothing
+            if k not in rec and prev and prev.get(k):
+                rec[k] = prev[k]
+        if rec.get("t") and now - int(rec.get("ts", now)) < max_age:
+            records[link] = rec
+    ordered = sorted(records.values(), key=lambda r: -int(r.get("ts", 0)))[:cap]
+    if not ordered:
+        print("Search index: nothing to write")
+        return
+    kv_put_scrape("search-index", {"records": ordered})
+    tagged = sum(1 for r in ordered if r.get("tg") or r.get("ct") or r.get("md") or r.get("st") or r.get("vi"))
+    print(f"Search index: {len(ordered)} videos ({tagged} with tags/genres/stars/studios)")
 
 
 def write_status(only, started):
@@ -873,11 +1022,14 @@ def main():
     start = time.time()
     kv_scrape.load_expirations()
 
-    if only == "live":
-        safe_job("live", job_livecams_channels)
+    load_taxonomy_from_kv()
+    if only in ("live", "wanted"):
+        if only == "live":
+            safe_job("live", job_livecams_channels)
         safe_job("wanted", job_wanted)
-    elif only == "wanted":
-        safe_job("wanted", job_wanted)
+        if PRIORITY_META or VIDEO_ITEMS:                  # what visitors asked for goes into the metadata shards + search index right away
+            safe_job("metadata", job_metadata, limit=80)
+            safe_job("index", job_search_index)
     else:
         # perishable data first, then what visitors asked for, then the long tail - each job isolated
         safe_job("catalog", job_catalog_urls)
@@ -889,6 +1041,8 @@ def main():
         safe_job("category_feeds", job_category_feeds)
         safe_job("search", job_search_queries)
         safe_job("metadata", job_metadata)
+        safe_job("taxonomy", job_taxonomy_index)
+        safe_job("index", job_search_index)
 
     elapsed = time.time() - start
     write_status(only, start)

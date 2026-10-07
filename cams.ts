@@ -115,13 +115,20 @@ function camFromDict(d: any, base: string, provider: string | null, needThumb = 
   };
 }
 
+const STRONG_NAME = ["username", "user_name", "userName", "nickname", "nick", "displayName", "display_name", "model", "modelName"];
+/** a real room has a username-like key, or a generic name PLUS viewers/thumbnail: category / filter lists have neither */
+const isRoom = (x: any): boolean =>
+  !!x && typeof x === "object" && !Array.isArray(x) &&
+  (STRONG_NAME.some((k) => typeof x[k] === "string" && x[k].trim()) || (!!first(x, ["name", "slug"]) && (first(x, K_VIEWERS) !== null || first(x, K_THUMB) !== null)));
+
 function roomList(data: any): any[] {
   let best: any[] = [];
   const walk = (n: any, depth = 0) => {
     if (depth > 6) return;
     if (Array.isArray(n)) {
-      const ds = n.filter((x) => x && typeof x === "object" && !Array.isArray(x));
-      if (ds.length >= 2 && ds.filter((x) => first(x, K_NAME)).length >= ds.length * 0.6 && ds.length > best.length) best = ds;
+      const dicts = n.filter((x) => x && typeof x === "object" && !Array.isArray(x));
+      const rooms = dicts.filter(isRoom);
+      if (rooms.length >= 2 && rooms.length >= dicts.length * 0.6 && rooms.length > best.length) best = rooms;
       for (const v of n.slice(0, 5)) walk(v, depth + 1);
     } else if (n && typeof n === "object") for (const v of Object.values(n)) walk(v, depth + 1);
   };
@@ -129,42 +136,64 @@ function roomList(data: any): any[] {
   return best;
 }
 
-const DIRECT: Record<string, { base: string; candidates: string[][] }> = {
+type Spec = { base: string; candidates: string[][] };
+const directSpecs = (wm: string): Record<string, Spec> => ({
   chaturbate: { base: "https://chaturbate.com", candidates: [
     [0, 90, 180].map((o) => `https://chaturbate.com/api/ts/roomlist/room-list/?enable_recommendations=false&limit=90&offset=${o}`),
-    [0, 100].map((o) => `https://chaturbate.com/api/public/affiliates/onlinerooms/?wm=dvafl&format=json&limit=100&offset=${o}`) ] },
+    [0, 100].map((o) => `https://chaturbate.com/api/public/affiliates/onlinerooms/?wm=${encodeURIComponent(wm)}&format=json&limit=100&offset=${o}`) ] },
   stripchat: { base: "https://stripchat.com", candidates: [
     [0, 60, 120].map((o) => `https://stripchat.com/api/front/v2/models?limit=60&offset=${o}&primaryTag=girls&sortBy=stripRanking`),
     [0, 60].map((o) => `https://stripchat.com/api/front/models?limit=60&offset=${o}&primaryTag=girls&sortBy=stripRanking`) ] },
   cam4: { base: "https://www.cam4.com", candidates: [[1, 2].map((p) => `https://www.cam4.com/directoryCams?directoryJson=true&online=true&url=true&page=${p}&resultsPerPage=60&gender=female`)] },
   camsoda: { base: "https://www.camsoda.com", candidates: [[1, 2].map((p) => `https://www.camsoda.com/api/v1/browse/react?p=${p}&perPage=60`)] },
-};
+});
+
+class CamHttpError extends Error { constructor(public status: number, msg: string) { super(msg); } }
 
 async function getJson(url: string, headers: Record<string, string>, ms = 12000): Promise<any> {
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), ms);
   try {
-    const r = await fetch(url, { headers, signal: ac.signal });
-    if (r.status >= 400) throw new Error(`HTTP ${r.status}`);
-    return await r.json();
+    const r = await fetch(url, { headers, signal: ac.signal, redirect: "follow" });
+    if (r.status >= 400) throw new CamHttpError(r.status, `HTTP ${r.status}`);
+    const text = await r.text();
+    // a blocked Worker IP gets an HTML challenge page with status 200: say so instead of "Unexpected token <"
+    if (/^\s*</.test(text.slice(0, 200))) throw new CamHttpError(403, /just a moment|cf-chl|captcha|attention required/i.test(text.slice(0, 4000)) ? "bot challenge" : "HTML instead of JSON");
+    return JSON.parse(text);
+  } catch (e) {
+    if (e instanceof Error && e.name === "AbortError") throw new CamHttpError(408, "timeout");
+    throw e;
   } finally { clearTimeout(t); }
 }
 
-async function fetchDirect(name: string): Promise<{ cams: any[]; notes: string[] }> {
-  const spec = DIRECT[name], base = spec.base, notes: string[] = [];
+/** one retry (with jitter) for the failures that are usually momentary: 429, 5xx, timeouts, dropped connections */
+async function getJsonRetry(url: string, headers: Record<string, string>, ms = 12000): Promise<any> {
+  try { return await getJson(url, headers, ms); } catch (e) {
+    const st = e instanceof CamHttpError ? e.status : 0;
+    const transient = st === 408 || st === 429 || st >= 500 || (!st && /network|fetch failed|connection/i.test(String((e as Error)?.message)));
+    if (!transient) throw e;
+    await new Promise((r) => setTimeout(r, 300 + Math.random() * 600));
+    return getJson(url, headers, ms);
+  }
+}
+
+async function fetchDirect(name: string, spec: Spec): Promise<{ cams: any[]; notes: string[] }> {
+  const base = spec.base, notes: string[] = [];
   const headers = { "User-Agent": UA, Accept: "application/json, text/plain, */*", "Accept-Language": "en-US,en;q=0.9", Referer: base + "/", Origin: base, "X-Requested-With": "XMLHttpRequest" };
   for (const cand of spec.candidates) {
+    // every page of a candidate at once (was one after the other: 3 slow pages = 36 s); results are read in page order
+    const settled = await Promise.allSettled(cand.map((u) => getJsonRetry(u, headers)));
     const cams: any[] = [], seen = new Set<string>();
-    for (const u of cand) {
-      let data: any;
-      try { data = await getJson(u, headers); } catch (e) { notes.push(`${name}: ${u.split("?")[0]} -> ${e instanceof Error ? e.message : e}`); break; }
+    settled.forEach((s, i) => {
+      const where = cand[i].split("?")[0];
+      if (s.status === "rejected") { notes.push(`${name}: ${where} -> ${s.reason instanceof Error ? s.reason.message : s.reason}`); return; }
       let fresh = 0;
-      for (const d of roomList(data)) {
+      for (const d of roomList(s.value)) {
         const cam = camFromDict(d, base, name, false);
         if (cam && !seen.has(cam.username.toLowerCase())) { seen.add(cam.username.toLowerCase()); cams.push(cam); fresh++; }
       }
-      if (!fresh) { notes.push(`${name}: ${u.split("?")[0]} returned no usable rooms`); break; }
-    }
+      if (!fresh) notes.push(`${name}: ${where} returned no usable rooms`);
+    });
     if (cams.length) { notes.push(`${name}: ${cams.length} cams`); return { cams, notes }; }
   }
   return { cams: [], notes };
@@ -203,16 +232,28 @@ function merge(groups: Record<string, any[]>): any[] {
   return out;
 }
 
-/** Fetch every direct platform in parallel (each independent). Returns a payload even when some platforms fail. */
-export async function fetchLiveCams(): Promise<any> {
-  const names = Object.keys(DIRECT);
-  const results = await Promise.all(names.map((n) => fetchDirect(n).catch((e) => ({ cams: [] as any[], notes: [`${n}: ${e instanceof Error ? e.message : e}`] }))));
-  const groups: Record<string, any[]> = {}, diag: string[] = [];
-  names.forEach((n, i) => { groups[n] = results[i].cams; diag.push(...results[i].notes); });
+/** Fetch every direct platform in parallel (each independent). Returns a payload even when some platforms fail.
+ *  Every cam carries `_seen` (unix seconds) so a cam carried over from an older copy can be expired by age. */
+export async function fetchLiveCams(opts: { wm?: string; providers?: string } = {}): Promise<any> {
+  const specs = directSpecs(opts.wm || "dvafl");
+  const want = (opts.providers || "").split(",").map((x) => x.trim().toLowerCase()).filter((x) => x in specs);
+  const names = want.length ? want : Object.keys(specs);
+  const t0 = Date.now();
+  const timed = await Promise.all(names.map(async (n) => {
+    const t = Date.now();
+    const r = await fetchDirect(n, specs[n]).catch((e) => ({ cams: [] as any[], notes: [`${n}: ${e instanceof Error ? e.message : e}`] }));
+    return { ...r, ms: Date.now() - t };
+  }));
+  const now = Math.floor(Date.now() / 1000);
+  const groups: Record<string, any[]> = {}, diag: string[] = [], status: Record<string, { ok: boolean; count: number; ms: number }> = {};
+  names.forEach((n, i) => {
+    for (const c of timed[i].cams) c._seen = now;
+    groups[n] = timed[i].cams; diag.push(...timed[i].notes);
+    status[n] = { ok: timed[i].cams.length > 0, count: timed[i].cams.length, ms: timed[i].ms };
+  });
   const items = merge(groups);
-  if (!items.length) return { page: CAMS_HOME, items: [], count: 0, diagnostics: diag, error: "No live cams could be loaded: none of the cam platforms answered." };
+  if (!items.length) return { page: CAMS_HOME, items: [], count: 0, platform_status: status, diagnostics: diag, error: "No live cams could be loaded: none of the cam platforms answered." };
   const by: Record<string, number> = {};
   for (const c of items) { const k = c.provider_name || c.provider || "?"; by[k] = (by[k] || 0) + 1; }
-  const now = Math.floor(Date.now() / 1000);
-  return { page: CAMS_HOME, items, count: items.length, providers: by, source: "direct-worker", diagnostics: diag, fetched_at: now, _ts: now };
+  return { page: CAMS_HOME, items, count: items.length, providers: by, platform_status: status, source: "direct-worker", took_ms: Date.now() - t0, diagnostics: diag, fetched_at: now, _ts: now };
 }
