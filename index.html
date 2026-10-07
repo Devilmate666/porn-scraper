@@ -1085,18 +1085,18 @@ const kindOfCatalogTab = (t) => Object.keys(CATALOGS).find(k => CATALOGS[k].tab 
 const PORN_SITES_URL = 'https://www.superporn.com/series';
 const PORN_SITES_TAB = '__pornsites__';
 
-// Porn Tags (FullPorno categories / tags listing) — always available
-const PORN_TAGS_URL = 'https://www.freesexvideos.xxx/categories/';
-const PORN_TAGS_TAB = '__porntags__';
-const PORN_TAGS_CACHE_KEY = '__porn_tags__';
+// Videos - combined tags from all sites
+const VIDEOS_URL = 'https://www.freesexvideos.xxx/categories/';
+const VIDEOS_TAB = '__videos__';
+const VIDEOS_CACHE_KEY = '__videos__';
 
 // FullPorno single-source listing kinds share one rendering / paging path
-const isFpKind = (kind) => kind === 'pornsites' || kind === 'porntags';
-const isFpTab = (tab) => tab === PORN_SITES_TAB || tab === PORN_TAGS_TAB;
+const isFpKind = (kind) => kind === 'pornsites' || kind === 'videos';
+const isFpTab = (tab) => tab === PORN_SITES_TAB || tab === VIDEOS_TAB;
 const isListTab = (tab) => tab === CATEGORIES_TAB || isFpTab(tab);
-const kindOfTab = (tab) => tab === PORN_SITES_TAB ? 'pornsites' : tab === PORN_TAGS_TAB ? 'porntags' : 'categories';
-const tabOfKind = (kind) => kind === 'pornsites' ? PORN_SITES_TAB : kind === 'porntags' ? PORN_TAGS_TAB : CATEGORIES_TAB;
-const cacheKeyOfKind = (kind) => kind === 'pornsites' ? PORN_SITES_CACHE_KEY : kind === 'porntags' ? PORN_TAGS_CACHE_KEY : COMBINED_CAT_CACHE_KEY;
+const kindOfTab = (tab) => tab === PORN_SITES_TAB ? 'pornsites' : tab === VIDEOS_TAB ? 'videos' : 'categories';
+const tabOfKind = (kind) => kind === 'pornsites' ? PORN_SITES_TAB : kind === 'videos' ? VIDEOS_TAB : CATEGORIES_TAB;
+const cacheKeyOfKind = (kind) => kind === 'pornsites' ? PORN_SITES_CACHE_KEY : kind === 'videos' ? VIDEOS_CACHE_KEY : COMBINED_CAT_CACHE_KEY;
 
 // Active homepage feeds (may grow when a category is opened)
 let sites = SOURCES.map(s => ({ name: s.name, url: s.url, sourceId: s.id }));
@@ -1204,7 +1204,7 @@ function sectionForState(state) {
   switch (state.view) {
     case 'categories': return 'categories';
     case 'pornsites': return 'pornsites';
-    case 'porntags': return 'porntags';
+    case 'videos': return 'videos';
     case 'networks': return 'networks';
     case 'pornstars': return 'pornstars';
     case 'livecams': return 'livecams';
@@ -1236,7 +1236,7 @@ function currentNavState(ignorePlayer = false) {
   }
   if (activeTab === CATEGORIES_TAB) return { ...base, view: 'categories' };
   if (activeTab === PORN_SITES_TAB) return { ...base, view: 'pornsites' };
-  if (activeTab === PORN_TAGS_TAB) return { ...base, view: 'porntags' };
+  if (activeTab === VIDEOS_TAB) return { ...base, view: 'videos' };
   if (activeTab === NETWORKS_TAB) return { ...base, view: 'networks' };
   if (activeTab === PORNSTARS_TAB) return { ...base, view: 'pornstars' };
   if (activeTab === LIVECAMS_TAB) return { ...base, view: 'livecams' };
@@ -1266,7 +1266,7 @@ function stateToHash(s) {
     case 'player':       return `#/video/${enc(s.detail)}`;
     case 'categories':   return '#/categories';
     case 'pornsites':    return '#/series';
-    case 'porntags':     return '#/tags';
+    case 'videos':     return '#/tags';
     case 'networks':     return '#/networks';
     case 'pornstars':    return '#/pornstars';
     case 'livecams':     return '#/cams';
@@ -1293,7 +1293,7 @@ function hashToState() {
     case 'home':     return { ...base, view: 'feed' };
     case 'categories': return { ...base, view: 'categories' };
     case 'series':   return { ...base, view: 'pornsites' };
-    case 'tags':     return { ...base, view: 'porntags' };
+    case 'tags':     return { ...base, view: 'videos' };
     case 'networks': return { ...base, view: 'networks' };
     case 'pornstars':return { ...base, view: 'pornstars' };
     case 'cams':     return { ...base, view: 'livecams' };
@@ -1346,7 +1346,7 @@ function viewAlreadyShown(state) {
     case 'category-feed': return !!state.feedUrl && activeTab === state.feedUrl && has(state.feedUrl);
     case 'categories':    return activeTab === CATEGORIES_TAB && has(CATEGORIES_TAB);
     case 'pornsites':     return activeTab === PORN_SITES_TAB && has(PORN_SITES_TAB);
-    case 'porntags':      return activeTab === PORN_TAGS_TAB && has(PORN_TAGS_TAB);
+    case 'videos':      return activeTab === VIDEOS_TAB && has(VIDEOS_TAB);
     case 'networks':      return activeTab === NETWORKS_TAB && has(NETWORKS_TAB);
     case 'pornstars':     return activeTab === PORNSTARS_TAB && has(PORNSTARS_TAB);
     case 'livecams':      return activeTab === LIVECAMS_TAB && has(LIVECAMS_TAB);
@@ -1426,7 +1426,7 @@ async function applyNavStateInner(state) {
     }
     return;
   }
-  if (state.view === 'porntags') {
+  if (state.view === 'videos') {
     await openPornTags(false, { skipPush: true });
     return;
   }
@@ -1803,7 +1803,7 @@ function renderCategories(data, append = false, opts = {}) {
   if (!append) hideSearchBar();
   const kind = opts.kind || data.kind || 'categories'; // 'categories' | 'pornsites'
   const isPornSites = isFpKind(kind); // single-source FullPorno listing (sites or tags)
-  const isTags = kind === 'porntags';
+  const isTags = kind === 'videos';
   activeTab = tabOfKind(kind);
   setTimeout(updateNetworkBarActive, 0);
   const title = isTags ? 'Porn Tags' : isPornSites ? 'Porn Series' : 'Categories';
@@ -2087,10 +2087,10 @@ function tagPillHtml(cat) {
              data-name="${name}" data-source-id="fullporno" title="${name}">${name}</a>`;
 }
 
-function renderTagCloud(tags, data, kind = 'porntags') {
+function renderTagCloud(tags, data, kind = 'videos') {
   hideSearchBar();
   const isSites = kind === 'pornsites';
-  const tab = isSites ? PORN_SITES_TAB : PORN_TAGS_TAB;
+  const tab = isSites ? PORN_SITES_TAB : VIDEOS_TAB;
   const noun = isSites ? 'site' : 'tag';
   const groups = new Map();
   tags.forEach(t => {
@@ -2200,7 +2200,7 @@ function observeCategorySentinel() {
       });
     }, { rootMargin: '250px 0px', threshold: 0 });
   }
-  document.querySelectorAll(`.sentinel[data-site="${CATEGORIES_TAB}"], .sentinel[data-site="${PORN_SITES_TAB}"], .sentinel[data-site="${NETWORKS_TAB}"], .sentinel[data-site="${PORN_TAGS_TAB}"]`).forEach(s => {
+  document.querySelectorAll(`.sentinel[data-site="${CATEGORIES_TAB}"], .sentinel[data-site="${PORN_SITES_TAB}"], .sentinel[data-site="${NETWORKS_TAB}"], .sentinel[data-site="${VIDEOS_TAB}"]`).forEach(s => {
     categorySentinelObserver.observe(s);
   });
 }
@@ -2326,7 +2326,7 @@ async function loadNextCategoriesPage() {
       const countBadge = feed.querySelector('.count-badge');
       if (countBadge) {
         const n = st.categories.length;
-        const nn = kind === 'porntags' ? 'tag' : 'site';
+        const nn = kind === 'videos' ? 'tag' : 'site';
         countBadge.textContent = `🗂️ ${n} ${nn}${n !== 1 ? 's' : ''}`;
       }
     }
@@ -2516,7 +2516,7 @@ function restoreCategoriesView() {
   if (countBadge) {
     const n = savedCats.length;
     countBadge.textContent = isFpKind(savedKind)
-      ? `🗂️ ${n} ${savedKind === 'porntags' ? 'tag' : 'site'}${n !== 1 ? 's' : ''}`
+      ? `🗂️ ${n} ${savedKind === 'videos' ? 'tag' : 'site'}${n !== 1 ? 's' : ''}`
       : `🗂️ ${n} categor${n !== 1 ? 'ies' : 'y'}`;
   }
   scheduleCategoryRecheck();
@@ -2766,7 +2766,7 @@ async function switchFeed(feedId, { startJourney = false } = {}) {
   }
   if (activeTab === CATEGORIES_TAB) saveCategoryCache(COMBINED_CAT_CACHE_KEY);
   if (activeTab === PORN_SITES_TAB) saveCategoryCache(PORN_SITES_CACHE_KEY);
-  if (activeTab === PORN_TAGS_TAB) saveCategoryCache(PORN_TAGS_CACHE_KEY);
+  if (activeTab === VIDEOS_TAB) saveCategoryCache(VIDEOS_CACHE_KEY);
   activeFeedId = feedId;
   activeSourceId = feed.siteIds[0];
   navSection = 'home';
@@ -3967,16 +3967,16 @@ const openNetworks  = (forceRefresh = false, opts = {}) => openStudioView(NETWOR
 
 /** FullPorno tags / categories listing — always available as "Porn Tags". */
 async function openPornTags(forceRefresh = false, opts = {}) {
-  if (!forceRefresh && loadCategoryCache(PORN_TAGS_CACHE_KEY)) {
+  if (!forceRefresh && loadCategoryCache(VIDEOS_CACHE_KEY)) {
     const data = {
       ...(lastCategoriesData || {}),
       categories: categoriesState.categories.slice(),
       next_page: categoriesState.next_page,
       page_num: categoriesState.page_num,
-      kind: 'porntags',
+      kind: 'videos',
     };
-    renderCategories(data, false, { kind: 'porntags' });
-    if (!opts.skipPush) pushNav({ view: 'porntags' });
+    renderCategories(data, false, { kind: 'videos' });
+    if (!opts.skipPush) pushNav({ view: 'videos' });
     setStatus(`Porn Tags — ${categoriesState.categories.length}`, false);
     scheduleCategoryRecheck();
     return;
@@ -3985,14 +3985,14 @@ async function openPornTags(forceRefresh = false, opts = {}) {
   if (busy) return;
   busy = true;
   if (pornTagsBtn) pornTagsBtn.disabled = true;
-  setStatus('Loading porn tags…', true);
-  showSectionLoading('porn tags and categories');
+  setStatus('Loading videos…', true);
+  showSectionLoading('videos');
 
   try {
     const res = await fetch('/api/scrape-categories', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: PORN_TAGS_URL, mode: 'tags' }),
+      body: JSON.stringify({ url: VIDEOS_URL, mode: 'tags' }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
@@ -4001,14 +4001,14 @@ async function openPornTags(forceRefresh = false, opts = {}) {
     if (cats.length && !cats.some(c => c.letter)) {
       throw new Error('Server is running an old scraper.py/app.py (image-based result). Replace both files and restart the server.');
     }
-    const data = { ...json, categories: cats, next_page: '', kind: 'porntags' };
-    renderCategories(data, false, { kind: 'porntags' });
-    if (!opts.skipPush) pushNav({ view: 'porntags' });
-    setStatus(`Porn Tags — ${cats.length}`, false);
+    const data = { ...json, categories: cats, next_page: '', kind: 'videos' };
+    renderCategories(data, false, { kind: 'videos' });
+    if (!opts.skipPush) pushNav({ view: 'videos' });
+    setStatus(`Videos — ${cats.length}`, false);
     scheduleCategoryRecheck();
   } catch (err) {
     rescueSearchBar(); results.innerHTML = `<div class="empty">⚠️ ${escapeHtml(err.message)}</div>`;
-    setStatus('Porn tags load error', false);
+    setStatus('Videos load error', false);
   } finally {
     busy = false;
     if (pornTagsBtn) pornTagsBtn.disabled = false;
@@ -4449,7 +4449,7 @@ async function switchSource(sourceId) {
   }
   if (activeTab === CATEGORIES_TAB) saveCategoryCache(COMBINED_CAT_CACHE_KEY);
   if (activeTab === PORN_SITES_TAB) saveCategoryCache(PORN_SITES_CACHE_KEY);
-  if (activeTab === PORN_TAGS_TAB) saveCategoryCache(PORN_TAGS_CACHE_KEY);
+  if (activeTab === VIDEOS_TAB) saveCategoryCache(VIDEOS_CACHE_KEY);
 
   activeSourceId = sourceId;
   navSection = 'home';
@@ -5326,7 +5326,7 @@ function activateSectionSnapshot(section, snapshot, scrollY, pressedButton, pres
     case 'categories': activeTab = CATEGORIES_TAB; break;
     case 'pornsites': activeTab = PORN_SITES_TAB; break;
     case 'networks': activeTab = NETWORKS_TAB; break;
-    case 'porntags': activeTab = PORN_TAGS_TAB; break;
+    case 'videos': activeTab = VIDEOS_TAB; break;
     case 'pornstars': activeTab = PORNSTARS_TAB; break;
     case 'livecams': activeTab = LIVECAMS_TAB; break;
     case 'livechannels': activeTab = LIVECHANNELS_TAB; break;
@@ -5932,7 +5932,7 @@ window.addEventListener('scroll', () => {
 /** Categories / Tags / Sites / Pornstars have their own box: the main box drives it live. */
 function liveMirrorInput() {
   if (activeTab === CATEGORIES_TAB) return document.getElementById('categorySearchInput');
-  if (activeTab === PORN_TAGS_TAB) return document.getElementById('tagSearchInput');
+  if (activeTab === VIDEOS_TAB) return document.getElementById('tagSearchInput');
   if (activeTab === PORN_SITES_TAB || activeTab === NETWORKS_TAB) return document.getElementById('studioSearchInput');
   if (kindOfCatalogTab(activeTab)) return document.getElementById('catalogSearchInput');
   return null;
@@ -5972,11 +5972,12 @@ function shuffleCurrentFeed() {
 shuffleBtn.addEventListener('click', shuffleCurrentFeed);
 searchInput.addEventListener('input', () => {
   clearTimeout(liveTimer);
+  // Only track state, don't trigger search on typing
   if ((searchInput.value || '').trim() && !feedSearchEntryActive && activeTab !== WEBSEARCH_TAB) {
     pushNav(currentNavState());
     feedSearchEntryActive = true;
   }
-  liveTimer = setTimeout(onLiveInput, SEARCH.debounceMs);
+  // Removed live search on typing - search only on Enter
 });
 document.addEventListener('input', (e) => {
   const input = e.target;
@@ -5985,6 +5986,7 @@ document.addEventListener('input', (e) => {
     pushNav(currentNavState());
     feedSearchEntryActive = true;
   }
+  // Removed live search on typing - search only on Enter
 });
 /* Clearing any search box (backspace, the x button, Esc) puts the page back at the top. */
 (function scrollToTopWhenSearchCleared() {
