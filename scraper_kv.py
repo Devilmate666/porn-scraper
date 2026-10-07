@@ -133,7 +133,7 @@ class KVClient:
         for key, value in entries:
             if self.put(key, value, expiration_ttl):
                 success += 1
-            time.sleep(0.05)
+            time.sleep(0.2)  # 5 writes/sec to avoid 429 burst limit
         return success
 
     def get(self, key: str) -> dict | None:
