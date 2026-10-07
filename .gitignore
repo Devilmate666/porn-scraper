@@ -1,57 +1,7 @@
-# Dependencies
 node_modules/
+static/
+tunnel.log
 __pycache__/
 *.pyc
-
-# Build outputs
-dist/
-build/
-*.tsbuildinfo
-
-# Wrangler
 .wrangler/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Environment
-.env
-.env.local
-.env.*.local
-
-# Logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Testing
-coverage/
-.nyc_output/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Debug
-debug/
-# *.html
-
-# Local backend artifacts
-tunnel.log
-*.bat
-*.ps1
-*.sh
-# the GitHub workflows need these scripts:
-!.github/scripts/*.sh
-fly.toml
-Dockerfile
-.dockerignore
-
-# Local build / tool folders
-static/
-.kilo/
-
+deploy.log
