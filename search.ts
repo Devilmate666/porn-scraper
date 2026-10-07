@@ -321,7 +321,8 @@ export function suggestTaxonomy(entries: TaxEntry[], rawQuery: string, limit = 1
 }
 
 /** Search suggestions from the search-index: extracts all unique tags, categories, models, and studios
- *  from every video record and matches them against the query. Uses taxonomy entries for URLs when available. */
+ *  from every video record and matches them against the query. Uses taxonomy entries for URLs when available.
+ *  Combines tags from superporn, freesexvideos, pornvideobb into one feed; keeps bdsmhole separate. */
 export function suggestFromIndex(records: IndexRecord[], taxonomy: TaxEntry[], rawQuery: string, limit = 12): Suggestion[] {
   const qn = norm(rawQuery);
   if (qn.length < 2) return [];
@@ -335,35 +336,65 @@ export function suggestFromIndex(records: IndexRecord[], taxonomy: TaxEntry[], r
     taxMap.set(key, t.u);
   }
   
-  // Extract all unique metadata across all records
-  const allMeta = new Map<string, { name: string; kind: "tag" | "category" | "model" | "studio"; host: string }>();
+  // Extract all unique metadata across all records, grouped by normalized name + kind
+  // For general sites (superporn, freesexvideos, pornvideobb), combine them
+  // For bdsmhole, keep separate
+  const generalHosts = new Set(["superporn.com", "pornvideobb.com", "freesexvideos.xxx"]);
+  const metaByNorm = new Map<string, { name: string; kind: "tag" | "category" | "model" | "studio"; hosts: Set<string>; originalName: string }>();
+  
   for (const r of records) {
     const host = r.p ? hostOfUrl(r.p) : "";
+    const isBDSM = host.includes("bdsmhole");
+    
     // Tags
     for (const t of r.tg || []) {
-      const key = `tag|${host}|${norm(t)}`;
-      if (!allMeta.has(key)) allMeta.set(key, { name: t, kind: "tag", host });
+      const n = norm(t);
+      const key = `tag|${n}`;
+      const existing = metaByNorm.get(key);
+      if (existing) {
+        existing.hosts.add(host);
+      } else {
+        metaByNorm.set(key, { name: t, kind: "tag", hosts: new Set([host]), originalName: t });
+      }
     }
     // Categories
     for (const c of r.ct || []) {
-      const key = `category|${host}|${norm(c)}`;
-      if (!allMeta.has(key)) allMeta.set(key, { name: c, kind: "category", host });
+      const n = norm(c);
+      const key = `category|${n}`;
+      const existing = metaByNorm.get(key);
+      if (existing) {
+        existing.hosts.add(host);
+      } else {
+        metaByNorm.set(key, { name: c, kind: "category", hosts: new Set([host]), originalName: c });
+      }
     }
     // Models/Pornstars
     for (const m of r.md || []) {
-      const key = `model|${host}|${norm(m)}`;
-      if (!allMeta.has(key)) allMeta.set(key, { name: m, kind: "model", host });
+      const n = norm(m);
+      const key = `model|${n}`;
+      const existing = metaByNorm.get(key);
+      if (existing) {
+        existing.hosts.add(host);
+      } else {
+        metaByNorm.set(key, { name: m, kind: "model", hosts: new Set([host]), originalName: m });
+      }
     }
     // Studios/Series
     for (const s of r.st || []) {
-      const key = `studio|${host}|${norm(s)}`;
-      if (!allMeta.has(key)) allMeta.set(key, { name: s, kind: "studio", host });
+      const n = norm(s);
+      const key = `studio|${n}`;
+      const existing = metaByNorm.get(key);
+      if (existing) {
+        existing.hosts.add(host);
+      } else {
+        metaByNorm.set(key, { name: s, kind: "studio", hosts: new Set([host]), originalName: s });
+      }
     }
   }
   
   // Score and filter matches
   const scored: { m: { name: string; kind: "tag" | "category" | "model" | "studio"; host: string }; s: number }[] = [];
-  for (const meta of allMeta.values()) {
+  for (const meta of metaByNorm.values()) {
     const n = norm(meta.name);
     if (!n) continue;
     const w = n.split(" ").filter(Boolean);
@@ -375,7 +406,23 @@ export function suggestFromIndex(records: IndexRecord[], taxonomy: TaxEntry[], r
     else if (qn.length >= 3 && n.includes(qn)) score = 40;
     else if (last.length >= 3 && qw.length === 1 && w.some((x) => stem(x) === stem(last))) score = 35;
     if (!score) continue;
-    scored.push({ m: meta, s: score + (KIND_BONUS[meta.kind] || 0) - Math.min(n.length, 40) / 40 });
+    
+    // Determine the host for display
+    // If it's from bdsmhole only, keep bdsmhole
+    // If it's from general sites, use "multi" or the first general host
+    const hasBDSM = Array.from(meta.hosts).some(h => h.includes("bdsmhole"));
+    const hasGeneral = Array.from(meta.hosts).some(h => generalHosts.has(h));
+    
+    let displayHost = "";
+    if (hasBDSM && !hasGeneral) {
+      displayHost = "bdsmhole.com";
+    } else if (hasGeneral) {
+      displayHost = "multi"; // Indicates it's from multiple general sites
+    } else {
+      displayHost = Array.from(meta.hosts)[0] || "";
+    }
+    
+    scored.push({ m: { name: meta.name, kind: meta.kind, host: displayHost }, s: score + (KIND_BONUS[meta.kind] || 0) - Math.min(n.length, 40) / 40 });
   }
   
   scored.sort((a, b) => b.s - a.s);
@@ -383,8 +430,14 @@ export function suggestFromIndex(records: IndexRecord[], taxonomy: TaxEntry[], r
   // Keep the list varied: at most 5 of one kind first
   const out: Suggestion[] = [], perKind: Record<string, number> = {}, rest: Suggestion[] = [], names = new Set<string>();
   for (const { m } of scored) {
-    const taxKey = `${m.kind}|${m.host}|${norm(m.name)}`;
-    const url = taxMap.get(taxKey) || "";
+    // For multi-site suggestions, we don't have a URL - will trigger web search
+    // For single-site suggestions, try to get URL from taxonomy
+    let url = "";
+    if (m.host !== "multi") {
+      const taxKey = `${m.kind}|${m.host}|${norm(m.name)}`;
+      url = taxMap.get(taxKey) || "";
+    }
+    
     const sg: Suggestion = { name: m.name, url, kind: m.kind, host: m.host };
     const dup = `${m.kind}|${m.host}|${norm(m.name)}`;
     if (names.has(dup)) continue;

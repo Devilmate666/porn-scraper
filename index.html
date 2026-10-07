@@ -6092,7 +6092,7 @@ searchInput.addEventListener('keydown', (e) => {
   }
 
   function pick(sg) {
-    if (!sg || !sg.url) return;
+    if (!sg) return;
     close();
     clearTimeout(liveTimer);
     searchToken++;                                   // stop any live filter still running for the old feed
@@ -6101,7 +6101,41 @@ searchInput.addEventListener('keydown', (e) => {
     searchInput._hadText = false;
     try { onLiveInput(); } catch (e) {}               // un-filter the feed we are leaving
     feedSearchEntryActive = false;
-    openCategoryFeed(sg.url, sg.name);
+
+    // If we have a URL from taxonomy, use it
+    if (sg.url) {
+      openCategoryFeed(sg.url, sg.name);
+      return;
+    }
+
+    // Otherwise, run a web search for this tag/category/model/studio
+    // Combine general sites (superporn, freesexvideos, pornvideobb) or keep bdsmhole separate
+    const isBDSM = sg.host && sg.host.includes('bdsmhole');
+    if (isBDSM) {
+      // Search only BDSMHole for BDSM tags
+      const bdsmSource = SOURCES.find(s => s.id === 'bdsmhole');
+      if (bdsmSource) {
+        activeSourceId = bdsmSource.id;
+        activeFeedId = feedOfSource(bdsmSource.id).id;
+        renderSiteTabs();
+      }
+    } else {
+      // For general tags, search across superporn, freesexvideos, pornvideobb
+      const generalFeed = FEEDS.find(f => f.id === 'general');
+      if (generalFeed) {
+        // Switch to General Porn feed to search across all 3 sites
+        homeFilter = 'general';
+        const firstSource = SOURCES.find(s => s.id === generalFeed.siteIds[0]);
+        if (firstSource) {
+          activeSourceId = firstSource.id;
+          activeFeedId = generalFeed.id;
+          renderSiteTabs();
+        }
+      }
+    }
+
+    // Run web search for the tag name
+    runWebSearch(sg.name, { skipPush: false });
   }
 
   searchInput.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(lookup, 150); });
