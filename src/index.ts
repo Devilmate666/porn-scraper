@@ -1,11 +1,11 @@
-import { Env } from "./types";
-import { scrapePage, searchOne, isBlockedHost } from "./scrape";
-import { parseQuery, queryKey, loadIndex, loadTaxonomy, searchIndex, matchTaxonomy, learnShapes, rankCombined, memoKV, hostOfUrl, type Query, type TaxEntry } from "./search";
-import { scrapeListing } from "./listings";
-import { resolveVideo, resolveFull } from "./resolve";
-import { fetchMetadata } from "./metadata";
-import { fetchLiveCams } from "./cams";
-import { fetchChannelsNative } from "./channels";
+import { Env } from "../types";
+import { scrapePage, searchOne, isBlockedHost } from "../scrape";
+import { parseQuery, queryKey, loadIndex, loadTaxonomy, searchIndex, matchTaxonomy, learnShapes, rankCombined, memoKV, hostOfUrl, type Query, type TaxEntry } from "../search";
+import { scrapeListing } from "../listings";
+import { resolveVideo, resolveFull } from "../resolve";
+import { fetchMetadata } from "../metadata";
+import { fetchLiveCams } from "../cams";
+import { fetchChannelsNative } from "../channels";
 
 // ---------------------------------------------------------------------------------------------------------
 // API Worker - built so the site keeps working even when GitHub, a cam platform or your PC is down.
