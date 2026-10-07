@@ -1086,7 +1086,7 @@ const PORN_SITES_URL = 'https://www.superporn.com/series';
 const PORN_SITES_TAB = '__pornsites__';
 
 // Porn Tags (FullPorno categories / tags listing) — always available
-const PORN_TAGS_URL = 'https://www.freesexvideos.xxx/tags/';
+const PORN_TAGS_URL = 'https://www.porner.xxx/categories/';
 const PORN_TAGS_TAB = '__porntags__';
 const PORN_TAGS_CACHE_KEY = '__porn_tags__';
 
@@ -5733,6 +5733,46 @@ async function loadMoreMixed(tabKey, opts = {}) {
     scheduleMixRecheck(tabKey);
   }
 }
+
+/** One scroll step while a query is active: reveal the NEXT 6 matches.
+ *  Matches that are already loaded are revealed first; pages are fetched only if they cannot fill the next 6. */
+async function revealNext(key) {
+  if (!key || revealBusy.has(key)) return;
+  const words = queryWords(feedQueries.get(key));
+  const grid = gridOf(key);
+  if (!words.length || !grid || grid.classList.contains('live-pending') ) return;
+  const st = revealState(key);
+  const token = searchToken;
+  const t0 = Date.now();
+  const target = st.limit + SEARCH.pageSize;
+  const matched = () => { const f = feedEl(key); return f ? countMatches(f, words) : 0; };
+  revealBusy.add(key);
+  let showingSkeletons = false;
+  try {
+    let steps = 0, stalled = 0;
+    while (matched() < target && feedHasMore(key) && token === searchToken && activeTab === key) {
+      if (matched() > st.limit && Date.now() - t0 > SEARCH.revealMaxWaitMs) break;     // something new is ready: show it
+      if (isFeedLoading(key)) { if (Date.now() - t0 > 30000) break; await sleep(40); continue; }
+      if (steps >= SEARCH.revealMaxSteps) break;
+      steps++;
+      const before = cardCount(key);
+      setStatus(`Loading more matches in ${feedLabel(key)}…`, true);
+      if (!showingSkeletons) { insertSearchSkeletons(grid, SEARCH.pageSize); showingSkeletons = true; }
+      if (isMixKey(key)) await loadMoreMixed(key, { depth: SEARCH.depthMix[1], quiet: true, search: true });
+      else await loadSitePagesBatch(key, SEARCH.scrollDepth, { quiet: true, search: true });
+      if (cardCount(key) === before) { if (++stalled >= 3) break; } else stalled = 0;
+    }
+    if (token !== searchToken || activeTab !== key) return;            // typed again / left the feed
+    // Keep results in full six-match chunks unless this feed has reached its end.
+    if (matched() >= target) st.limit = target;
+    else if (!feedHasMore(key)) st.limit = matched();
+  } finally {
+    if (showingSkeletons) grid.querySelector(':scope > .search-skeletons')?.remove();
+    revealBusy.delete(key);
+  }
+  applyLiveFilter();
+}
+
 /* ---------- progress banner (cards stay hidden while the first page is searched) ---------- */
 function setLivePending(grid, on) {
   grid.classList.toggle('live-pending', on);
@@ -5744,6 +5784,28 @@ function setLivePending(grid, on) {
     b.className = 'live-loading';
     b.innerHTML = searchSkeletonsHtml(SEARCH.firstPage);
     grid.insertBefore(b, grid.firstChild);
+  }
+}
+/* ---------- the search itself ---------- */
+
+/** Keep loading until the first six matches are ready or the feed is exhausted. */
+async function collectFirstPage(run) {
+  const { key, words } = run;
+  const sched = isMixKey(key) ? SEARCH.depthMix : SEARCH.depthSingle;
+  let step = 0, stalled = 0;
+  while (!run.stop && run.token === searchToken && activeTab === key && feedHasMore(key)) {
+    const feed = feedEl(key);
+    if (!feed) return;
+    const found = countMatches(feed, words);
+    if (found >= SEARCH.firstPage) return;
+    if (isFeedLoading(key)) { await sleep(40); continue; }        // a scroll / warm-up load is running: wait for it
+    const depth = sched[Math.min(step, sched.length - 1)];
+    step++;
+    const before = cardCount(key);
+    if (isMixKey(key)) await loadMoreMixed(key, { depth, quiet: true, search: true });
+    else await loadSitePagesBatch(key, depth, { quiet: true });
+    setStatus(`Searching ${feedLabel(key)}…`, true);
+    if (cardCount(key) === before) { if (++stalled >= 3) return; } else stalled = 0;
   }
 }
 
@@ -5763,9 +5825,18 @@ async function runFeedSearch() {
     setStatus('Ready', false);
     return;
   }
-  
-  // Only filter currently loaded videos, don't load more pages
-  setLivePending(grid, false);
+  if (countMatches(feed, run.words) < SEARCH.firstPage && feedHasMore(key)) {
+    setLivePending(grid, true);
+    await collectFirstPage(run);
+    run.stop = true;
+    if (run.token !== searchToken || activeTab !== key) return;      // typed again / left the feed
+    const g2 = gridOf(key);
+    if (!g2) return;
+    setLivePending(g2, false);
+    // Any remaining matches are fetched only when the user scrolls to the end.
+  } else {
+    setLivePending(grid, false);
+  }
   applyLiveFilter();
 }
 
@@ -5852,7 +5923,7 @@ window.addEventListener('scroll', () => {
       if (isAtFeedBottom(120)) loadMoreWebSearch();
       return;
     }
-    // Search no longer loads more pages on scroll - only filters current loaded videos
+    if (feedQueries.get(key) && isAtFeedBottom(120)) revealNext(key);
   });
 }, { passive: true });
 
@@ -5899,6 +5970,14 @@ function shuffleCurrentFeed() {
 }
 
 shuffleBtn.addEventListener('click', shuffleCurrentFeed);
+searchInput.addEventListener('input', () => {
+  clearTimeout(liveTimer);
+  if ((searchInput.value || '').trim() && !feedSearchEntryActive && activeTab !== WEBSEARCH_TAB) {
+    pushNav(currentNavState());
+    feedSearchEntryActive = true;
+  }
+  liveTimer = setTimeout(onLiveInput, SEARCH.debounceMs);
+});
 document.addEventListener('input', (e) => {
   const input = e.target;
   if (!input || !['categorySearchInput', 'tagSearchInput', 'studioSearchInput', 'catalogSearchInput'].includes(input.id)) return;
@@ -5933,238 +6012,15 @@ document.addEventListener('input', (e) => {
   }, true);
 })();
 
-/* ---------- search-box suggestions: tags / categories / pornstars / studios -> click opens that feed ---------- */
-(function suggestDropdown() {
-  const KINDS = { model: ['⭐', 'Pornstar'], studio: ['📺', 'Studio'], category: ['📁', 'Category'], tag: ['🏷️', 'Tag'] };
-  const box = document.createElement('div');
-  box.id = 'suggestBox';
-  box.setAttribute('role', 'listbox');
-  document.body.appendChild(box);
-
-  let items = [], active = -1;
-
-  const esc = (t) => String(t == null ? '' : t).replace(/[&<>"']/g, c => ({ '&': '&', '<': '<', '>': '>', '"': '"', "'": ''' }[c]));
-  const enabled = () => activeTab !== LIVECAMS_TAB && activeTab !== LIVECHANNELS_TAB;
-  const isOpen = () => box.classList.contains('open');
-
-  function place() {
-    const r = searchInput.getBoundingClientRect();
-    box.style.left = r.left + 'px';
-    box.style.top = (r.bottom + 6) + 'px';
-    box.style.width = Math.max(r.width, 260) + 'px';
-  }
-  function close() { box.classList.remove('open'); active = -1; }
-  function mark(i) {
-    active = i;
-    box.querySelectorAll('.sg').forEach((el, n) => el.classList.toggle('active', n === i));
-    const el = box.querySelector('.sg.active');
-    if (el) el.scrollIntoView({ block: 'nearest' });
-  }
-  function highlight(name, text) {
-    const i = name.toLowerCase().indexOf(text.toLowerCase());
-    if (i < 0) return esc(name);
-    return esc(name.slice(0, i)) + '<b>' + esc(name.slice(i, i + text.length)) + '</b>' + esc(name.slice(i + text.length));
-  }
-  function draw(list, text) {
-    items = list;
-    active = -1;
-    if (!list.length) { close(); return; }
-    box.innerHTML = list.map((sg, i) => {
-      const [ico, label] = KINDS[sg.kind] || ['🔎', sg.kind || ''];
-      return `<div class="sg" role="option" data-i="${i}"><span class="sg-ico">${ico}</span>` +
-        `<span class="sg-name">${highlight(sg.name, text)}</span><span class="sg-kind">${esc(label)}</span>` +
-        `<span class="sg-host">${esc(sg.host)}</span></div>`;
-    }).join('');
-    place();
-    box.classList.add('open');
-  }
-
-  function getLocalSuggestions(text) {
-    const q = text.toLowerCase().trim();
-    if (!q || q.length < 1) return [];
-    
-    const suggestions = [];
-    const seen = new Set();
-    const feed = feedEl(activeTab);
-    if (!feed) return [];
-    
-    // Get all unique tags/categories/models/studios from currently loaded videos
-    const videos = feed.querySelectorAll('.card[data-detail]');
-    videos.forEach(card => {
-      // Extract tags from card data attributes or search text
-      const searchText = card.getAttribute('data-search') || '';
-      const title = card.getAttribute('data-title') || '';
-      const sourceId = card.getAttribute('data-source-id') || '';
-      const feedType = card.getAttribute('data-feed') || '';
-      const host = card.getAttribute('data-host') || '';
-      
-      // Parse tags from the search text (format: "title description tags categories models studios...")
-      const parts = searchText.split(' ');
-      parts.forEach(part => {
-        const clean = part.toLowerCase().trim();
-        if (clean.length >= 2 && !seen.has(clean)) {
-          // Determine kind based on context
-          let kind = 'tag';
-          // We can't easily distinguish, so we'll use a generic approach
-          // For now, add as tag
-          suggestions.push({ name: clean, url: '', kind: 'tag', host: host || sourceId });
-          seen.add(clean);
-        }
-      });
-    });
-    
-    // Also check for category/pornstar/studio data if available in the feed
-    // For category feeds, we can get categories from the category cards
-    if (activeTab === CATEGORIES_TAB) {
-      document.querySelectorAll('.category-card[data-name]').forEach(card => {
-        const name = card.getAttribute('data-name') || '';
-        const link = card.getAttribute('data-link') || '';
-        const sourceId = card.getAttribute('data-source-id') || '';
-        if (name && name.toLowerCase().includes(q) && !seen.has(name.toLowerCase())) {
-          suggestions.push({ name, url: link, kind: 'category', host: sourceId });
-          seen.add(name.toLowerCase());
-        }
-      });
-    }
-    
-    // For pornstars tab
-    if (activeTab === PORNSTARS_TAB || activeTab === '__pornstars__') {
-      document.querySelectorAll('.category-card[data-name]').forEach(card => {
-        const name = card.getAttribute('data-name') || '';
-        const link = card.getAttribute('data-link') || '';
-        const sourceId = card.getAttribute('data-source-id') || '';
-        if (name && name.toLowerCase().includes(q) && !seen.has(name.toLowerCase())) {
-          suggestions.push({ name, url: link, kind: 'model', host: sourceId });
-          seen.add(name.toLowerCase());
-        }
-      });
-    }
-    
-    // For networks/pornsites tabs
-    if (activeTab === NETWORKS_TAB || activeTab === PORN_SITES_TAB) {
-      document.querySelectorAll('.studio-section[data-name]').forEach(card => {
-        const name = card.getAttribute('data-name') || '';
-        const link = card.querySelector('.studio-more')?.getAttribute('data-link') || '';
-        const sourceId = card.querySelector('.studio-more')?.getAttribute('data-source-id') || '';
-        if (name && name.toLowerCase().includes(q) && !seen.has(name.toLowerCase())) {
-          suggestions.push({ name, url: link, kind: 'studio', host: sourceId });
-          seen.add(name.toLowerCase());
-        }
-      });
-    }
-    
-    // For tags tab
-    if (activeTab === PORN_TAGS_TAB) {
-      document.querySelectorAll('.tag-pill[data-name]').forEach(card => {
-        const name = card.getAttribute('data-name') || '';
-        const link = card.getAttribute('data-link') || '';
-        if (name && name.toLowerCase().includes(q) && !seen.has(name.toLowerCase())) {
-          suggestions.push({ name, url: link, kind: 'tag', host: 'fullporno' });
-          seen.add(name.toLowerCase());
-        }
-      });
-    }
-    
-    // For mixed feed (Home), show combined suggestions from all loaded videos
-    // but separate bdsmhole
-    if (activeTab === mixKey(ALL_FEED.id)) {
-      const generalSuggestions = [];
-      const bdsmSuggestions = [];
-      
-      videos.forEach(card => {
-        const feedType = card.getAttribute('data-feed') || '';
-        const searchText = card.getAttribute('data-search') || '';
-        const parts = searchText.split(' ');
-        parts.forEach(part => {
-          const clean = part.toLowerCase().trim();
-          if (clean.length >= 2 && !seen.has(clean)) {
-            const suggestion = { name: clean, url: '', kind: 'tag', host: feedType };
-            if (feedType === 'bdsm') {
-              if (!bdsmSuggestions.some(s => s.name === clean)) bdsmSuggestions.push(suggestion);
-            } else {
-              if (!generalSuggestions.some(s => s.name === clean)) generalSuggestions.push(suggestion);
-            }
-            seen.add(clean);
-          }
-        });
-      });
-      
-      // Return general suggestions first, then bdsm separately
-      return { general: generalSuggestions.slice(0, 10), bdsm: bdsmSuggestions.slice(0, 10) };
-    }
-    
-    return suggestions.slice(0, 12);
-  }
-
-  function pick(sg) {
-    if (!sg || !sg.url) return;
-    close();
-    searchToken++;
-    feedQueries.delete(activeTab);
-    searchInput.value = '';
-    searchInput._hadText = false;
-    try { onLiveInput(); } catch (e) {}
-    feedSearchEntryActive = false;
-    openCategoryFeed(sg.url, sg.name);
-  }
-
-  searchInput.addEventListener('input', () => {
-    const text = (searchInput.value || '').trim();
-    if (!enabled()) { close(); return; }
-    const suggestions = getLocalSuggestions(text);
-    if (typeof suggestions === 'object' && suggestions.general) {
-      // Mixed feed with separate bdsm
-      const combined = [...suggestions.general, ...suggestions.bdsm.map(s => ({...s, kind: 'bdsm'}))];
-      draw(combined.slice(0, 12), text);
-    } else {
-      draw(suggestions, text);
-    }
-  });
-  searchInput.addEventListener('focus', () => {
-    const text = (searchInput.value || '').trim();
-    if (text.length >= 1) {
-      const suggestions = getLocalSuggestions(text);
-      if (typeof suggestions === 'object' && suggestions.general) {
-        const combined = [...suggestions.general, ...suggestions.bdsm.map(s => ({...s, kind: 'bdsm'}))];
-        draw(combined.slice(0, 12), text);
-      } else {
-        draw(suggestions, text);
-      }
-    }
-  });
-  searchInput.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== searchInput) close(); }, 120));
-
-  // document-level + capture: runs before the box's own Enter / Escape handlers
-  document.addEventListener('keydown', (e) => {
-    if (e.target !== searchInput || !isOpen()) return;
-    if (e.key === 'ArrowDown') { e.preventDefault(); mark((active + 1) % items.length); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); mark(active <= 0 ? items.length - 1 : active - 1); }
-    else if (e.key === 'Enter' && active >= 0) { e.preventDefault(); e.stopPropagation(); pick(items[active]); }
-    else if (e.key === 'Enter') close();              // plain Enter keeps its old meaning: filter / search this feed
-    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
-  }, true);
-
-  box.addEventListener('mousedown', (e) => e.preventDefault());   // keep focus in the input so blur does not eat the click
-  box.addEventListener('click', (e) => {
-    const row = e.target.closest('.sg');
-    if (row) pick(items[Number(row.dataset.i)]);
-  });
-  box.addEventListener('mousemove', (e) => {
-    const row = e.target.closest('.sg');
-    if (row && Number(row.dataset.i) !== active) mark(Number(row.dataset.i));
-  });
-  window.addEventListener('resize', () => { if (isOpen()) place(); });
-  window.addEventListener('scroll', () => { if (isOpen()) place(); }, { passive: true });
-})();
-
-// Search on Enter key press (no live search while typing)
 searchInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
     e.preventDefault();
+    clearTimeout(liveTimer);
     onLiveInput();
   } else if (e.key === 'Escape') {
     e.preventDefault();
     searchInput.value = '';
+    clearTimeout(liveTimer);
     onLiveInput();
   }
 });
