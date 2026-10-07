@@ -53,7 +53,10 @@ jobs:
           SCRAPE_DATA_KV_NAMESPACE_ID: ${{ steps.ns.outputs.scrape_ns_id }}
           SCRAPE_BUDGET_SECONDS: '600'
           MAX_KV_WRITES: '40'
-        run: python scraper_kv.py --only "${{ github.event.inputs.only || 'live' }}"
+          ONLY: ${{ github.event.inputs.only || 'live' }}      # via env, never pasted into the shell line (script injection)
+        run: |
+          case "$ONLY" in live|wanted) ;; *) echo "unknown mode '$ONLY', using live"; ONLY=live ;; esac
+          python scraper_kv.py --only "$ONLY"
 
   # GitHub switches scheduled workflows off after 60 days without repo activity. This call resets that timer.
   keepalive:

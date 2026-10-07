@@ -51,7 +51,8 @@ const LIVE_TIMEOUT: Record<string, number> = {
   "/api/scrape": 28000, "/api/search": 28000, "/api/resolve": 20000, "/api/resolve-full": 25000,
   "/api/metadata": 15000, "/api/livecams": 20000, "/api/channels": 20000, "/api/scrape-categories": 25000,
 };
-const BUILTIN_HOSTS = ["superporn.com", "pornvideobb.com", "freesexvideos.xxx", "bdsmhole.com", "lemoncams.com", "fullporno.to", "porno-666.me", "xlivetv.com"];
+// the ONLY sites the Worker will scrape: the 4 video sites, the cam site and live TV (more only via ALLOWED_HOSTS)
+const BUILTIN_HOSTS = ["superporn.com", "pornvideobb.com", "freesexvideos.xxx", "bdsmhole.com", "lemoncams.com", "xlivetv.com"];
 // image CDNs that need the platform's own Referer (used when the scraper's origin map is missing/stale)
 const THUMB_REFERERS: [RegExp, string][] = [
   [/doppiocdn|strpst|stripcdn|stripchat/i, "https://stripchat.com/"],
@@ -124,7 +125,6 @@ async function getAllowed(env: Env): Promise<Set<string>> {
     else if (v && typeof v === "object") Object.values(v).forEach(grab);
   };
   grab(await kvGet(env.SCRAPE_DATA, "catalog:urls"));
-  grab(await kvGet(env.SCRAPE_DATA, "test-sites"));
   allowMemo = { t: Date.now(), set };
   return set;
 }
@@ -413,14 +413,6 @@ export default {
             return json(d || (await edgeGetJson("lkg/catalog")) || {}, 200, headers);
           }
           break;
-        case "/api/test-sites":
-          if (isGet) {
-            const d = await kvGet(env.SCRAPE_DATA, "test-sites");
-            if (d) edgePutJson("lkg/test-sites", d, LKG_TTL);
-            return json(d || (await edgeGetJson("lkg/test-sites")) || { sites: [] }, 200, headers);
-          }
-          break;
-
         case "/api/scrape": {
           if (!isPost) break;
           const b = await body<{ urls?: any[]; url?: string }>();

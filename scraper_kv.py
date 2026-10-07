@@ -27,6 +27,7 @@ from scraper import (
     scrape_page, scrape_categories, scrape_tags, scrape_studio_sections,
     scrape_superporn_categories, scrape_models, search_many, fetch_html,
     _current_page_number, _guess_next_page, _find_next_page_link,
+    resolve_full_video_url,
 )
 # Frontend SOURCES (from index.html) - these are what the frontend expects
 FRONTEND_SOURCES = [
@@ -36,10 +37,11 @@ FRONTEND_SOURCES = [
     "https://www.bdsmhole.com/",
 ]
 
-# Also include TEST_SITES for search fallback
 from searchkit import (parse_query, query_key, rank_combined, index_record, reg_host, norm as _sk_norm, stems as _sk_stems)
-from sourcetest import TEST_SITES, search_site, site_from_url
-from extras import scrape_plus, deep_resolve, is_smart
+try:                              # optional fallback video resolver (extras.py); everything else works without it
+    from extras import deep_resolve
+except Exception:
+    deep_resolve = None
 try:
     from livecams import fetch_livecams
 except Exception:
@@ -180,7 +182,7 @@ def kv_put_cache(key: str, value: dict, ttl: int = 3600):
 
 
 KV_LONG = 30 * 86400                                   # good data lives 30 days: the Worker serves stale data, never a hole
-LIVE_PREFIXES = ("livecams:", "channels-bundle:", "cam-thumb-origins", "catalog:", "test-sites", "search-index", "taxonomy-index")   # stamped with _ts
+LIVE_PREFIXES = ("livecams:", "channels-bundle:", "cam-thumb-origins", "catalog:", "search-index", "taxonomy-index")   # stamped with _ts
 PRIORITY_PREFIXES = LIVE_PREFIXES + ("scrape-status",)                                             # never skipped by the write budget
 MAX_WRITES = int(os.environ.get("MAX_KV_WRITES", "450"))                                            # per run (free tier: 1,000/day)
 KV_STATS.setdefault("skipped", 0)
@@ -313,26 +315,7 @@ def translate_result(r: dict) -> dict:
         return r
 
 
-# Sites handled by the extra (sourcetest/extras) scrapers instead of the generic one - same rules as app.py
-_REMOVED = ("pornoklad", "tlenporno", "xfuntaxy", "epornhome")
-_norm = lambda x: re.sub(r"[^a-z0-9]", "", (x or "").lower())
-TEST_SITES[:] = [x for x in TEST_SITES
-                 if not any(k in _norm(x.get("name")) + _norm(x.get("id")) + _norm(x.get("feed")) for k in _REMOVED)]
-
-
-def _reg_host(url):
-    h = (urlparse(url if "://" in (url or "") else "https://" + (url or "")).hostname or "").lower()
-    return ".".join(h.split(".")[-2:]) if h else ""
-
-
-_PLUS_HOSTS = {_reg_host(x["feed"]) for x in TEST_SITES} | {"porno-666.me"}
-
-
-def use_plus(url: str) -> bool:
-    try:
-        return _reg_host(url) in _PLUS_HOSTS or bool(is_smart(url))
-    except Exception:
-        return False
+# Only the four built-in sites + cams + live TV are scraped. No extra / test sites.
 
 
 # every video link seen while scraping (metadata is fetched for these)
@@ -366,18 +349,7 @@ def remember_links(result, via=None):
 def scrape_and_cache_url(url: str, page_num: int | None = None, fresh: bool = False, via=None):
     key = f"scrape:{url}"
     try:
-        if use_plus(url):
-            result = scrape_plus(url, max_items=80) or {}
-            items = result.get("items") or []
-            result.setdefault("page", url)
-            result["items"] = items
-            result["count"] = len(items)
-            result["page_num"] = page_num if page_num is not None else result.get("page_num") or _current_page_number(url)
-            if items and not result.get("next_page"):
-                result["next_page"] = _guess_next_page(url, result["page_num"])
-                result["next_is_guess"] = True
-        else:
-            result = scrape_page(url, max_items=80, page_num=page_num)
+        result = scrape_page(url, max_items=80, page_num=page_num)
 
         result = translate_result(result)
         remember_links(result, via)
@@ -389,25 +361,6 @@ def scrape_and_cache_url(url: str, page_num: int | None = None, fresh: bool = Fa
         kv_put_scrape(key, error_result, ttl=3600)
         print(f"  Error caching {url}: {e}")
         return error_result
-
-
-def _plus_search(site: str, query: str) -> dict:
-    try:
-        p = urlparse(site if "://" in site else "https://" + site)
-        origin = f"{p.scheme}://{p.netloc}/"
-        r = search_site(site_from_url(origin, None), query) or {}
-    except Exception as e:
-        r = {"error": str(e), "items": []}
-    items = r.get("items") or []
-    r["site"] = site
-    r["query"] = query
-    r["items"] = items
-    r["count"] = len(items)
-    r.setdefault("page", r.get("search_url") or site)
-    r["source"] = "site-search" if items else "none"
-    if items and not r.get("next_page") and r.get("search_url"):
-        r["next_page"] = _guess_next_page(r["search_url"], _current_page_number(r["search_url"]))
-    return r
 
 
 TAXONOMY: dict = {}               # page url -> {"n": name, "u": url, "k": category|tag|model|studio, "h": registrable host}
@@ -486,10 +439,7 @@ def scrape_search_and_cache(site: str, query: str, max_items: int = 40, pages: i
     key = search_key(site, query)
     q = parse_query(query)
     try:
-        if use_plus(site):
-            results = [_plus_search(site, query)]
-        else:
-            results = search_many([site], query, max_items=max_items, verify=False)
+        results = search_many([site], query, max_items=max_items, verify=False)
         results = [translate_result(r) if isinstance(r, dict) else r for r in results]
         for r in results:
             remember_links(r, q["norm"])                   # the site's search matched it: the keyword becomes an index term for the video
@@ -525,8 +475,8 @@ def scrape_search_and_cache(site: str, query: str, max_items: int = 40, pages: i
 def scrape_resolve_and_cache(url: str, full: bool = False):
     key = f"resolve-full:{url}" if full else f"resolve:{url}"
     try:
-        if use_plus(url) or full:
-            result = deep_resolve(url)
+        if full:
+            result = deep_resolve(url) if deep_resolve else resolve_full_video_url(url, fresh=True)
         else:
             result = {"video": None, "error": "Use full resolve for this site"}
         kv_put_scrape(key, result, ttl=86400)
@@ -719,13 +669,6 @@ def job_catalog_urls():
     print("Cached catalog URLs")
 
 
-def job_test_sites():
-    """Write test sites list to KV."""
-    sites = [{"id": x["id"], "name": x["name"], "feed": x["feed"]} for x in TEST_SITES]
-    kv_put_scrape("test-sites", {"sites": sites}, ttl=86400 * 7)
-    print(f"Cached {len(sites)} test sites")
-
-
 def scrape_feed_chain(url: str, pages: int | None = None, via=None):
     """Scrape page 1 and follow next_page so infinite scroll keeps hitting the cache."""
     pages = pages or int(os.environ.get("FEED_PAGES", "8"))
@@ -756,7 +699,6 @@ LISTINGS = [
     ("https://www.freesexvideos.xxx/sites/",  "sites",     3),   # Networks (General)
     ("https://www.bdsmhole.com/studios/",     "categories", 2),  # Networks (BDSM)
     ("https://www.bdsmhole.com/categories/",  "categories", 2),
-    ("https://www.porner.xxx/categories/",    "tags",      1),   # Porn Tags
 ]
 # (listing url, env var, default count) -> how many "See All"/model/category feeds to pre-scrape
 FEED_GROUPS = [
@@ -1033,7 +975,6 @@ def main():
     else:
         # perishable data first, then what visitors asked for, then the long tail - each job isolated
         safe_job("catalog", job_catalog_urls)
-        safe_job("test_sites", job_test_sites)
         safe_job("live", job_livecams_channels, with_categories=True)
         safe_job("wanted", job_wanted)
         safe_job("feeds", job_popular_feeds)

@@ -64,11 +64,15 @@ jobs:
           BACKEND_URL: ${{ secrets.BACKEND_URL }}          # optional: live Flask backend (see LIVE_MODE.md)
           MODE: ${{ vars.WORKER_MODE }}                    # optional repo variable: "live" (default) or "kv"
           EXTRA_HOSTS: ${{ vars.ALLOWED_HOSTS }}           # optional repo variable: extra scrapable hosts, comma separated
+          CB_WM: ${{ vars.CHATURBATE_WM }}                 # optional repo variable: Chaturbate affiliate slug for the fallback endpoint
+          CAMS: ${{ vars.CAM_PROVIDERS }}                  # optional repo variable: e.g. "chaturbate,cam4" to limit the direct cam platforms
         run: |
           EXTRA="--var GITHUB_REPO:${{ github.repository }} --var GITHUB_REF:${{ github.ref_name }}"
           if [ -n "${BACKEND_URL:-}" ]; then EXTRA="$EXTRA --var BACKEND_URL:${BACKEND_URL}"; fi
           if [ -n "${MODE:-}" ]; then EXTRA="$EXTRA --var MODE:${MODE}"; fi
           if [ -n "${EXTRA_HOSTS:-}" ]; then EXTRA="$EXTRA --var ALLOWED_HOSTS:${EXTRA_HOSTS}"; fi
+          if [ -n "${CB_WM:-}" ]; then EXTRA="$EXTRA --var CHATURBATE_WM:${CB_WM}"; fi
+          if [ -n "${CAMS:-}" ]; then EXTRA="$EXTRA --var CAM_PROVIDERS:${CAMS}"; fi
           wrangler deploy $EXTRA 2>&1 | tee deploy.log
           URL=$(grep -oE 'https://[A-Za-z0-9._-]+\.workers\.dev' deploy.log | head -1 || true)
           if [ -z "$URL" ]; then

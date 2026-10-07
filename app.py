@@ -28,7 +28,6 @@ from scraper import (
     scrape_categories, scrape_tags, scrape_studio_sections,
     scrape_superporn_categories, scrape_models,
 )
-from sourcetest import TEST_SITES, test_site, search_site, site_from_url
 from scraper import scrape_page, _guess_next_page, _current_page_number, fetch_html
 try:
     from metadata import fetch_metadata
@@ -36,13 +35,20 @@ except Exception as _e:          # metadata is a bonus: never take the whole app
     print(f"[metadata] disabled: {_e}", flush=True)
     def fetch_metadata(html, url):
         return {"url": url, "groups": [], "error": "metadata module unavailable"}
-from extras import scrape_plus, deep_resolve, is_smart
+try:                              # optional fallback video resolver; the app runs without it
+    from extras import deep_resolve, is_smart
+except Exception:
+    def is_smart(url):
+        return False
+
+    def deep_resolve(url, max_fetch=5):
+        return {"video": None, "error": "deep resolver not installed"}
 try:
     from livecams import fetch_livecams, fetch_thumb
 except Exception as _e:          # the cams tab is a bonus: never take the whole app down
     print(f"[livecams] disabled: {_e}", flush=True)
-    def fetch_livecams(url=None, force=False):
-        return {"items": [], "count": 0, "error": "livecams module unavailable", "diagnostics": [str(_e)]}
+    def fetch_livecams(url=None, force=False, _why=str(_e)):      # `_e` is deleted when the except block ends: capture it now
+        return {"items": [], "count": 0, "error": "livecams module unavailable", "diagnostics": [_why]}
 
     def fetch_thumb(url):
         raise RuntimeError("livecams module unavailable")
@@ -50,8 +56,8 @@ try:
     from channels import fetch_channels
 except Exception as _e:          # the channels tab is a bonus: never take the whole app down
     print(f"[channels] disabled: {_e}", flush=True)
-    def fetch_channels(category=None, page=1, force=False):
-        return {"items": [], "count": 0, "error": "channels module unavailable", "diagnostics": [str(_e)]}
+    def fetch_channels(category=None, page=1, force=False, _why=str(_e)):
+        return {"items": [], "count": 0, "error": "channels module unavailable", "diagnostics": [_why]}
 try:
     from translate_titles import translate_result, translate_items, host_needs_translate
 except Exception:
@@ -61,85 +67,14 @@ except Exception:
 
 app = Flask(__name__)
 
-# ---------------------------------------------------------------- test list -> real sources
-def _norm(x):
-    return re.sub(r"[^a-z0-9]", "", (x or "").lower())
-
-
-# Sites that graduated from the Test list. Their working feed URL is read from the test list
-# itself and injected into the page, so the frontend does not need to hard-code it.
-_PROMOTE = {"porno666": "Porno-666"}
-PROMOTED_SOURCES = []
-
-# Removed sources (never listed, promoted or routed to the extra scrapers)
-_REMOVED = ("pornoklad", "tlenporno", "xfuntaxy")
-TEST_SITES[:] = [x for x in TEST_SITES
-                 if not any(k in _norm(x.get("name")) + _norm(x.get("id")) + _norm(x.get("feed"))
-                            for k in _REMOVED)]
-
-for _x in list(TEST_SITES):
-    for _k, _nice in _PROMOTE.items():
-        if (_k in _norm(_x.get("name")) or _k == _norm(_x.get("id"))) and not any(p["id"] == _k for p in PROMOTED_SOURCES):
-            PROMOTED_SOURCES.append({"id": _k, "name": _nice, "url": _x["feed"], "group": "general"})
-
-# ePornHome is removed from the test list
-TEST_SITES[:] = [x for x in TEST_SITES if "epornhome" not in _norm(x.get("name")) + _norm(x.get("id"))]
+# Only the built-in sites exist: superporn, pornvideobb, freesexvideos, bdsmhole (+ cams / live TV). No extra or test sites.
+PROMOTED_SOURCES = []           # the page still reads window.__PROMOTED_SOURCES__; it is simply empty
 
 
 def _reg_host(url):
     h = (urlparse(url if "://" in (url or "") else "https://" + (url or "")).hostname or "").lower()
     return ".".join(h.split(".")[-2:]) if h else ""
 
-
-# Hosts served by the extra (sourcetest / extras) scrapers instead of the generic one.
-_PLUS_HOSTS = {_reg_host(x["feed"]) for x in TEST_SITES}
-_PLUS_HOSTS |= {_reg_host(p["url"]) for p in PROMOTED_SOURCES}
-_PLUS_HOSTS |= {"porno-666.me"}
-
-
-def _use_plus(url):
-    try:
-        if _reg_host(url) in _PLUS_HOSTS:
-            return True
-        return bool(is_smart(url))
-    except Exception:
-        return False
-
-
-def _scrape_plus_one(u):
-    url, pn = (u.get("url"), u.get("page_num")) if isinstance(u, dict) else (u, None)
-    try:
-        r = scrape_plus(url, max_items=80) or {}
-    except Exception as e:
-        return {"page": url, "items": [], "count": 0, "error": str(e), "next_page": None, "page_num": pn}
-    items = r.get("items") or []
-    r.setdefault("page", url)
-    r["items"] = items
-    r["count"] = len(items)
-    r["page_num"] = pn if pn is not None else r.get("page_num") or _current_page_number(url)
-    if items and not r.get("next_page"):
-        r["next_page"] = _guess_next_page(url, r["page_num"])
-        r["next_is_guess"] = True
-    return r
-
-
-def _plus_search(site, query):
-    try:
-        p = urlparse(site if "://" in site else "https://" + site)
-        origin = f"{p.scheme}://{p.netloc}/"
-        r = search_site(site_from_url(origin, None), query) or {}
-    except Exception as e:
-        r = {"error": str(e), "items": []}
-    items = r.get("items") or []
-    r["site"] = site
-    r["query"] = query
-    r["items"] = items
-    r["count"] = len(items)
-    r.setdefault("page", r.get("search_url") or site)
-    r["source"] = "site-search" if items else "none"
-    if items and not r.get("next_page") and r.get("search_url"):
-        r["next_page"] = _guess_next_page(r["search_url"], _current_page_number(r["search_url"]))
-    return r
 
 # Comma-separated list of allowed frontends, e.g. "https://porn-archive.pages.dev"
 _origins = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "*").split(",") if o.strip()]
@@ -210,50 +145,6 @@ def index():
         return send_file(path)
 
 
-@app.get("/api/test-sites")
-def api_test_sites():
-    return jsonify({"sites": [{"id": x["id"], "name": x["name"], "feed": x["feed"]} for x in TEST_SITES]})
-
-
-def _site(d):
-    """Built-in site by id, otherwise a custom site built from the URL the user typed."""
-    known = next((x for x in TEST_SITES if x["id"] == d.get("id")), None)
-    if known:
-        return known
-    c = d.get("site") or {}
-    feed = (c.get("feed") or "").strip()
-    if feed and " " not in feed and "." in feed:
-        return site_from_url(feed, (c.get("name") or "").strip() or None)
-    return None
-
-
-@app.post("/api/test-run")
-def api_test_run():
-    d = _body(); site = _site(d)
-    if not site:
-        return _err("unknown site")
-    try:
-        return jsonify(test_site(site, d.get("query") or "milf"))
-    except Exception as e:
-        return _err("test failed", 500, detail=str(e))
-
-
-@app.post("/api/test-feed")
-def api_test_feed():
-    d = _body(); site = _site(d)
-    if not site:
-        return _err("unknown site")
-    return jsonify(scrape_plus(d.get("url") or site["feed"], max_items=80))
-
-
-@app.post("/api/test-search")
-def api_test_search():
-    d = _body(); site = _site(d); q = (d.get("query") or "").strip()
-    if not site or not q:
-        return _err("id and query required")
-    return jsonify(search_site(site, q))
-
-
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
@@ -312,17 +203,10 @@ def api_scrape():
                 cache_hits += 1
             else:
                 todo.append(i)
-        normal = [i for i in todo if not _use_plus(_url_of(urls[i]))]
-        normal_set = set(normal)
-        plus = [i for i in todo if i not in normal_set]
         with ThreadPoolExecutor(max_workers=8) as pool:
-            # extra-scraper sites run in parallel with each other AND with the generic scraper
-            plus_futs = [(i, pool.submit(_scrape_plus_one, urls[i])) for i in plus]
-            if normal:
-                for i, r in zip(normal, scrape_many([urls[i] for i in normal])):
+            if todo:
+                for i, r in zip(todo, scrape_many([urls[i] for i in todo])):
                     results[i] = r
-            for i, f in plus_futs:
-                results[i] = f.result()
             # translate the freshly scraped pages in parallel, then cache the final result
             fresh_idx = todo
             done = list(pool.map(lambda i: translate_result(results[i]) if isinstance(results[i], dict) else results[i], fresh_idx))
@@ -377,16 +261,7 @@ def api_search():
         return jsonify(hit[1])
     try:
         results = [None] * len(sites)
-        normal = [(i, x) for i, x in enumerate(sites) if not _use_plus(x)]
-        plus = [(i, x) for i, x in enumerate(sites) if _use_plus(x)]
-        with ThreadPoolExecutor(max_workers=min(3, len(plus)) or 1) as pool:
-            plus_futures = {i: pool.submit(_plus_search, x, query) for i, x in plus}
-            if normal:
-                for (i, _), r in zip(normal, search_many([x for _, x in normal], query,
-                                                         max_items=max_items, verify=verify)):
-                    results[i] = r
-        for i, future in plus_futures.items():
-            results[i] = future.result()
+        results = list(search_many(sites, query, max_items=max_items, verify=verify))
     except Exception as e:
         return _err("Search failed", 500, detail=str(e))
     results = [translate_result(r) if isinstance(r, dict) else r for r in results]

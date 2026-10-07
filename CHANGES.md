@@ -36,10 +36,17 @@ Old ranking let "has a thumbnail" (+10) outweigh a title match (+8); now quality
 * `scrape-live.yml`: the manual `only` input no longer goes into the shell line.
 * Scraper cache key = Worker key (`queryKey`: trim, lower-case, collapse spaces).
 
+## 4. Only your sites
+Kept: superporn, pornvideobb, freesexvideos, bdsmhole, the cam site (lemoncams + the platform feeds that fill it) and live TV (xlivetv).
+Removed: the whole test-sites system (`sourcetest`, `/api/test-*` routes, `test-sites` KV key), porno-666, fullporno.to and the
+porner.xxx "Porn Tags" listing from the Worker allowlist, `app.py` and `scraper_kv.py`. `sourcetest.py` can be deleted.
+`extras.py` is now only an optional fallback video resolver. Also fixed: the cams/channels fallbacks in `app.py` crashed with a
+NameError when their module failed to load.
+
 ## Needs your attention
 * Deploy `searchkit.py` next to `scraper_kv.py`/`app.py` (repo root). First full run builds `taxonomy-index` + `search-index`;
   until then search behaves as before plus the new ranking.
-* I could not reach the real sites from here and `sourcetest.py`, `extras.py`, `translate_titles.py`, `scraper.py` internals were
+* I could not reach the real sites from here and `translate_titles.py` and `scraper.py` internals were
   not changed/tested live. Tests run: typecheck, mocked Worker search/cams flows, scraper logic on a fake KV.
 * Cam platforms (esp. Chaturbate/Stripchat) may still refuse Cloudflare/GitHub IPs; `platform_status` / `diagnostics` now say which and why.
 * Free Workers plan: 50 subrequests and 10 ms CPU per request. First search on a new site tries several URL shapes; later ones use 1.
