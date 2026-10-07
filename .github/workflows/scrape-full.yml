@@ -2,7 +2,7 @@ name: Scrape full (feeds, listings, search, metadata)
 
 on:
   schedule:
-    - cron: '17 */6 * * *'        # KV free tier = 1,000 writes/day; ~4 runs/day. Off-peak minute on purpose.
+    - cron: '17 */12 * * *'       # KV free tier = 1,000 writes/day shared by everything: 2 full runs/day. Off-peak minute on purpose.
   workflow_dispatch:
   workflow_call:                   # deploy.yml runs this once after every deploy
 
@@ -44,5 +44,5 @@ jobs:
           CACHE_KV_NAMESPACE_ID: ${{ steps.ns.outputs.cache_ns_id }}
           SCRAPE_DATA_KV_NAMESPACE_ID: ${{ steps.ns.outputs.scrape_ns_id }}
           SCRAPE_BUDGET_SECONDS: '2000'     # stop starting new work at ~33 min so the run ends cleanly before the 40 min limit
-          MAX_KV_WRITES: '180'              # per-run write budget (live data + the search/taxonomy index are exempt). 4 runs x 180 = 720 of the free tier's 1,000 writes/day, leaving room for the live runs and the Worker's cam refresh
+          MAX_KV_WRITES: '180'              # per-run budget of CHANGED pages (unchanged ones are skipped for free; live data + the index are exempt). 2 runs x 180 = 360 of the free tier's 1,000 writes/day
         run: python scraper_kv.py

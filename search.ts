@@ -272,50 +272,90 @@ export function rankCombined(results: any[], q: Query, indexHits: any[] = [], ca
 }
 
 // ------------------------------------------------------------------ autocomplete (search-box dropdown)
-export interface Suggestion { name: string; url: string; kind: TaxEntry["k"]; host: string }
+// Only things that are KNOWN to have data are suggested, so every button leads to results:
+//   pornstars / networks = taxonomy pages whose name also appears on videos in the search index
+//   live channels        = channels that exist in the channel bundle
+export interface Verified { name: string; url: string; count: number }
 
-const sugPrep = new WeakMap<TaxEntry, { n: string; w: string[] }>();
-const sugView = (e: TaxEntry) => {
-  let p = sugPrep.get(e);
-  if (!p) { const n = norm(e.n); p = { n, w: n.split(" ").filter(Boolean) }; sugPrep.set(e, p); }
+/** how well a (normalised) name fits what is being typed: 0 = not at all */
+function nameScore(n: string, w: string[], qn: string, qw: string[]): number {
+  if (!qn) return 1;
+  if (n === qn) return 100;
+  if (n.startsWith(qn + " ")) return 85;
+  if (n.startsWith(qn)) return 80;
+  const last = qw[qw.length - 1];
+  if (qw.every((t, i) => (i === qw.length - 1 ? w.some((x) => x.startsWith(t)) : w.includes(t) || w.some((x) => x.startsWith(t))))) return 60;
+  if (qn.length >= 3 && n.includes(qn)) return 40;
+  if (last.length >= 3 && qw.length === 1 && w.some((x) => stem(x) === stem(last))) return 35;
+  return 0;
+}
+
+const nameView = new WeakMap<object, { n: string; w: string[] }>();
+const viewOf = (o: object, name: string) => {
+  let p = nameView.get(o);
+  if (!p) { const n = norm(name); p = { n, w: n.split(" ").filter(Boolean) }; nameView.set(o, p); }
   return p;
 };
-const KIND_BONUS: Record<string, number> = { model: 0.6, studio: 0.4, category: 0.3, tag: 0 };
 
-/** Category / tag / star / studio pages whose NAME starts with, or has a word starting with, what is being typed.
- *  Entries come from the memoised `taxonomy-index`, so the per-entry normalisation is paid once per isolate. */
-export function suggestTaxonomy(entries: TaxEntry[], rawQuery: string, limit = 12): Suggestion[] {
-  const qn = norm(rawQuery);
-  if (qn.length < 2) return [];
-  const qw = qn.split(" ").filter(Boolean);
-  const last = qw[qw.length - 1];
-  const scored: { e: TaxEntry; s: number }[] = [];
+/** how many indexed videos carry each model / studio name (memoised per index array) */
+const facetCache = new WeakMap<IndexRecord[], { md: Map<string, number>; st: Map<string, number>; vi: Map<string, number> }>();
+function facetsOf(records: IndexRecord[]) {
+  let f = facetCache.get(records);
+  if (f) return f;
+  f = { md: new Map(), st: new Map(), vi: new Map() };
+  const add = (m: Map<string, number>, list?: string[]) => {
+    for (const k of new Set((list || []).map(norm).filter(Boolean))) m.set(k, (m.get(k) || 0) + 1);
+  };
+  for (const r of records) { add(f.md, r.md); add(f.st, r.st); add(f.vi, r.vi); }
+  facetCache.set(records, f);
+  return f;
+}
+
+export function verifiedTaxonomy(entries: TaxEntry[], records: IndexRecord[], kind: "model" | "studio", rawQuery: string, limit = 5): Verified[] {
+  if (!records.length) return [];
+  const qn = norm(rawQuery), qw = qn.split(" ").filter(Boolean);
+  const f = facetsOf(records);
+  const own = kind === "model" ? f.md : f.st;
   const seen = new Set<string>();
+  const out: { v: Verified; s: number }[] = [];
   for (const e of entries) {
-    if (!e?.u || !e.n || seen.has(e.u)) continue;
-    const { n, w } = sugView(e);
-    if (!n) continue;
-    let s = 0;
-    if (n === qn) s = 100;
-    else if (n.startsWith(qn + " ")) s = 85;                 // "anal" -> "Anal Sex" before "Analyzed Girl"
-    else if (n.startsWith(qn)) s = 80;
-    else if (qw.every((t, i) => (i === qw.length - 1 ? w.some((x) => x.startsWith(t)) : w.includes(t) || w.some((x) => x.startsWith(t))))) s = 60;
-    else if (qn.length >= 3 && n.includes(qn)) s = 40;
-    else if (last.length >= 3 && qw.length === 1 && w.some((x) => stem(x) === stem(last))) s = 35;
+    if (e.k !== kind || !e.u || !e.n || seen.has(e.u)) continue;
+    const { n, w } = viewOf(e, e.n);
+    const count = Math.max(own.get(n) || 0, f.vi.get(n) || 0);
+    if (count < 1) continue;                                  // nothing known behind this name: never suggest it
+    const s = nameScore(n, w, qn, qw);
     if (!s) continue;
     seen.add(e.u);
-    scored.push({ e, s: s + (KIND_BONUS[e.k] || 0) - Math.min(n.length, 40) / 40 });
+    out.push({ v: { name: e.n, url: e.u, count }, s });
   }
-  scored.sort((a, b) => b.s - a.s);
-  // keep the list varied: at most 5 of one kind first, then fill up with whatever is left
-  const out: Suggestion[] = [], perKind: Record<string, number> = {}, rest: Suggestion[] = [], names = new Set<string>();
-  for (const { e } of scored) {
-    const sg: Suggestion = { name: e.n, url: e.u, kind: e.k, host: e.h };
-    const dup = `${e.k}|${e.h}|${sugView(e).n}`;
-    if (names.has(dup)) continue;
-    names.add(dup);
-    if ((perKind[e.k] = (perKind[e.k] || 0) + 1) <= 5) out.push(sg); else rest.push(sg);
-    if (out.length >= limit) break;
+  out.sort((a, b) => b.s - a.s || b.v.count - a.v.count || a.v.name.length - b.v.name.length);
+  return out.slice(0, limit).map((x) => x.v);
+}
+
+export interface ChannelHit { name: string; url: string; slug: string }
+const chanCache = new WeakMap<object, { name: string; url: string; slug: string }[]>();
+export function suggestChannels(bundle: { pages?: Record<string, any> } | null, rawQuery: string, limit = 5): ChannelHit[] {
+  if (!bundle?.pages) return [];
+  let list = chanCache.get(bundle);
+  if (!list) {
+    list = [];
+    const seen = new Set<string>();
+    for (const pg of Object.values(bundle.pages)) for (const it of pg?.items || []) {
+      const name = String(it?.title || "").trim();
+      const slug = String(it?.slug || "");
+      if (!name || !slug || seen.has(slug)) continue;
+      seen.add(slug);
+      list.push({ name, url: String(it.link || ""), slug });
+    }
+    chanCache.set(bundle, list);
   }
-  return out.concat(rest).slice(0, limit);
+  const qn = norm(rawQuery), qw = qn.split(" ").filter(Boolean);
+  const out: { c: ChannelHit; s: number }[] = [];
+  for (const c of list) {
+    const { n, w } = viewOf(c, c.name);
+    const s = nameScore(n, w, qn, qw);
+    if (s) out.push({ c, s });
+  }
+  out.sort((a, b) => b.s - a.s || a.c.name.length - b.c.name.length);
+  return out.slice(0, limit).map((x) => x.c);
 }

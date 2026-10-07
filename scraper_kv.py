@@ -52,6 +52,13 @@ except Exception:
     fetch_metadata = None
 
 
+# KV write-limit breaker: the free plan allows 1,000 writes/day for the whole account (scraper + Worker cron + every deploy).
+# Once that is used up EVERY write answers HTTP 429. After 3 refused writes in a row we stop writing and stop scraping for nothing.
+QUOTA = {"strikes": 0, "hit": False}
+LIVE_REFRESH = int(os.environ.get("LIVE_REFRESH_SECONDS", str(6 * 3600)))   # unchanged live data is re-stamped (_ts) at most this often
+_RESERVE = [0]                                                               # seconds the slow jobs must leave for taxonomy / index / metadata
+
+
 # Cloudflare KV API client
 class KVClient:
     def __init__(self, account_id: str, api_token: str, namespace_id: str):
@@ -66,10 +73,10 @@ class KVClient:
         self.session = requests.Session()
         self.session.headers.update(self.headers)
 
-    def _request(self, method: str, url: str, **kw):
+    def _request(self, method: str, url: str, attempts: int = 5, **kw):
         """HTTP with retry/backoff on 429 / 5xx / network errors (Cloudflare's API rate-limits bursts)."""
         last = None
-        for attempt in range(5):
+        for attempt in range(attempts):
             try:
                 resp = self.session.request(method, url, timeout=30, **kw)
                 if resp.status_code not in (429, 500, 502, 503, 504):
@@ -78,7 +85,8 @@ class KVClient:
                 wait = float(resp.headers.get("Retry-After") or 0) or (1.5 * (2 ** attempt))
             except requests.RequestException as e:
                 last, wait = e, 1.5 * (2 ** attempt)
-            time.sleep(min(wait, 30))
+            if attempt < attempts - 1:
+                time.sleep(min(wait, 30))
         raise last or RuntimeError("request failed")
 
     def load_expirations(self):
@@ -103,27 +111,52 @@ class KVClient:
             self.exp = None
             print(f"  KV key listing failed ({e}) - will rewrite instead of skipping identical values")
 
-    def put(self, key: str, value: dict, expiration_ttl: int = 3600, skip_same: bool = True) -> bool:
+    def _same(self, key: str, value: dict, fresh_for: int = 0) -> bool:
+        """Stored value equals `value` (ignoring the `_ts` stamp). With fresh_for: only while the stored stamp is that recent."""
+        cur = self.get(key)
+        if not isinstance(cur, dict) or not isinstance(value, dict):
+            return cur == value
+        if {k: v for k, v in cur.items() if k != "_ts"} != {k: v for k, v in value.items() if k != "_ts"}:
+            return False
+        return not fresh_for or (time.time() - int(cur.get("_ts") or 0)) <= fresh_for
+
+    def _strike(self):
+        QUOTA["strikes"] += 1
+        if QUOTA["strikes"] >= 3 and not QUOTA["hit"]:
+            QUOTA["hit"] = True
+            print("  KV WRITE LIMIT: 3 writes in a row were refused with HTTP 429 - stopping all writes for this run. "
+                  "The free plan allows 1,000 writes/day for the whole account and it resets at 00:00 UTC.", file=sys.stderr)
+
+    def put(self, key: str, value: dict, expiration_ttl: int = 3600, skip_same: bool = True, fresh_for: int = 0) -> bool:
         """Write to KV with TTL in seconds. Key MUST be URL-encoded (it contains '/' and ':').
         Identical values are only skipped when the existing entry still has > 14 days to live."""
+        self.last_skipped = False
+        if QUOTA["hit"]:
+            return False
         if skip_same and getattr(self, "exp", None) is not None and key in self.exp:
             left = (self.exp[key] - time.time()) if self.exp[key] else 1e12
             if left > 14 * 86400:
                 try:
-                    if self.get(key) == value:
+                    if self._same(key, value, fresh_for):
+                        self.last_skipped = True
                         return True
                 except Exception:
                     pass
         url = f"{self.base_url}/values/{quote(key, safe='')}"
         params = {"expiration_ttl": max(expiration_ttl, 60)} if expiration_ttl else {}
         try:
-            resp = self._request("PUT", url, data=json.dumps(value), params=params)
+            resp = self._request("PUT", url, attempts=3, data=json.dumps(value), params=params)
         except Exception as e:
             print(f"  KV PUT ERROR key={key[:90]} {e}", file=sys.stderr)
+            if "429" in str(e):
+                self._strike()
             return False
         if resp.status_code not in (200, 201):
             print(f"  KV PUT FAILED {resp.status_code} key={key[:90]} body={resp.text[:200]}", file=sys.stderr)
+            if resp.status_code == 429:
+                self._strike()
             return False
+        QUOTA["strikes"] = 0
         if getattr(self, "exp", None) is not None:
             self.exp[key] = time.time() + max(expiration_ttl, 60)
         return True
@@ -133,7 +166,7 @@ class KVClient:
         for key, value in entries:
             if self.put(key, value, expiration_ttl):
                 success += 1
-            time.sleep(0.2)  # 5 writes/sec to avoid 429 burst limit
+            time.sleep(0.05)
         return success
 
     def get(self, key: str) -> dict | None:
@@ -174,7 +207,6 @@ KV_STATS = {"ok": 0, "failed": 0}
 
 def kv_put_cache(key: str, value: dict, ttl: int = 3600):
     if kv_cache:
-        time.sleep(0.15)
         kv_cache.put(key, value, ttl)
 
 
@@ -210,7 +242,6 @@ def kv_put_scrape(key: str, value: dict, ttl: int = 86400) -> bool:
     if not kv_scrape:
         KV_STATS["failed"] += 1
         return False
-    time.sleep(0.15)  # rate-limit: ~6 writes/sec to avoid 429
     priority = key.startswith(PRIORITY_PREFIXES)
     is_err = isinstance(value, dict) and bool(value.get("error"))
     empty = isinstance(value, dict) and not is_err and not _has_data(value)
@@ -232,8 +263,12 @@ def kv_put_scrape(key: str, value: dict, ttl: int = 86400) -> bool:
     if not priority and KV_STATS["ok"] >= MAX_WRITES:
         KV_STATS["skipped"] += 1
         return False
-    ok = kv_scrape.put(key, value, ttl)
-    KV_STATS["ok" if ok else "failed"] += 1
+    fresh = LIVE_REFRESH if key.startswith(LIVE_PREFIXES) and not key.startswith("livecams:") else 0
+    ok = kv_scrape.put(key, value, ttl, fresh_for=fresh)
+    if ok and getattr(kv_scrape, "last_skipped", False):
+        KV_STATS["same"] = KV_STATS.get("same", 0) + 1          # unchanged: no write happened, so it does not use the budget
+    else:
+        KV_STATS["ok" if ok else "failed"] += 1
     return ok
 
 
@@ -250,7 +285,9 @@ def deadline_guard(fn):
     """Skip work that would start after the run's time budget (the job is killed at 40 min; this exits cleanly first)."""
     @functools.wraps(fn)
     def wrapper(*a, **k):
-        if time_left() < 30:
+        if QUOTA["hit"]:
+            return {"items": [], "count": 0, "error": "KV write limit reached"}
+        if time_left() < 30 + _RESERVE[0]:
             return {"items": [], "count": 0, "error": "time budget reached"}
         return fn(*a, **k)
     return wrapper
@@ -276,6 +313,10 @@ def retry_until(fn, ok=lambda r: True, tries: int = 3, delay: float = 4.0, what:
 
 def safe_job(name: str, fn, *a, **k):
     """One failing job never stops the others."""
+    if QUOTA["hit"]:
+        print(f"[{name}] skipped: KV write limit reached")
+        JOB_STATUS[name] = {"ok": False, "skipped": "kv write limit"}
+        return None
     if time_left() < 45:
         print(f"[{name}] skipped: time budget used up")
         JOB_STATUS[name] = {"ok": False, "skipped": "time budget"}
@@ -853,11 +894,15 @@ def job_metadata(limit: int | None = None):
     print(f"Metadata: {len(VIDEO_LINKS)} videos seen, {len(PRIORITY_META)} requested by visitors, {len(todo)} to fetch")
     dirty = set()
     with ThreadPoolExecutor(max_workers=6) as pool:
-        for url, data in pool.map(_fetch_one_meta, todo):
-            if data:
-                data["_ts"] = now
-                shards[meta_shard(url)][url] = data
-                dirty.add(meta_shard(url))
+        for i in range(0, len(todo), 24):
+            if time_left() < 150 or QUOTA["hit"]:
+                print("Metadata: stopping early so the taxonomy / index still get their turn")
+                break
+            for url, data in pool.map(_fetch_one_meta, todo[i:i + 24]):
+                if data:
+                    data["_ts"] = now
+                    shards[meta_shard(url)][url] = data
+                    dirty.add(meta_shard(url))
 
     for c, items in shards.items():
         fresh = {u: m for u, m in items.items() if now - int(m.get("_ts", now)) < max_age}
@@ -953,19 +998,26 @@ def main():
         safe_job("catalog", job_catalog_urls)
         safe_job("live", job_livecams_channels, with_categories=True)
         safe_job("wanted", job_wanted)
+        _RESERVE[0] = 360                                  # the slow jobs stop early enough for metadata + index to run
         safe_job("feeds", job_popular_feeds)
         safe_job("listings", job_category_pages)
         safe_job("category_feeds", job_category_feeds)
-        safe_job("search", job_search_queries)
-        safe_job("metadata", job_metadata)
-        safe_job("taxonomy", job_taxonomy_index)
+        safe_job("taxonomy", job_taxonomy_index)           # 1 write each, and what search + the dropdown need most: before the slow jobs
         safe_job("index", job_search_index)
+        safe_job("search", job_search_queries)
+        _RESERVE[0] = 0
+        safe_job("metadata", job_metadata)
+        safe_job("index_final", job_search_index)          # again, now with the stars / studios / tags from the metadata
 
     elapsed = time.time() - start
     write_status(only, start)
     print(f"\nCompleted in {elapsed:.1f}s - KV writes ok={KV_STATS['ok']} failed={KV_STATS['failed']} skipped={KV_STATS['skipped']}")
     for name, st in JOB_STATUS.items():
         print(f"  {'OK ' if st.get('ok') else 'FAIL'} {name}: {st}")
+    if QUOTA["hit"]:
+        print("KV DAILY WRITE LIMIT REACHED: nothing more could be stored this run. The Worker keeps serving the old data. "
+              "Writes come from: every deploy (full scrape), scheduled scrapes, and the Worker's cam refresh. "
+              "Cloudflare Workers Paid ($5/mo) removes the 1,000/day limit.", file=sys.stderr)
     if KV_STATS["failed"] and KV_STATS["failed"] >= KV_STATS["ok"]:
         print("Too many KV write failures", file=sys.stderr)
         sys.exit(1)

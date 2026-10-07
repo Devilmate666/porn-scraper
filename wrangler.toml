@@ -22,4 +22,4 @@ enabled = true
 
 # keeps cams fresh inside Cloudflare and starts the GitHub scraper when data is stale (see maintenance() in src/index.ts)
 [triggers]
-crons = ["*/10 * * * *"]
+crons = ["*/15 * * * *"]

@@ -23,13 +23,13 @@ Nothing runs on your computer. `run.bat` pushes to GitHub; GitHub Actions deploy
 * Optional variables: `WORKER_MODE` (`kv` = cache first), `ALLOWED_HOSTS`, `CHATURBATE_WM`, `CAM_PROVIDERS` (e.g. `chaturbate,cam4`).
 
 ## How it stays fresh
-* Cams refresh inside Cloudflare (cron every 10 min + whenever a visitor hits stale data); GitHub is only a backup.
+* Cams refresh inside Cloudflare (cron every 15 min + whenever a visitor hits stale data); GitHub is only a backup.
 * Good data lives 30 days in KV and is served instantly while refreshed in the background; cams/channels never show an error while any copy exists.
 * Searches that miss the cache are queued and scraped on the next run. Videos opened without metadata are queued too.
 * `/healthz` and `/api/status` show data age and the last scraper report.
 
 ## Free-tier budget
-KV allows 1,000 writes/day: full scrape <= 180 writes x 4 runs/day, the live run writes little, cams about 150/day. Free Workers also allow 10 ms CPU and 50 subrequests per request; the Workers Paid plan ($5/mo) removes that worry.
+KV allows 1,000 writes/day for the whole account: full scrape <= ~190 writes x 2 runs/day, the live run only re-stamps unchanged data every 6 h, cams <= ~96/day. A deploy no longer starts a full scrape by itself (Actions -> Deploy -> Run workflow does). If every write answers HTTP 429 the daily limit is used up: the scraper now stops after 3 refused writes and says so; it resets at 00:00 UTC. Free Workers also allow 10 ms CPU and 50 subrequests per request; the Workers Paid plan ($5/mo) removes that worry.
 
 ## Scraper knobs (env vars in the workflows)
 `SEARCH_PAGES=3` `CHANNEL_PAGES=20` `CHANNEL_CATEGORIES=6` `MAX_WANTED=30` `INDEX_MAX=2500` `TAXONOMY_MAX=4000` `MAX_METADATA=400`

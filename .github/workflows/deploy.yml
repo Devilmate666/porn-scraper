@@ -137,7 +137,10 @@ jobs:
         run: wrangler pages deploy static --project-name=porn-archive --branch=main
 
   first-scrape:
-    name: Fill the cache after a deploy
+    name: Fill the cache (manual deploys only)
+    # NOT on every push: each full scrape can use up to ~190 of the free plan's 1,000 KV writes/day, and a few pushes in one
+    # day exhausted it (HTTP 429 on every write). The schedule fills the cache; run "Deploy" by hand to force a scrape.
+    if: github.event_name == 'workflow_dispatch'
     needs: deploy-worker
     uses: ./.github/workflows/scrape-full.yml
     secrets: inherit

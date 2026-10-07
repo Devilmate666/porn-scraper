@@ -1,6 +1,6 @@
 import { Env } from "../types";
 import { scrapePage, searchOne, isBlockedHost } from "../scrape";
-import { parseQuery, queryKey, loadIndex, loadTaxonomy, searchIndex, matchTaxonomy, learnShapes, rankCombined, memoKV, hostOfUrl, suggestTaxonomy, type Query, type TaxEntry } from "../search";
+import { parseQuery, queryKey, loadIndex, loadTaxonomy, searchIndex, matchTaxonomy, learnShapes, rankCombined, memoKV, hostOfUrl, verifiedTaxonomy, suggestChannels, type Query, type TaxEntry } from "../search";
 import { scrapeListing } from "../listings";
 import { resolveVideo, resolveFull } from "../resolve";
 import { fetchMetadata } from "../metadata";
@@ -35,10 +35,10 @@ const WANTED_KEY = "wanted:queue";
 const WANTED_MAX = 200;
 const WANTED_PER_DAY = 120;
 const CAMS_KEY = "livecams:default";
-const CAMS_STALE = 10 * 60;               // a visitor hitting cams older than this triggers a background refresh
-const CAMS_CRON_STALE = 8 * 60;           // the 10-minute cron refreshes anything older than this (so every tick refreshes)
+const CAMS_STALE = 15 * 60;               // a visitor hitting cams older than this triggers a background refresh
+const CAMS_CRON_STALE = 12 * 60;           // the 10-minute cron refreshes anything older than this (so every tick refreshes)
 const CAMS_CARRY = 3 * 3600;              // a platform that fails keeps ITS OWN previous cams for at most this long
-const CHANNELS_STALE = 2 * 60 * 60;       // ask GitHub for a channel refresh when older than this
+const CHANNELS_STALE = 8 * 60 * 60;       // ask GitHub for a channel refresh when older than this
 const KV_LONG = 30 * 86400;               // Worker-written KV entries live 30 days
 const LKG_TTL = 3 * 86400;
 const NEG_TTL = 45;
@@ -407,11 +407,20 @@ export default {
           break;
 
         case "/api/suggest": {
-          // search-box dropdown: categories / tags / pornstars / studios whose name matches what is being typed (no scraping, KV only)
+          // search-box dropdown (Home): pornstars / networks / live channels that are known to have data. No scraping, KV only.
           if (!isGet) break;
           const text = (url.searchParams.get("q") || "").slice(0, 60);
-          const items = suggestTaxonomy(await loadTaxonomy(env.SCRAPE_DATA), text, 12);
-          return json({ q: text, items }, 200, { ...headers, "Cache-Control": "public, max-age=300" });
+          const [tax, idx, bundle] = await Promise.all([
+            loadTaxonomy(env.SCRAPE_DATA),
+            loadIndex(env.SCRAPE_DATA),
+            memoKV<{ pages?: Record<string, any> }>(env.SCRAPE_DATA, "channels-bundle:all", 5 * 60_000),
+          ]);
+          return json({
+            q: text,
+            pornstars: verifiedTaxonomy(tax, idx, "model", text),
+            networks: verifiedTaxonomy(tax, idx, "studio", text),
+            channels: suggestChannels(bundle, text),
+          }, 200, { ...headers, "Cache-Control": "public, max-age=300" });
         }
 
         case "/api/catalog-urls":
