@@ -35,14 +35,6 @@ except Exception as _e:          # metadata is a bonus: never take the whole app
     print(f"[metadata] disabled: {_e}", flush=True)
     def fetch_metadata(html, url):
         return {"url": url, "groups": [], "error": "metadata module unavailable"}
-try:                              # optional fallback video resolver; the app runs without it
-    from extras import deep_resolve, is_smart
-except Exception:
-    def is_smart(url):
-        return False
-
-    def deep_resolve(url, max_fetch=5):
-        return {"video": None, "error": "deep resolver not installed"}
 try:
     from livecams import fetch_livecams, fetch_thumb
 except Exception as _e:          # the cams tab is a bonus: never take the whole app down
@@ -61,8 +53,7 @@ except Exception as _e:          # the channels tab is a bonus: never take the w
 
 app = Flask(__name__)
 
-# Only the built-in sites exist: superporn, pornvideobb, freesexvideos, bdsmhole (+ cams / live TV). No extra or test sites.
-PROMOTED_SOURCES = []           # the page still reads window.__PROMOTED_SOURCES__; it is simply empty
+# Only the built-in sites exist: superporn, pornvideobb, freesexvideos, bdsmhole (+ cams / live TV).
 
 
 def _reg_host(url):
@@ -129,11 +120,10 @@ def index():
     try:
         with open(path, encoding="utf-8") as f:
             html = f.read()
-        data = json.dumps(PROMOTED_SOURCES).replace("</", "<\\/")
         cfg = json.dumps(CATALOG_URLS).replace("</", "<\\/")
         html = html.replace(
             "</head>",
-            f"<script>window.__PROMOTED_SOURCES__={data};window.__CATALOG_URLS__={cfg};</script></head>", 1)
+            f"<script>window.__CATALOG_URLS__={cfg};</script></head>", 1)
         return Response(html, mimetype="text/html")
     except Exception:
         return send_file(path)
@@ -275,10 +265,7 @@ def api_resolve():
     if not url:
         return _err("url is required")
     try:
-        r = deep_resolve(url, max_fetch=5) if is_smart(url) else resolve_video_url(url, light=True)
-        if not r.get("video") and not r.get("error") and not is_smart(url):
-            r = deep_resolve(url, max_fetch=5)
-        return jsonify(r)
+        return jsonify(resolve_video_url(url, light=True))
     except Exception as e:
         return _err("Resolve failed", 500, detail=str(e))
 
@@ -289,10 +276,7 @@ def api_resolve_full():
     if not url:
         return _err("url is required")
     try:
-        r = deep_resolve(url) if is_smart(url) else resolve_full_video_url(url, fresh=True)
-        if not (r or {}).get("video") and not is_smart(url):
-            r = deep_resolve(url)
-        return jsonify(r)
+        return jsonify(resolve_full_video_url(url, fresh=True))
     except Exception as e:
         return _err("Resolve failed", 500, detail=str(e))
 

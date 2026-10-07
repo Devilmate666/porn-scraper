@@ -39,8 +39,8 @@ Old ranking let "has a thumbnail" (+10) outweigh a title match (+8); now quality
 ## 4. Only your sites
 Kept: superporn, pornvideobb, freesexvideos, bdsmhole, the cam site (lemoncams + the platform feeds that fill it) and live TV (xlivetv).
 Removed: the whole test-sites system (`sourcetest`, `/api/test-*` routes, `test-sites` KV key), porno-666, fullporno.to and the
-porner.xxx "Porn Tags" listing from the Worker allowlist, `app.py` and `scraper_kv.py`. `sourcetest.py` can be deleted.
-`extras.py` is now only an optional fallback video resolver. Also fixed: the cams/channels fallbacks in `app.py` crashed with a
+porner.xxx "Porn Tags" listing from the Worker allowlist, `app.py` and `scraper_kv.py`. `sourcetest.py`, `extras.py`, `test-sources.bat` can be deleted.
+Video links now use only the standard resolvers. Also fixed: the cams/channels fallbacks in `app.py` crashed with a
 NameError when their module failed to load.
 
 Title translation (`translate_titles`, `/api/translate-titles`) removed everywhere: it was dead code.

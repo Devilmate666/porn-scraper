@@ -38,10 +38,6 @@ FRONTEND_SOURCES = [
 ]
 
 from searchkit import (parse_query, query_key, rank_combined, index_record, reg_host, norm as _sk_norm, stems as _sk_stems)
-try:                              # optional fallback video resolver (extras.py); everything else works without it
-    from extras import deep_resolve
-except Exception:
-    deep_resolve = None
 try:
     from livecams import fetch_livecams
 except Exception:
@@ -299,9 +295,6 @@ def search_key(site: str, query: str) -> str:
     return f"search:{site}:{query_key(query)}"
 
 
-# Only the four built-in sites + cams + live TV are scraped. No extra / test sites.
-
-
 # every video link seen while scraping (metadata is fetched for these)
 VIDEO_LINKS: list = []
 _VL_SEEN: set = set()
@@ -458,7 +451,7 @@ def scrape_resolve_and_cache(url: str, full: bool = False):
     key = f"resolve-full:{url}" if full else f"resolve:{url}"
     try:
         if full:
-            result = deep_resolve(url) if deep_resolve else resolve_full_video_url(url, fresh=True)
+            result = resolve_full_video_url(url, fresh=True)
         else:
             result = {"video": None, "error": "Use full resolve for this site"}
         kv_put_scrape(key, result, ttl=86400)

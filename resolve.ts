@@ -1,6 +1,5 @@
 // ---------------------------------------------------------------------------
 // Live video-link resolver: port of resolve_video_url / resolve_full_video_url from scraper.py.
-// (Sites that need the special extras.deep_resolve still go through the backend / KV.)
 // ---------------------------------------------------------------------------
 import { HTMLElement } from "node-html-parser";
 import { absUrl, attr, clsOf, collapse, fetchHtml, isVideoUrl, IMAGE_EXT, PLACEHOLDER, SHARED_IMAGE, prepareFull, UA } from "./scrape";
