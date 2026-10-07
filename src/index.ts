@@ -654,9 +654,6 @@ export default {
           return new Response(upstream.body, { status: 200, headers: { ...headers, "Content-Type": type, "Cache-Control": "public, max-age=30" } });
         }
 
-        case "/api/translate-titles":
-          if (isPost) return json({ titles: [], count: 0 }, 200, headers);
-          break;
       }
       return err("Not found", 404, headers);
     } catch (e) {

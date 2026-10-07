@@ -58,12 +58,6 @@ except Exception as _e:          # the channels tab is a bonus: never take the w
     print(f"[channels] disabled: {_e}", flush=True)
     def fetch_channels(category=None, page=1, force=False, _why=str(_e)):
         return {"items": [], "count": 0, "error": "channels module unavailable", "diagnostics": [_why]}
-try:
-    from translate_titles import translate_result, translate_items, host_needs_translate
-except Exception:
-    def translate_result(r): return r
-    def translate_items(items, page_url=None): return items or []
-    def host_needs_translate(url): return False
 
 app = Flask(__name__)
 
@@ -203,16 +197,10 @@ def api_scrape():
                 cache_hits += 1
             else:
                 todo.append(i)
-        with ThreadPoolExecutor(max_workers=8) as pool:
-            if todo:
-                for i, r in zip(todo, scrape_many([urls[i] for i in todo])):
-                    results[i] = r
-            # translate the freshly scraped pages in parallel, then cache the final result
-            fresh_idx = todo
-            done = list(pool.map(lambda i: translate_result(results[i]) if isinstance(results[i], dict) else results[i], fresh_idx))
-            for i, r in zip(fresh_idx, done):
+        if todo:
+            for i, r in zip(todo, scrape_many([urls[i] for i in todo])):
                 results[i] = r
-                _page_cache_put(urls[i], r)
+                _page_cache_put(urls[i], r)                  # cache the freshly scraped page
         app.logger.info(
             "scrape complete pages=%d cache_hits=%d cache_misses=%d fresh=%s elapsed_ms=%d",
             len(urls), cache_hits, len(todo), bool(data.get("fresh")),
@@ -264,7 +252,6 @@ def api_search():
         results = list(search_many(sites, query, max_items=max_items, verify=verify))
     except Exception as e:
         return _err("Search failed", 500, detail=str(e))
-    results = [translate_result(r) if isinstance(r, dict) else r for r in results]
 
     # "search everything": rank on title, tags, genres, stars, studios, description and URL (searchkit = twin of the Worker's search.ts);
     # the site's own search results stay (it matched them on something), so a tag-only hit is not thrown away
@@ -379,22 +366,6 @@ def api_cam_thumb():
     return resp
 
 
-@app.post("/api/translate-titles")
-def api_translate_titles():
-    """Batch-translate titles (used by the frontend for leftovers still in Russian)."""
-    data = _body()
-    texts = data.get("texts") or data.get("titles") or []
-    if not isinstance(texts, list):
-        return _err("texts must be a list")
-    texts = [str(t) for t in texts[:80]]
-    try:
-        from translate_titles import translate_texts_list
-        out = translate_texts_list(texts)
-        return jsonify({"titles": out, "count": len(out)})
-    except Exception as e:
-        return _err("Translate failed", 500, detail=str(e))
-
-
 @app.post("/api/scrape-categories")
 def api_scrape_categories():
     data = _body()
@@ -407,14 +378,14 @@ def api_scrape_categories():
         host, path = (p.hostname or "").lower(), (p.path or "/").lower()
         # Dedicated scrapers, picked by mode or recognised from the URL itself
         if mode in ("models", "pornstars") or (host.endswith("freesexvideos.xxx") and path.startswith("/models")):
-            return jsonify(translate_result(scrape_models(url, page_num=data.get("page_num"))))
+            return jsonify(scrape_models(url, page_num=data.get("page_num")))
         if host.endswith("superporn.com") and re.match(r"^/categories(/\d+)?/?$", path):
-            return jsonify(translate_result(scrape_superporn_categories(url, page_num=data.get("page_num"))))
+            return jsonify(scrape_superporn_categories(url, page_num=data.get("page_num")))
         if mode == "sites" or (host.endswith("freesexvideos.xxx") and re.match(r"^/sites(/\d+)?/?$", path)):
-            return jsonify(translate_result(scrape_studio_sections(url)))
+            return jsonify(scrape_studio_sections(url))
         if mode == "tags":
-            return jsonify(translate_result(scrape_tags(url, kind="porntags")))
-        return jsonify(translate_result(scrape_categories(url, page_num=data.get("page_num"))))
+            return jsonify(scrape_tags(url, kind="porntags"))
+        return jsonify(scrape_categories(url, page_num=data.get("page_num")))
     except Exception as e:
         return _err("Category scrape failed", 500, detail=str(e))
 

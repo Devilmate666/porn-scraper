@@ -43,10 +43,12 @@ porner.xxx "Porn Tags" listing from the Worker allowlist, `app.py` and `scraper_
 `extras.py` is now only an optional fallback video resolver. Also fixed: the cams/channels fallbacks in `app.py` crashed with a
 NameError when their module failed to load.
 
+Title translation (`translate_titles`, `/api/translate-titles`) removed everywhere: it was dead code.
+
 ## Needs your attention
 * Deploy `searchkit.py` next to `scraper_kv.py`/`app.py` (repo root). First full run builds `taxonomy-index` + `search-index`;
   until then search behaves as before plus the new ranking.
-* I could not reach the real sites from here and `translate_titles.py` and `scraper.py` internals were
+* I could not reach the real sites from here and `scraper.py` internals were
   not changed/tested live. Tests run: typecheck, mocked Worker search/cams flows, scraper logic on a fake KV.
 * Cam platforms (esp. Chaturbate/Stripchat) may still refuse Cloudflare/GitHub IPs; `platform_status` / `diagnostics` now say which and why.
 * Free Workers plan: 50 subrequests and 10 ms CPU per request. First search on a new site tries several URL shapes; later ones use 1.

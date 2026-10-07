@@ -299,22 +299,6 @@ def search_key(site: str, query: str) -> str:
     return f"search:{site}:{query_key(query)}"
 
 
-try:
-    from translate_titles import translate_result as _translate_result
-except Exception:
-    _translate_result = None
-
-
-def translate_result(r: dict) -> dict:
-    """Same title translation the local Flask app applies to scraped pages."""
-    if not _translate_result or not isinstance(r, dict):
-        return r
-    try:
-        return _translate_result(r)
-    except Exception:
-        return r
-
-
 # Only the four built-in sites + cams + live TV are scraped. No extra / test sites.
 
 
@@ -351,7 +335,6 @@ def scrape_and_cache_url(url: str, page_num: int | None = None, fresh: bool = Fa
     try:
         result = scrape_page(url, max_items=80, page_num=page_num)
 
-        result = translate_result(result)
         remember_links(result, via)
         if kv_put_scrape(key, result, ttl=86400):
             print(f"  Cached: {url} ({result.get('count', 0)} items)")
@@ -440,7 +423,6 @@ def scrape_search_and_cache(site: str, query: str, max_items: int = 40, pages: i
     q = parse_query(query)
     try:
         results = search_many([site], query, max_items=max_items, verify=False)
-        results = [translate_result(r) if isinstance(r, dict) else r for r in results]
         for r in results:
             remember_links(r, q["norm"])                   # the site's search matched it: the keyword becomes an index term for the video
         for e in taxonomy_for(site, q):
@@ -645,7 +627,6 @@ def scrape_categories_and_cache(url: str, mode: str = "categories", page_num: in
             data = scrape_tags(url, kind="porntags")
         else:
             data = scrape_categories(url, page_num=page_num)
-        data = translate_result(data)
         kv_put_scrape(key, data, ttl=86400)
         print(f"  Cached categories: {url} ({data.get('count', 0)} items)")
         return data
