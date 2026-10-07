@@ -1,6 +1,6 @@
 import { Env } from "../types";
 import { scrapePage, searchOne, isBlockedHost } from "../scrape";
-import { parseQuery, queryKey, loadIndex, loadTaxonomy, searchIndex, matchTaxonomy, learnShapes, rankCombined, memoKV, hostOfUrl, suggestTaxonomy, type Query, type TaxEntry } from "../search";
+import { parseQuery, queryKey, loadIndex, loadTaxonomy, searchIndex, matchTaxonomy, learnShapes, rankCombined, memoKV, hostOfUrl, suggestTaxonomy, suggestFromIndex, type Query, type TaxEntry } from "../search";
 import { scrapeListing } from "../listings";
 import { resolveVideo, resolveFull } from "../resolve";
 import { fetchMetadata } from "../metadata";
@@ -408,9 +408,11 @@ export default {
 
         case "/api/suggest": {
           // search-box dropdown: categories / tags / pornstars / studios whose name matches what is being typed (no scraping, KV only)
+          // Reads all metadata from search-index instead of taxonomy-index
           if (!isGet) break;
           const text = (url.searchParams.get("q") || "").slice(0, 60);
-          const items = suggestTaxonomy(await loadTaxonomy(env.SCRAPE_DATA), text, 12);
+          const [index, tax] = await Promise.all([loadIndex(env.SCRAPE_DATA), loadTaxonomy(env.SCRAPE_DATA)]);
+          const items = suggestFromIndex(index, tax, text, 12);
           return json({ q: text, items }, 200, { ...headers, "Cache-Control": "public, max-age=300" });
         }
 

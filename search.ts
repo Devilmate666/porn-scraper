@@ -319,3 +319,78 @@ export function suggestTaxonomy(entries: TaxEntry[], rawQuery: string, limit = 1
   }
   return out.concat(rest).slice(0, limit);
 }
+
+/** Search suggestions from the search-index: extracts all unique tags, categories, models, and studios
+ *  from every video record and matches them against the query. Uses taxonomy entries for URLs when available. */
+export function suggestFromIndex(records: IndexRecord[], taxonomy: TaxEntry[], rawQuery: string, limit = 12): Suggestion[] {
+  const qn = norm(rawQuery);
+  if (qn.length < 2) return [];
+  const qw = qn.split(" ").filter(Boolean);
+  const last = qw[qw.length - 1];
+  
+  // Build a lookup map from taxonomy for URLs
+  const taxMap = new Map<string, string>();
+  for (const t of taxonomy) {
+    const key = `${t.k}|${t.h}|${norm(t.n)}`;
+    taxMap.set(key, t.u);
+  }
+  
+  // Extract all unique metadata across all records
+  const allMeta = new Map<string, { name: string; kind: "tag" | "category" | "model" | "studio"; host: string }>();
+  for (const r of records) {
+    const host = r.p ? hostOfUrl(r.p) : "";
+    // Tags
+    for (const t of r.tg || []) {
+      const key = `tag|${host}|${norm(t)}`;
+      if (!allMeta.has(key)) allMeta.set(key, { name: t, kind: "tag", host });
+    }
+    // Categories
+    for (const c of r.ct || []) {
+      const key = `category|${host}|${norm(c)}`;
+      if (!allMeta.has(key)) allMeta.set(key, { name: c, kind: "category", host });
+    }
+    // Models/Pornstars
+    for (const m of r.md || []) {
+      const key = `model|${host}|${norm(m)}`;
+      if (!allMeta.has(key)) allMeta.set(key, { name: m, kind: "model", host });
+    }
+    // Studios/Series
+    for (const s of r.st || []) {
+      const key = `studio|${host}|${norm(s)}`;
+      if (!allMeta.has(key)) allMeta.set(key, { name: s, kind: "studio", host });
+    }
+  }
+  
+  // Score and filter matches
+  const scored: { m: { name: string; kind: "tag" | "category" | "model" | "studio"; host: string }; s: number }[] = [];
+  for (const meta of allMeta.values()) {
+    const n = norm(meta.name);
+    if (!n) continue;
+    const w = n.split(" ").filter(Boolean);
+    let score = 0;
+    if (n === qn) score = 100;
+    else if (n.startsWith(qn + " ")) score = 85;
+    else if (n.startsWith(qn)) score = 80;
+    else if (qw.every((t, i) => (i === qw.length - 1 ? w.some((x) => x.startsWith(t)) : w.includes(t) || w.some((x) => x.startsWith(t))))) score = 60;
+    else if (qn.length >= 3 && n.includes(qn)) score = 40;
+    else if (last.length >= 3 && qw.length === 1 && w.some((x) => stem(x) === stem(last))) score = 35;
+    if (!score) continue;
+    scored.push({ m: meta, s: score + (KIND_BONUS[meta.kind] || 0) - Math.min(n.length, 40) / 40 });
+  }
+  
+  scored.sort((a, b) => b.s - a.s);
+  
+  // Keep the list varied: at most 5 of one kind first
+  const out: Suggestion[] = [], perKind: Record<string, number> = {}, rest: Suggestion[] = [], names = new Set<string>();
+  for (const { m } of scored) {
+    const taxKey = `${m.kind}|${m.host}|${norm(m.name)}`;
+    const url = taxMap.get(taxKey) || "";
+    const sg: Suggestion = { name: m.name, url, kind: m.kind, host: m.host };
+    const dup = `${m.kind}|${m.host}|${norm(m.name)}`;
+    if (names.has(dup)) continue;
+    names.add(dup);
+    if ((perKind[m.kind] = (perKind[m.kind] || 0) + 1) <= 5) out.push(sg); else rest.push(sg);
+    if (out.length >= limit) break;
+  }
+  return out.concat(rest).slice(0, limit);
+}
