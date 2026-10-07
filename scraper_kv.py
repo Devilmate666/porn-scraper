@@ -174,6 +174,7 @@ KV_STATS = {"ok": 0, "failed": 0}
 
 def kv_put_cache(key: str, value: dict, ttl: int = 3600):
     if kv_cache:
+        time.sleep(0.15)
         kv_cache.put(key, value, ttl)
 
 
@@ -209,6 +210,7 @@ def kv_put_scrape(key: str, value: dict, ttl: int = 86400) -> bool:
     if not kv_scrape:
         KV_STATS["failed"] += 1
         return False
+    time.sleep(0.15)  # rate-limit: ~6 writes/sec to avoid 429
     priority = key.startswith(PRIORITY_PREFIXES)
     is_err = isinstance(value, dict) and bool(value.get("error"))
     empty = isinstance(value, dict) and not is_err and not _has_data(value)
