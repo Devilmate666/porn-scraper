@@ -270,3 +270,52 @@ export function rankCombined(results: any[], q: Query, indexHits: any[] = [], ca
   list.sort((a, b) => b._score - a._score);
   return list.slice(0, cap);
 }
+
+// ------------------------------------------------------------------ autocomplete (search-box dropdown)
+export interface Suggestion { name: string; url: string; kind: TaxEntry["k"]; host: string }
+
+const sugPrep = new WeakMap<TaxEntry, { n: string; w: string[] }>();
+const sugView = (e: TaxEntry) => {
+  let p = sugPrep.get(e);
+  if (!p) { const n = norm(e.n); p = { n, w: n.split(" ").filter(Boolean) }; sugPrep.set(e, p); }
+  return p;
+};
+const KIND_BONUS: Record<string, number> = { model: 0.6, studio: 0.4, category: 0.3, tag: 0 };
+
+/** Category / tag / star / studio pages whose NAME starts with, or has a word starting with, what is being typed.
+ *  Entries come from the memoised `taxonomy-index`, so the per-entry normalisation is paid once per isolate. */
+export function suggestTaxonomy(entries: TaxEntry[], rawQuery: string, limit = 12): Suggestion[] {
+  const qn = norm(rawQuery);
+  if (qn.length < 2) return [];
+  const qw = qn.split(" ").filter(Boolean);
+  const last = qw[qw.length - 1];
+  const scored: { e: TaxEntry; s: number }[] = [];
+  const seen = new Set<string>();
+  for (const e of entries) {
+    if (!e?.u || !e.n || seen.has(e.u)) continue;
+    const { n, w } = sugView(e);
+    if (!n) continue;
+    let s = 0;
+    if (n === qn) s = 100;
+    else if (n.startsWith(qn + " ")) s = 85;                 // "anal" -> "Anal Sex" before "Analyzed Girl"
+    else if (n.startsWith(qn)) s = 80;
+    else if (qw.every((t, i) => (i === qw.length - 1 ? w.some((x) => x.startsWith(t)) : w.includes(t) || w.some((x) => x.startsWith(t))))) s = 60;
+    else if (qn.length >= 3 && n.includes(qn)) s = 40;
+    else if (last.length >= 3 && qw.length === 1 && w.some((x) => stem(x) === stem(last))) s = 35;
+    if (!s) continue;
+    seen.add(e.u);
+    scored.push({ e, s: s + (KIND_BONUS[e.k] || 0) - Math.min(n.length, 40) / 40 });
+  }
+  scored.sort((a, b) => b.s - a.s);
+  // keep the list varied: at most 5 of one kind first, then fill up with whatever is left
+  const out: Suggestion[] = [], perKind: Record<string, number> = {}, rest: Suggestion[] = [], names = new Set<string>();
+  for (const { e } of scored) {
+    const sg: Suggestion = { name: e.n, url: e.u, kind: e.k, host: e.h };
+    const dup = `${e.k}|${e.h}|${sugView(e).n}`;
+    if (names.has(dup)) continue;
+    names.add(dup);
+    if ((perKind[e.k] = (perKind[e.k] || 0) + 1) <= 5) out.push(sg); else rest.push(sg);
+    if (out.length >= limit) break;
+  }
+  return out.concat(rest).slice(0, limit);
+}
