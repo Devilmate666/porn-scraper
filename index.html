@@ -6386,18 +6386,10 @@ searchInput.addEventListener('keydown', (e) => {
     });
   }
 
-  /** keywords of a set of loaded videos, each with how many of them contain it (counted from words the filter will match) */
+  /** keywords of a set of loaded videos, each with how many of them contain it (counted from metadata tags only) */
   function buildKeywords(docs) {
-    const uni = new Map(), bi = new Map(), ph = new Map();
+    const ph = new Map();
     for (const d of docs) {
-      const toks = new Set(normalizeSearchText(d.text).split(' ').filter(okWord));
-      for (const t of toks) uni.set(t, (uni.get(t) || 0) + 1);
-      const tw = normalizeSearchText(d.title).split(' ').filter(Boolean), seenB = new Set();
-      for (let i = 0; i < tw.length - 1; i++) {
-        if (!okWord(tw[i]) || !okWord(tw[i + 1])) continue;
-        const k = tw[i] + ' ' + tw[i + 1];
-        if (!seenB.has(k)) { seenB.add(k); bi.set(k, (bi.get(k) || 0) + 1); }
-      }
       const seenP = new Set();
       for (const p of d.phrases) {
         const k = normalizeSearchText(p);
@@ -6407,11 +6399,8 @@ searchInput.addEventListener('keydown', (e) => {
         e.count++; ph.set(k, e);
       }
     }
-    const all = new Map();
-    for (const [k, n] of uni) all.set(k, { key: k, text: cap(k), count: n, words: [k], multi: false });
-    for (const [k, n] of bi) if (n >= 2) all.set(k, { key: k, text: cap(k), count: n, words: k.split(' '), multi: true });
-    for (const [k, e] of ph) { const was = all.get(k); if (was) e.count = Math.max(e.count, was.count); all.set(k, e); }   // real tag / star names win over plain words
-    return [...all.values()];
+    // Only return metadata phrases (tags, categories, models, studios) - no individual title words
+    return [...ph.values()];
   }
   function pickKeywords(cands, text, limit) {
     const qw = queryWords(text), qn = qw.join(' ');
