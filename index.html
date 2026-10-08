@@ -1326,16 +1326,103 @@ function hashToState() {
   return null;
 }
 
+/* ------------------------------------------------------------------
+   Scroll memory - ONE rule for every page, like any other site:
+   - every history entry remembers where ITS page was scrolled (kept live while you scroll, frozen while a tap rebuilds the page);
+   - Back / Forward put the page exactly there again; a page opened fresh (a tap, See All, a menu button, a search) starts at the top;
+   - the dropdown, a video or a nested page never changes what the page underneath remembers.
+------------------------------------------------------------------- */
+const entryScroll = new Map();          // history entry idx -> scrollY
+const entryView = new Map();            // history entry idx -> which view that scrollY belongs to
+let scrollFreezeUntil = 0;              // right after a tap the page is being rebuilt: its scroll events are not the user's
+let scrollRestoring = false;            // a restore is running: its intermediate scroll positions must not be recorded
+let scrollSaveRaf = 0;
+
+function navViewKey(st) {
+  if (!st) return '';
+  const feedish = st.view === 'feed' || st.view === 'category-feed';
+  return `${st.view}|${feedish ? (st.feedUrl || '') : ''}|${st.view === 'websearch' ? (st.query || '') + '|' + ((st.scope && st.scope.url) || '') : ''}`;
+}
+function forgetEntryScrollFrom(idx) {
+  for (const k of [...entryScroll.keys()]) if (k >= idx) { entryScroll.delete(k); entryView.delete(k); }
+}
+/** where this history entry's page was scrolled (falls back to what the entry itself carries, e.g. after a reload) */
+function savedScrollFor(st) {
+  if (!st) return 0;
+  if (st.sid === NAV_SID && typeof st.idx === 'number' && entryScroll.has(st.idx) && entryView.get(st.idx) === navViewKey(st)) return entryScroll.get(st.idx);
+  return typeof st.scrollY === 'number' ? st.scrollY : 0;
+}
+function pageIsLocked() {
+  return !!playerBodyLock || !!(mainPlayer && mainPlayer.classList.contains('active'));
+}
+function saveEntryScroll(force = false) {
+  try {
+    if (!force && (performance.now() < scrollFreezeUntil || navSilent || scrollRestoring)) return;
+    if (pageIsLocked()) return;                          // a video is open: the page underneath keeps what it had
+    const st = history.state;
+    if (!st || st.sid !== NAV_SID || typeof st.idx !== 'number') return;
+    const key = navViewKey(currentNavState(true));
+    if (key !== navViewKey(st)) return;                  // the screen already shows another page: this scroll is not this entry's
+    entryScroll.set(st.idx, Math.round(window.scrollY));
+    entryView.set(st.idx, key);
+  } catch (_) {}
+}
+window.addEventListener('scroll', () => {
+  if (scrollSaveRaf) return;
+  scrollSaveRaf = requestAnimationFrame(() => { scrollSaveRaf = 0; saveEntryScroll(); });
+}, { passive: true });
+document.addEventListener('pointerdown', () => saveEntryScroll(true), true);                       // the exact spot at the moment of a tap
+document.addEventListener('click', () => { saveEntryScroll(true); scrollFreezeUntil = performance.now() + 1200; }, true);
+document.addEventListener('keydown', (e) => { if (e.key === 'Enter') { saveEntryScroll(true); scrollFreezeUntil = performance.now() + 1200; } }, true);
+window.addEventListener('pagehide', () => saveEntryScroll(true));
+
+/** Put the page at y and keep it there until the content has finished building (a user touch or key cancels it at once). */
+function restoreScrollRobust(y) {
+  y = Math.max(0, Math.round(y || 0));
+  scrollRestoring = true;
+  const t0 = performance.now();
+  let stop = false, okSince = 0;
+  const cancel = () => { stop = true; };
+  const evs = ['touchstart', 'wheel', 'keydown', 'mousedown'];
+  evs.forEach(ev => window.addEventListener(ev, cancel, { once: true, passive: true }));
+  let reserved = false;                                  // height reserved so the page is tall enough while it is still being built
+  const finish = () => {
+    if (reserved && !stop) {                             // give the reserved height back once the real content is tall enough
+      const before = results.style.minHeight;
+      results.style.minHeight = '';
+      if (document.documentElement.scrollHeight < y + (window.innerHeight || 0) - 1) results.style.minHeight = before;
+      window.scrollTo({ top: y, left: 0, behavior: 'instant' });
+    }
+    scrollRestoring = false;
+    evs.forEach(ev => window.removeEventListener(ev, cancel));
+    scrollFreezeUntil = 0;
+    saveEntryScroll(true);
+  };
+  if (y > 0 && document.documentElement.scrollHeight < y + (window.innerHeight || 0) + 2) { preserveSectionScrollRange(y); reserved = true; }
+  const step = () => {
+    if (stop) { finish(); return; }
+    window.scrollTo({ top: y, left: 0, behavior: 'instant' });
+    const now = performance.now();
+    if (Math.abs(window.scrollY - y) <= 1) { if (!okSince) okSince = now; if (now - okSince > 250) { finish(); return; } }
+    else okSince = 0;
+    if (now - t0 > 1500) { finish(); return; }
+    requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
 function pushNav(partial) {
   if (navSilent) return;
-  const state = { ...currentNavState(), ...partial, ts: Date.now() };
+  const state = { ...currentNavState(), scrollY: 0, ...partial, ts: Date.now() };   // a page opened fresh starts at the top
   state.idx = ++navIdx; state.sid = NAV_SID;
+  forgetEntryScrollFrom(state.idx);                      // the entries that were ahead of us are gone
   try { history.pushState(state, '', stateToHash(state)); } catch {}
 }
 
 function replaceNav(partial) {
   const state = { ...currentNavState(), ...partial, ts: Date.now() };
   state.idx = navIdx; state.sid = NAV_SID;
+  if (entryView.get(navIdx) !== navViewKey(state)) { entryScroll.delete(navIdx); entryView.delete(navIdx); }   // another page now owns this slot
   try { history.replaceState(state, '', stateToHash(state)); } catch {}
 }
 
@@ -1371,16 +1458,12 @@ function viewAlreadyShown(state) {
 /** After a view is (re)shown: bring back the network search filter and the scroll position. */
 function postRestore(state) {
   updateNetworkBarActive();
-  const restore = () => {
-    if (siteActions && typeof state.navScrollLeft === 'number') {
-      siteActions.scrollLeft = state.navScrollLeft;
-    }
-    if (typeof state.scrollY === 'number') {
-      window.scrollTo({ top: state.scrollY, left: 0, behavior: 'instant' });
-    }
+  const restoreBar = () => {
+    if (siteActions && typeof state.navScrollLeft === 'number') siteActions.scrollLeft = state.navScrollLeft;
   };
-  requestAnimationFrame(restore);
-  setTimeout(restore, 150);
+  requestAnimationFrame(restoreBar);
+  setTimeout(restoreBar, 150);
+  if (typeof state.scrollY === 'number') restoreScrollRobust(state.scrollY);
 }
 
 async function applyNavState(state) {
@@ -1535,6 +1618,10 @@ window.addEventListener('popstate', (e) => {
 
   if (suggestGuardSkip) { suggestGuardSkip = false; return; }
   const to = e.state && e.state.sid === NAV_SID && typeof e.state.idx === 'number' ? e.state.idx : -1;
+  try {                                     // the page we are leaving remembers exactly where it was left
+    const k = entryView.get(navIdx);
+    if (k && k === navViewKey(currentNavState(true)) && !pageIsLocked() && !scrollRestoring) entryScroll.set(navIdx, Math.round(window.scrollY));
+  } catch (_) {}
   if (to >= 0) navIdx = to;
 
   const toSearch = !!(e.state && e.state.view === 'websearch');
@@ -1552,35 +1639,11 @@ window.addEventListener('popstate', (e) => {
     return;
   }
 
-  // Top-level section menus are never a Back-to-previous-section stack.
-  // If Back lands on another top-level section (for example:
-  // Home -> Porn Stars -> Networks -> Back), resolve that entry directly to Home.
-  // Nested views such as Networks -> See All are still allowed to use their own
-  // history steps.
-  const topLevelViews = new Set([
-    'feed', 'categories', 'pornsites', 'porntags', 'networks',
-    'pornstars', 'livecams', 'livechannels'
-  ]);
-  const currentState = history.state;
-  const targetIsTopLevel = !!(e.state && topLevelViews.has(e.state.view) &&
-    !['category-feed', 'player', 'websearch'].includes(e.state.view));
-  const currentIsTopLevel = !!(currentState && topLevelViews.has(currentState.view) &&
-    !['category-feed', 'player', 'websearch'].includes(currentState.view));
-  const targetSection = sectionForState(e.state);
-
-  if (targetIsTopLevel && currentIsTopLevel && targetSection !== 'home' && navSection !== 'home') {
-    navSilent = true;
-    navSection = 'home';
-    goHome(false).finally(() => {
-      navSilent = false;
-      navSection = 'home';
-      updateNetworkBarActive();
-    });
-    return;
-  }
-
+  // Back goes to the previous history entry and shows exactly that page, wherever it is (a section menu, a nested page of it,
+  // Home...) - at the scroll position that entry was left at. Section menus share one history slot (see enterNavSection),
+  // so there is no stack of section menus to skip through.
   navSilent = true;
-  applyNavState(e.state).finally(() => {
+  applyNavState({ ...e.state, scrollY: savedScrollFor(e.state) }).finally(() => {
     navSilent = false;
     updateNetworkBarActive();
   });
@@ -5467,8 +5530,7 @@ function activateSectionSnapshot(section, snapshot, scrollY, pressedButton, pres
   const restore = () => restoreSectionAnchor(scrollY, pressedButton, pressedButtonTop);
   requestAnimationFrame(restore);
   setTimeout(restore, 120);
-  const y = scrollY;
-  if (state.view) pushNav({ ...state, section, scrollY: y });
+  // history is handled by enterNavSection (one slot for all section menus): no entry is pushed here
 }
 
 function restoreSectionAnchor(scrollY, pressedButton, pressedButtonTop) {
@@ -5501,6 +5563,22 @@ function stashCurrentSection(section) {
     dotClass: dot.className,
     minHeight: results.style.minHeight,
   });
+}
+
+/** True while the section's own main page (not a nested page of it) is on screen. */
+function onSectionRoot(section) {
+  const tab = activeTab || '';
+  switch (section) {
+    case 'home': return tab.startsWith(MIX_PREFIX) || SOURCES.some(s => s.url === tab);
+    case 'categories': return tab === CATEGORIES_TAB;
+    case 'pornsites': return tab === PORN_SITES_TAB;
+    case 'porntags': return tab === PORN_TAGS_TAB;
+    case 'networks': return tab === NETWORKS_TAB;
+    case 'pornstars': return tab === PORNSTARS_TAB;
+    case 'livecams': return tab === LIVECAMS_TAB;
+    case 'livechannels': return tab === LIVECHANNELS_TAB;
+  }
+  return true;
 }
 
 function enterNavSection(section, action, force = false, pressedButton = null) {
@@ -5542,10 +5620,12 @@ function enterNavSection(section, action, force = false, pressedButton = null) {
     return;
   }
 
-  if (section === previousSection && !force) {
+  if (section === previousSection && !force && onSectionRoot(section)) {   // its own main page is open: the button scrolls to the top
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
     updateNetworkBarActive();
     return;
   }
+  // (inside a nested page of this section - a network's videos, search results... - the button opens the section's main page)
   if (force) sectionDomSnapshots.delete(section);
   const targetScrollY = 0;
   stashCurrentSection(previousSection);
