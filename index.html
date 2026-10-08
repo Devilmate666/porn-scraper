@@ -1,4 +1,5 @@
 
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2707,8 +2708,7 @@ async function openCategoryFeed(link, name, opts = {}) {
     const res = await fetch('/api/scrape', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ urls: [link] }),
-      signal: AbortSignal.timeout(30000)
+      body: JSON.stringify({ urls: [link] })
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
@@ -3019,7 +3019,6 @@ async function loadFeed(feedId, { force = false, skipPush = false } = {}) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ urls: srcs.map(x => x.url) }),
-      signal: AbortSignal.timeout(30000)
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
@@ -3534,8 +3533,7 @@ async function fetchNextWithRetry(nextUrl, pageNum) {
       const res = await fetch('/api/scrape', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ urls: [{ url: nextUrl, page_num: pageNum }] }),
-        signal: AbortSignal.timeout(30000)
+        body: JSON.stringify({ urls: [{ url: nextUrl, page_num: pageNum }] })
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
@@ -3617,7 +3615,7 @@ async function openCategories(forceRefresh = false, opts = {}) {
   setStatus('Loading Superporn + BDSMHole categories…', true);
   showSectionLoading('categories');
 
-try {
+  try {
     const merged = [];
     const seen = new Set();
     const nextBySource = {};
@@ -3629,7 +3627,6 @@ try {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ url: src.indexUrl }),
-          signal: AbortSignal.timeout(30000)
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json = await res.json();
@@ -3769,7 +3766,6 @@ async function fetchStudioPage(url, mode, group) {
   const res = await fetch('/api/scrape-categories', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(mode ? { url, mode } : { url }),
-    signal: AbortSignal.timeout(30000)
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const json = await res.json();
@@ -4248,12 +4244,11 @@ async function openStudioView(tab, forceRefresh = false, opts = {}) {
       }
       json = { sections: merged, nexts, next_page: Object.values(nexts).find(Boolean) || null,
                page_num: 1, kind: 'pornsites', count: merged.length };
-} else {
+    } else {
       const res = await fetch('/api/scrape-categories', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: V.url, mode: 'sites' }),
-        signal: AbortSignal.timeout(30000)
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       json = await res.json();
@@ -4302,12 +4297,11 @@ async function openPornTags(forceRefresh = false, opts = {}) {
   setStatus('Loading porn tags…', true);
   showSectionLoading('porn tags and categories');
 
-try {
+  try {
     const res = await fetch('/api/scrape-categories', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url: PORN_TAGS_URL, mode: 'tags' }),
-      signal: AbortSignal.timeout(30000)
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
@@ -4552,7 +4546,7 @@ async function searchCategoriesByName(query) {
       }
     }
 
-// 2) Direct category URL from slug → category tile (if page has content)
+    // 2) Direct category URL from slug → category tile (if page has content)
     await Promise.all(sources.map(async (src) => {
       if (!slug) return;
       const url = src.feedUrl(slug);
@@ -4561,7 +4555,6 @@ async function searchCategoriesByName(query) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ urls: [url] }),
-          signal: AbortSignal.timeout(30000)
         });
         if (!res.ok) return;
         const json = await res.json();
@@ -4582,13 +4575,12 @@ async function searchCategoriesByName(query) {
     const maxPages = 15;
     await Promise.all(sources.map(async (src) => {
       let pageUrl = src.indexUrl;
-for (let i = 0; i < maxPages && pageUrl; i++) {
+      for (let i = 0; i < maxPages && pageUrl; i++) {
         try {
           const res = await fetch('/api/scrape-categories', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ url: pageUrl }),
-            signal: AbortSignal.timeout(30000)
           });
           if (!res.ok) break;
           const json = await res.json();
@@ -4711,8 +4703,7 @@ async function loadSourceFeed(sourceId, { force = false, skipPush = false } = {}
     const res = await fetch('/api/scrape', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ urls: [src.url] }),
-      signal: AbortSignal.timeout(30000)
+      body: JSON.stringify({ urls: [src.url] })
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
@@ -4820,11 +4811,10 @@ async function fetchCatalogPage(kind, i, url) {
   const cfg = CATALOGS[kind], st = catalogState[kind], src = cfg.sources[i];
   st.pages[i] = (st.pages[i] || 0) + 1;
   let added = 0;
-try {
+  try {
     const res = await fetch('/api/scrape-categories', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url }),
-      signal: AbortSignal.timeout(30000)
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
@@ -5853,13 +5843,12 @@ async function fetchPagesBatch(nextUrl, pageNum, depth) {
   }
   const norm = u => (u || '').replace(/\/+$/, '').replace(/^https?:\/\/(www\.)?/, '');
   let lastErr = null;
-for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const res = await fetch('/api/scrape', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ urls: reqs }),
-        signal: AbortSignal.timeout(30000)
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const raw = (await res.json()).results || [];
