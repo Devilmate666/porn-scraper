@@ -391,8 +391,14 @@ def register_taxonomy(items, mode):
     kind = _KIND_OF_MODE.get(mode, "category")
     for i in items or []:
         link, name = i.get("link"), (i.get("name") or i.get("title") or "").strip()
+        try:
+            count = int(i.get("video_count")) if i.get("video_count") not in (None, "") else None   # the listing's own "N videos"
+        except (TypeError, ValueError):
+            count = None
         if link and name and len(name) <= 60 and link not in TAXONOMY:
             TAXONOMY[link] = {"n": name, "u": link, "k": kind, "h": reg_host(link)}
+        if link in TAXONOMY and count is not None:
+            TAXONOMY[link]["c"] = count                      # lets the dropdown skip pages that hold no videos
         if link and name:
             CATEGORY_NAMES.setdefault(link.split("?")[0], name)
 

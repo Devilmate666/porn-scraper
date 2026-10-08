@@ -58,7 +58,6 @@
   #suggestBox .sg.active, #suggestBox .sg:hover { background: #1a2133; }
   #suggestBox .sg-head { padding: .45rem .7rem .2rem; font-size: .68rem; letter-spacing: .04em; text-transform: uppercase; color: #5b6a84; }
   #suggestBox .sg-head:not(:first-child) { margin-top: .25rem; border-top: 1px solid #1a2133; padding-top: .6rem; }
-  #suggestBox .sg-count { flex: none; font-size: .68rem; color: #7aa9ff; }
   #suggestBox .sg-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #suggestBox .sg-name b { color: #c4b5fd; font-weight: 600; }
 
@@ -6186,21 +6185,26 @@ searchInput.addEventListener('keydown', (e) => {
       if (k.length) groups.push({ title: '📺 In Live Channels', rows: k.map(c => ({ type: 'kw', text: c.text, label: c.text, count: c.count })) });
       return groups;
     }
-    if (!feedEl(activeTab) && !results.querySelector('.feed')) return groups;
-    const kws = pickKeywords(buildKeywords(docsFromCards()), text, isHome() ? 6 : 10)
-      .map(c => ({ type: 'kw', text: c.text, label: c.text, count: c.count }));
+    const haveFeed = !!(feedEl(activeTab) || results.querySelector('.feed'));
+    if (!haveFeed && !isHome()) return groups;
+    const loaded = haveFeed
+      ? pickKeywords(buildKeywords(docsFromCards()), text, isHome() ? 6 : 10).map(c => ({ type: 'kw', text: c.text, label: c.text }))
+      : [];
     if (!isHome()) {                                             // inside a pornstar / studio / category / website: that section only
-      if (kws.length) groups.push({ title: `In ${feedLabel(activeTab)} · ${kws.length === 1 ? '1 keyword' : 'keywords of the loaded videos'}`, rows: kws });
+      if (loaded.length) groups.push({ title: `In ${feedLabel(activeTab)} · keywords of the loaded videos`, rows: loaded });
       return groups;
     }
-    if (kws.length) groups.push({ title: '🎬 Videos · all websites', rows: kws });
+    // Home / search results: EVERYTHING the scraper cached (tags, categories, title words, every pornstar and network page,
+    // every live channel) - not only what this page happens to have loaded. Rows without a page of their own are searched by name.
     const sv = await fromServer(text);
-    if (sv === null && text === (searchInput.value || '').trim() && !serverCache.has(text.toLowerCase())) { /* superseded or offline: show what is loaded */ }
+    const vids = mergeUnique([...loaded, ...(((sv && sv.videos) || []).map(t => ({ type: 'kw', text: t, label: t })))], 'label').slice(0, 8);
+    if (vids.length) groups.push({ title: '🎬 Videos · all websites', rows: vids });
     const star = [], net = [], chan = [];
-    for (const x of ((sv && sv.pornstars) || [])) star.push({ type: 'feed', url: x.url, name: x.name, label: x.name, count: x.count });
+    const asRow = (x) => x.url ? { type: 'feed', url: x.url, name: x.name, label: x.name } : { type: 'kw', text: x.name, label: x.name };
+    for (const x of ((sv && sv.pornstars) || [])) star.push(asRow(x));
     const cs = catalogState.pornstars && catalogState.pornstars.items;
-    if (cs) for (const c of cs) if (c.video_count > 0 && c.link && nameFits(c.name, text)) star.push({ type: 'feed', url: c.link, name: c.name, label: c.name, count: Number(c.video_count) });
-    for (const x of ((sv && sv.networks) || [])) net.push({ type: 'feed', url: x.url, name: x.name, label: x.name, count: x.count });
+    if (cs) for (const c of cs) if (c.video_count !== 0 && c.link && nameFits(c.name, text)) star.push({ type: 'feed', url: c.link, name: c.name, label: c.name });
+    for (const x of ((sv && sv.networks) || [])) net.push(asRow(x));
     for (const x of ((sv && sv.channels) || [])) chan.push({ type: 'chan', name: x.name, label: x.name });
     if (chanState) for (const c of chanState.items) if (c.title && nameFits(c.title, text)) chan.push({ type: 'chan', name: c.title, label: c.title });
     const add = (title, list) => { const u = mergeUnique(list, 'label').slice(0, 5); if (u.length) groups.push({ title, rows: u }); };
@@ -6232,8 +6236,7 @@ searchInput.addEventListener('keydown', (e) => {
     for (const g of groups) {
       html += `<div class="sg-head">${esc(g.title)}</div>`;
       for (const r of g.rows) {
-        const meta = r.count ? `<span class="sg-count">${Number(r.count).toLocaleString()} ${r.type === 'kw' ? (r.count === 1 ? 'video' : 'videos') : 'videos'}</span>` : '';
-        html += `<div class="sg" role="option" data-i="${rows.length}"><span class="sg-name">${hl(r.label, text)}</span>${meta}</div>`;
+        html += `<div class="sg" role="option" data-i="${rows.length}"><span class="sg-name">${hl(r.label, text)}</span></div>`;
         rows.push(r);
       }
     }

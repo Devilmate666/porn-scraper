@@ -142,7 +142,7 @@ export interface IndexRecord {
   l: string; t: string; i?: string | null; du?: string; vw?: string; rt?: string; ad?: string; ql?: string; p?: string;
   tg?: string[]; ct?: string[]; md?: string[]; st?: string[]; vi?: string[]; ds?: string; ts?: number;
 }
-export interface TaxEntry { n: string; u: string; k: "category" | "tag" | "model" | "studio"; h: string }
+export interface TaxEntry { n: string; u: string; k: "category" | "tag" | "model" | "studio"; h: string; c?: number }
 
 const memo = new Map<string, { t: number; v: any }>();
 /** KV JSON read memoised per isolate: big keys (index, channels bundle, metadata shards) are parsed once, not per request */
@@ -272,10 +272,11 @@ export function rankCombined(results: any[], q: Query, indexHits: any[] = [], ca
 }
 
 // ------------------------------------------------------------------ autocomplete (search-box dropdown)
-// Only things that are KNOWN to have data are suggested, so every button leads to results:
-//   pornstars / networks = taxonomy pages whose name also appears on videos in the search index
-//   live channels        = channels that exist in the channel bundle
-export interface Verified { name: string; url: string; count: number }
+// Everything the scraper has cached is searchable here - not only what the page has loaded:
+//   keywords             = tags / categories / frequent title words of every video in the search index
+//   pornstars / networks = every taxonomy page of that kind (minus pages known to be empty) + names seen on indexed videos
+//   live channels        = every channel in the channel bundle
+export interface Hit { name: string; url?: string; count: number }
 
 /** how well a (normalised) name fits what is being typed: 0 = not at all */
 function nameScore(n: string, w: string[], qn: string, qw: string[]): number {
@@ -297,39 +298,91 @@ const viewOf = (o: object, name: string) => {
   return p;
 };
 
-/** how many indexed videos carry each model / studio name (memoised per index array) */
-const facetCache = new WeakMap<IndexRecord[], { md: Map<string, number>; st: Map<string, number>; vi: Map<string, number> }>();
-function facetsOf(records: IndexRecord[]) {
+interface Facets {
+  md: Map<string, number>; st: Map<string, number>; vi: Map<string, number>;
+  mdName: Map<string, string>; stName: Map<string, string>;
+  kw: { name: string; n: string; w: string[]; count: number }[];
+}
+const facetCache = new WeakMap<IndexRecord[], Facets>();
+const KW_STOP = new Set([...STOP, "her", "his", "she", "him", "this", "that", "you", "your", "are", "all", "get", "gets", "into", "out", "has", "was", "who",
+  "how", "its", "their", "they", "them", "than", "then", "but", "not", "can", "new", "when", "what", "over", "while", "after", "got", "own", "com", "www", "http", "https"]);
+
+/** one pass over the index (memoised per isolate): who is in it, and which keywords it knows */
+function facetsOf(records: IndexRecord[]): Facets {
   let f = facetCache.get(records);
   if (f) return f;
-  f = { md: new Map(), st: new Map(), vi: new Map() };
-  const add = (m: Map<string, number>, list?: string[]) => {
-    for (const k of new Set((list || []).map(norm).filter(Boolean))) m.set(k, (m.get(k) || 0) + 1);
+  f = { md: new Map(), st: new Map(), vi: new Map(), mdName: new Map(), stName: new Map(), kw: [] };
+  const people = new Set<string>();
+  const add = (m: Map<string, number>, names: Map<string, string> | null, list?: string[]) => {
+    const seen = new Set<string>();
+    for (const raw of list || []) {
+      const k = norm(raw);
+      if (!k || seen.has(k)) continue;
+      seen.add(k);
+      m.set(k, (m.get(k) || 0) + 1);
+      if (names && !names.has(k)) names.set(k, raw);
+    }
   };
-  for (const r of records) { add(f.md, r.md); add(f.st, r.st); add(f.vi, r.vi); }
+  for (const r of records) { add(f.md, f.mdName, r.md); add(f.st, f.stName, r.st); add(f.vi, null, r.vi); }
+  for (const k of [...f.md.keys(), ...f.st.keys()]) people.add(k);
+
+  const kwCount = new Map<string, { name: string; count: number }>();
+  const bump = (name: string) => {
+    const k = norm(name);
+    if (k.length < 3 || people.has(k)) return;
+    const e = kwCount.get(k) || { name, count: 0 };
+    e.count++; kwCount.set(k, e);
+  };
+  const words = new Map<string, number>();
+  for (const r of records) {
+    const seen = new Set<string>();
+    for (const t of [...(r.tg || []), ...(r.ct || [])]) { const k = norm(t); if (k && !seen.has(k)) { seen.add(k); bump(t); } }
+    const tw = new Set(norm(r.t).split(" ").filter((w) => w.length >= 3 && !/^\d+$/.test(w) && !KW_STOP.has(w)));
+    for (const w of tw) words.set(w, (words.get(w) || 0) + 1);
+  }
+  for (const [w, n] of words) if (n >= 2 && !people.has(w) && !kwCount.has(w)) kwCount.set(w, { name: w.charAt(0).toUpperCase() + w.slice(1), count: n });
+  f.kw = [...kwCount.entries()].map(([n, v]) => ({ name: v.name, n, w: n.split(" "), count: v.count }));
   facetCache.set(records, f);
   return f;
 }
 
-export function verifiedTaxonomy(entries: TaxEntry[], records: IndexRecord[], kind: "model" | "studio", rawQuery: string, limit = 5): Verified[] {
+/** keywords of every cached video (tags, categories, title words) that fit what is being typed */
+export function suggestKeywords(records: IndexRecord[], rawQuery: string, limit = 6): string[] {
   if (!records.length) return [];
+  const qn = norm(rawQuery), qw = qn.split(" ").filter(Boolean);
+  const out: { name: string; s: number; count: number }[] = [];
+  for (const k of facetsOf(records).kw) {
+    const s = nameScore(k.n, k.w, qn, qw);
+    if (s) out.push({ name: k.name, s, count: k.count });
+  }
+  out.sort((a, b) => b.s - a.s || b.count - a.count || a.name.length - b.name.length);
+  return out.slice(0, limit).map((x) => x.name);
+}
+
+/** pornstars (kind "model") or networks (kind "studio"): every cached taxonomy page, plus names seen on indexed videos that
+ *  have no page of their own (those are searched by name). Pages known to hold no videos are left out. */
+export function suggestFacet(entries: TaxEntry[], records: IndexRecord[], kind: "model" | "studio", rawQuery: string, limit = 5): Hit[] {
   const qn = norm(rawQuery), qw = qn.split(" ").filter(Boolean);
   const f = facetsOf(records);
   const own = kind === "model" ? f.md : f.st;
-  const seen = new Set<string>();
-  const out: { v: Verified; s: number }[] = [];
+  const names = kind === "model" ? f.mdName : f.stName;
+  const seenName = new Set<string>(), seenUrl = new Set<string>();
+  const out: { h: Hit; s: number }[] = [];
   for (const e of entries) {
-    if (e.k !== kind || !e.u || !e.n || seen.has(e.u)) continue;
+    if (e.k !== kind || !e.u || !e.n || seenUrl.has(e.u) || e.c === 0) continue;
     const { n, w } = viewOf(e, e.n);
-    const count = Math.max(own.get(n) || 0, f.vi.get(n) || 0);
-    if (count < 1) continue;                                  // nothing known behind this name: never suggest it
     const s = nameScore(n, w, qn, qw);
     if (!s) continue;
-    seen.add(e.u);
-    out.push({ v: { name: e.n, url: e.u, count }, s });
+    seenUrl.add(e.u); seenName.add(n);
+    out.push({ h: { name: e.n, url: e.u, count: Math.max(Number(e.c) || 0, own.get(n) || 0, f.vi.get(n) || 0) }, s });
   }
-  out.sort((a, b) => b.s - a.s || b.v.count - a.v.count || a.v.name.length - b.v.name.length);
-  return out.slice(0, limit).map((x) => x.v);
+  for (const [n, count] of own) {
+    if (seenName.has(n)) continue;
+    const s = nameScore(n, n.split(" "), qn, qw);
+    if (s) out.push({ h: { name: names.get(n) || n, count }, s });
+  }
+  out.sort((a, b) => b.s - a.s || b.h.count - a.h.count || a.h.name.length - b.h.name.length);
+  return out.slice(0, limit).map((x) => x.h);
 }
 
 export interface ChannelHit { name: string; url: string; slug: string }
