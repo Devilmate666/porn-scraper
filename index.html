@@ -1225,6 +1225,7 @@ function currentNavState(ignorePlayer = false) {
     view: 'feed',
     feedUrl: activeTab && !isListTab(activeTab) ? activeTab : activeSource().url,
     scrollY: window.scrollY,
+    navScrollLeft: siteActions ? siteActions.scrollLeft : 0,
   };
   if (!ignorePlayer && mainPlayer && mainPlayer.classList.contains('active') && mainPlayerInfo) {
     const under = currentNavState(true);
@@ -1364,12 +1365,16 @@ function viewAlreadyShown(state) {
 /** After a view is (re)shown: bring back the network search filter and the scroll position. */
 function postRestore(state) {
   updateNetworkBarActive();
-  if (typeof state.scrollY === 'number') {
-    const y = state.scrollY;
-    const go = () => window.scrollTo({ top: y, left: 0, behavior: 'instant' });
-    requestAnimationFrame(go);
-    setTimeout(go, 150);
-  }
+  const restore = () => {
+    if (siteActions && typeof state.navScrollLeft === 'number') {
+      siteActions.scrollLeft = state.navScrollLeft;
+    }
+    if (typeof state.scrollY === 'number') {
+      window.scrollTo({ top: state.scrollY, left: 0, behavior: 'instant' });
+    }
+  };
+  requestAnimationFrame(restore);
+  setTimeout(restore, 150);
 }
 
 async function applyNavState(state) {
@@ -1499,49 +1504,40 @@ function clearActiveSearch() {
 }
 
 window.addEventListener('popstate', (e) => {
-  // An open search dropdown takes the first Back: it closes, and the page stays where it is (the Back is undone with a Forward).
+  // The dropdown consumes the first Back press. Close only the dropdown and undo
+  // that browser-history movement; the loaded section remains untouched.
   if (suggestGuardSkip) { suggestGuardSkip = false; return; }
-  const to = e.state && e.state.sid === NAV_SID && typeof e.state.idx === 'number' ? e.state.idx : -1;   // -1 = not one of ours: treated as Back
+  const to = e.state && e.state.sid === NAV_SID && typeof e.state.idx === 'number' ? e.state.idx : -1;
   const isForward = to > navIdx;
   if (window.closeSuggestBox && window.closeSuggestBox() && !isForward) {
     suggestGuardSkip = true;
-    history.forward();                      // undo this Back: the dropdown used it up
+    history.forward();
     return;
   }
   if (to >= 0) navIdx = to;
-  // Returning to the search results (from a video, or with Forward) keeps them exactly as they were - same cards, same scroll.
-  // Any other Back out of a search goes Home; the search itself is never kept as a history step except the last one.
+
+  // Search text is local UI state, so clear it before changing the section. Do not
+  // let that turn one Back press into several navigation steps.
   const toSearch = !!(e.state && e.state.view === 'websearch');
   const hadSearch = toSearch ? false : clearActiveSearch();
-  if (hadSearch) {
-    if (activeTab === WEBSEARCH_TAB && !webSearchScope) {
-      feedSearchEntryActive = false;
-      navSilent = true;
-      goHome(false).finally(() => { navSilent = false; });
-      return;
-    }
-    feedSearchEntryActive = false;
-  }
+  if (hadSearch) feedSearchEntryActive = false;
+
+  // From an entry outside our current document history, Home is the safe root.
   if (!e.state || !e.state.view) {
     navSilent = true;
     navSection = 'home';
-    goHome(!hadSearch).finally(() => { navSilent = false; });
+    goHome(false).finally(() => { navSilent = false; });
     return;
   }
-  if (!hadSearch && !toSearch && navSection === 'home' &&
-      !(mainPlayer && mainPlayer.classList.contains('active'))) {
-    navSilent = true;
-    goHome(true).finally(() => { navSilent = false; });
-    return;
-  }
-  if (sectionForState(e.state) !== navSection) {
-    navSilent = true;
-    navSection = 'home';
-    goHome(!hadSearch).finally(() => { navSilent = false; });
-    return;
-  }
+
+  // IMPORTANT: never collapse a nested view because its top-level section differs
+  // from the currently rendered tab. Every history entry carries its own section.
+  // Example: Networks -> See All -> Home becomes exactly three Back stages.
   navSilent = true;
-  applyNavState(e.state).finally(() => { navSilent = false; });
+  applyNavState(e.state).finally(() => {
+    navSilent = false;
+    updateNetworkBarActive();
+  });
 });
 
 function statsHtml(item) {
@@ -2079,16 +2075,27 @@ function hideSearchBar() {
 
 function updateNetworkBarActive() {
   restoreNavScroll();
-  if (homeBtn) homeBtn.classList.toggle('active', activeTab === mixKey(ALL_FEED.id));
-  const secBtn = {
-    [CATEGORIES_TAB]: 'categoriesBtn', [PORN_SITES_TAB]: 'pornSitesBtn',
-    [NETWORKS_TAB]: 'networksBtn', [PORNSTARS_TAB]: 'pornstarsBtn',
-    [LIVECAMS_TAB]: 'camsBtn', [LIVECHANNELS_TAB]: 'chansBtn',
+
+  // Navigation is section-based, not DOM/view-based. A Network's "See All" feed is
+  // still inside the Networks journey, so Networks remains highlighted until the
+  // user actually returns to Home (or chooses another top-level section).
+  const sectionBtn = {
+    home: 'homeBtn',
+    categories: 'categoriesBtn',
+    pornsites: 'pornSitesBtn',
+    networks: 'networksBtn',
+    pornstars: 'pornstarsBtn',
+    livecams: 'camsBtn',
+    livechannels: 'chansBtn',
   };
-  Object.values(secBtn).forEach(id => {
+  const activeId = sectionBtn[navSection] ||
+    (activeTab === mixKey(ALL_FEED.id) ? 'homeBtn' : null);
+
+  Object.values(sectionBtn).forEach(id => {
     const b = document.getElementById(id);
-    if (b) b.classList.toggle('active', secBtn[activeTab] === id);
+    if (b) b.classList.toggle('active', id === activeId);
   });
+
   document.querySelectorAll('.site-tab').forEach(t => {
     t.classList.toggle('active', t.dataset.sourceId === activeFeedId);
   });
