@@ -1193,6 +1193,9 @@ function openSourcePage(detail) {
    view: 'feed' | 'categories' | 'category-feed' | 'player' | 'search'
 ------------------------------------------------------------------- */
 let navSilent = false;
+// Prevent the browser from restoring an old scroll position while Back/Forward is being handled.
+// Navigation code below restores the exact saved position instead.
+try { history.scrollRestoration = 'manual'; } catch (_) {}
 let navIdx = 0;                 // position of the history entry on screen: tells Back from Forward
 const NAV_SID = Math.random().toString(36).slice(2);   // entries from an earlier page load are not comparable
 let suggestGuardSkip = false;   // the Forward that cancels a Back (taken by the dropdown) must not navigate
@@ -1510,8 +1513,16 @@ window.addEventListener('popstate', (e) => {
   const to = e.state && e.state.sid === NAV_SID && typeof e.state.idx === 'number' ? e.state.idx : -1;
   const isForward = to > navIdx;
   if (window.closeSuggestBox && window.closeSuggestBox() && !isForward) {
+    // The dropdown is UI state, not a navigation state. Undo the browser Back
+    // without allowing the browser's saved scroll position to flash on screen.
+    const keepY = window.scrollY;
+    const keepX = window.scrollX;
     suggestGuardSkip = true;
     history.forward();
+    const restore = () => window.scrollTo({ top: keepY, left: keepX, behavior: 'instant' });
+    requestAnimationFrame(restore);
+    setTimeout(restore, 0);
+    setTimeout(restore, 80);
     return;
   }
   if (to >= 0) navIdx = to;
@@ -1526,7 +1537,13 @@ window.addEventListener('popstate', (e) => {
   if (!e.state || !e.state.view) {
     navSilent = true;
     navSection = 'home';
-    goHome(false).finally(() => { navSilent = false; });
+    goHome(false).finally(() => {
+      navSilent = false;
+      // Home is a real top-level navigation state; make the highlight explicit
+      // after the asynchronous feed/snapshot restoration has completed.
+      navSection = 'home';
+      updateNetworkBarActive();
+    });
     return;
   }
 
@@ -2076,9 +2093,8 @@ function hideSearchBar() {
 function updateNetworkBarActive() {
   restoreNavScroll();
 
-  // Navigation is section-based, not DOM/view-based. A Network's "See All" feed is
-  // still inside the Networks journey, so Networks remains highlighted until the
-  // user actually returns to Home (or chooses another top-level section).
+  // Highlight the section represented by the current history entry. This is more
+  // reliable than activeTab/navSection while Back is restoring an older snapshot.
   const sectionBtn = {
     home: 'homeBtn',
     categories: 'categoriesBtn',
@@ -2088,7 +2104,11 @@ function updateNetworkBarActive() {
     livecams: 'camsBtn',
     livechannels: 'chansBtn',
   };
-  const activeId = sectionBtn[navSection] ||
+  const historySection = history.state && history.state.sid === NAV_SID
+    ? sectionForState(history.state)
+    : navSection;
+  const activeSection = historySection || navSection || 'home';
+  const activeId = sectionBtn[activeSection] ||
     (activeTab === mixKey(ALL_FEED.id) ? 'homeBtn' : null);
 
   Object.values(sectionBtn).forEach(id => {
