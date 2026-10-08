@@ -2092,11 +2092,25 @@ function hideSearchBar() {
 }
 
 
+function ensureNavButtonVisible(button) {
+  if (!button || !siteActions) return;
+  const bar = siteActions;
+  const br = bar.getBoundingClientRect();
+  const r = button.getBoundingClientRect();
+  const pad = 6;
+  let next = bar.scrollLeft;
+  if (r.left < br.left + pad) next -= (br.left + pad) - r.left;
+  else if (r.right > br.right - pad) next += r.right - (br.right - pad);
+  next = Math.max(0, Math.min(next, bar.scrollWidth - bar.clientWidth));
+  if (Math.abs(next - bar.scrollLeft) > 1) bar.scrollLeft = next;
+}
+
 function updateNetworkBarActive() {
   restoreNavScroll();
 
-  // Highlight the section represented by the current history entry. This is more
-  // reliable than activeTab/navSection while Back is restoring an older snapshot.
+  // Top-level highlighting follows the actual navigation section, not the
+  // currently opened feed. A nested "See All" page therefore keeps its parent
+  // section highlighted.
   const sectionBtn = {
     home: 'homeBtn',
     categories: 'categoriesBtn',
@@ -2113,9 +2127,14 @@ function updateNetworkBarActive() {
   const activeId = sectionBtn[activeSection] ||
     (activeTab === mixKey(ALL_FEED.id) ? 'homeBtn' : null);
 
+  let activeButton = null;
   Object.values(sectionBtn).forEach(id => {
     const b = document.getElementById(id);
-    if (b) b.classList.toggle('active', id === activeId);
+    if (b) {
+      const active = id === activeId;
+      b.classList.toggle('active', active);
+      if (active) activeButton = b;
+    }
   });
 
   document.querySelectorAll('.site-tab').forEach(t => {
@@ -2123,6 +2142,13 @@ function updateNetworkBarActive() {
   });
   if (searchInput) {
     searchInput.placeholder = feedPlaceholder(activeTab);
+  }
+
+  // Keep the highlighted section button completely visible in the horizontal
+  // navigation bar. Do not use scrollIntoView(): it can move the document
+  // vertically and cause the page to jump.
+  if (activeButton) {
+    requestAnimationFrame(() => ensureNavButtonVisible(activeButton));
   }
 }
 
@@ -5454,7 +5480,6 @@ function enterNavSection(section, action, force = false, pressedButton = null) {
   if (busy) return;
   const previousSection = navSection;
   const currentScrollY = window.scrollY;
-  const pressedButtonTop = pressedButton ? pressedButton.getBoundingClientRect().top : null;
   const buttonsScrollLeft = siteActions ? siteActions.scrollLeft : 0;
   const restoringSnapshot = !force && section !== previousSection && sectionDomSnapshots.has(section);
   if (restoringSnapshot) preserveSectionScrollRange(sectionDomSnapshots.get(section).scrollY || 0);
@@ -5466,6 +5491,16 @@ function enterNavSection(section, action, force = false, pressedButton = null) {
     studioState.scrollY = currentScrollY;
   }
   saveCatalogScroll(currentScrollY);
+
+  // Top-level sections share ONE history slot. The first section opened from Home
+  // gets a history entry; switching between sections replaces that entry.
+  // Therefore Back from any section menu always returns directly to Home, never
+  // through previously visited section menus. Nested pages inside a section still
+  // use pushState and retain their normal Back steps.
+  const sectionMenuNavigation = section !== previousSection;
+  const collapseSectionHistory = sectionMenuNavigation && previousSection !== 'home';
+  const firstSectionFromHome = sectionMenuNavigation && previousSection === 'home' && section !== 'home';
+
   const cachedSnapshot = !force && section !== previousSection
     ? sectionDomSnapshots.get(section)
     : null;
@@ -5474,13 +5509,19 @@ function enterNavSection(section, action, force = false, pressedButton = null) {
     const ownScrollY = Number.isFinite(cachedSnapshot.scrollY) ? cachedSnapshot.scrollY : 0;
     activateSectionSnapshot(section, cachedSnapshot, ownScrollY, null, null);
     if (siteActions) siteActions.scrollLeft = buttonsScrollLeft;
+    if (collapseSectionHistory) replaceNav(currentNavState());
+    else if (firstSectionFromHome) pushNav(currentNavState());
+    updateNetworkBarActive();
     return;
   }
-  if (section === previousSection && !force) return;
+
+  if (section === previousSection && !force) {
+    updateNetworkBarActive();
+    return;
+  }
   if (force) sectionDomSnapshots.delete(section);
   const targetScrollY = 0;
   stashCurrentSection(previousSection);
-  // a newly loaded section starts at the top (scroll memory of studio/categories lists is reset too)
   studioState.scrollY = 0;
   categoriesState.scrollY = 0;
   Object.values(catalogState).forEach(c => { if (c) c.scrollY = 0; });
@@ -5489,20 +5530,41 @@ function enterNavSection(section, action, force = false, pressedButton = null) {
   navSection = section;
   feedSearchEntryActive = false;
   clearTimeout(liveTimer);
+
   const restoreScroll = () => {
     const restore = () => {
       window.scrollTo({ top: targetScrollY, left: 0, behavior: 'instant' });
       if (siteActions) siteActions.scrollLeft = buttonsScrollLeft;
+      updateNetworkBarActive();
     };
     requestAnimationFrame(restore);
     setTimeout(restore, 120);
   };
-  const result = action();
-  if (result && typeof result.then === 'function') result.then(restoreScroll, restoreScroll);
-  else restoreScroll();
+
+  // When moving between top-level sections, suppress the action's pushState so
+  // it cannot create another section-history entry. We then either push the first
+  // section (Home -> Section) or replace the existing section slot.
+  const suppressSectionPush = sectionMenuNavigation && !force;
+  const oldNavSilent = navSilent;
+  if (suppressSectionPush) navSilent = true;
+  let result;
+  try {
+    result = action();
+  } finally {
+    if (suppressSectionPush) navSilent = oldNavSilent;
+  }
+
+  const finish = () => {
+    if (suppressSectionPush) {
+      if (collapseSectionHistory) replaceNav(currentNavState());
+      else if (firstSectionFromHome) pushNav(currentNavState());
+    }
+    restoreScroll();
+  };
+  if (result && typeof result.then === 'function') result.then(finish, finish);
+  else finish();
   return result;
 }
-
 const chansBtn = document.getElementById('chansBtn');
 if (chansBtn) chansBtn.addEventListener('click', (e) => enterNavSection('livechannels', () => openLiveChannels(!!e.shiftKey), !!e.shiftKey, e.currentTarget));
 
