@@ -1745,26 +1745,26 @@ window.addEventListener('popstate', (e) => {
   if (exiting) return;                                            // leaving the app: nothing to handle
   const fromIdx = navIdx;
   const goingBack = to === -1 || to < fromIdx;
-  if (goingBack && !(mainPlayer && mainPlayer.classList.contains('active')) && (sectionMenuOpen || isSectionRootState(currentNavState(true)))) {
-    // Back on a section's main page does not walk through the history: it shows the Where-to sheet and "Press back again to exit".
-    // The Back is undone by putting the same page on top of the history again - nothing is re-rendered, nothing moves.
-    const now = Date.now();
-    if (now - lastRootBack < 2500) {                              // second Back while the message is still showing: leave
-      lastRootBack = 0;
+  if (goingBack && !(mainPlayer && mainPlayer.classList.contains('active')) && isSectionRootState(currentNavState(true))) {
+    // Top-level section menus are not a Back stack. From any non-Home section,
+    // Back returns directly to Home; it must not open a menu or promise to close
+    // a browser tab (browsers generally block script-initiated window.close()).
+    if (navSection !== 'home') {
       hideToast();
-      navIdx = to >= 0 ? to : Math.max(fromIdx - 1, 0);           // where the browser is now = how far back the whole visit is
-      exitSite();
+      closeSectionMenu();
+      navSilent = true;
+      navSection = 'home';
+      goHome(false).finally(() => {
+        replaceNav({ ...currentNavState(true), view: 'feed', section: 'home' });
+        navSilent = false;
+        updateNetworkBarActive();
+      });
       return;
     }
-    lastRootBack = now;
-    showToast('Press back again to exit', 2500);
-    const keep = { ...currentNavState(true), ts: Date.now(), sid: NAV_SID, idx: fromIdx };
-    navIdx = fromIdx;
-    navSilent = true;
-    forgetEntryScrollFrom(fromIdx + 1);
-    try { history.pushState(keep, '', stateToHash(keep)); } catch (_) {}
-    setTimeout(() => { navSilent = false; }, 90);                 // the hashchange of that Back is over by then
-    if (!sectionMenuOpen) openSectionMenu();
+    // At Home, do not trap Back with a fake exit prompt. Let the browser move
+    // to its previous history entry naturally.
+    closeSectionMenu();
+    hideToast();
     return;
   }
   if (to >= 0) navIdx = to;
@@ -1773,22 +1773,14 @@ window.addEventListener('popstate', (e) => {
   const hadSearch = toSearch ? false : clearActiveSearch();
   if (hadSearch) feedSearchEntryActive = false;
 
-  if (e.state && e.state.appBase) {                               // Back out of a nested page straight down to the guard under Home
-    navSilent = true;
-    navSection = 'home';
-    goHome(false).finally(() => {
-      const home = { ...currentNavState(true), ts: Date.now(), sid: NAV_SID, idx: 1 };
-      try {
-        history.replaceState({ appBase: true, sid: NAV_SID, idx: 0 }, '', location.href);
-        history.pushState(home, '', stateToHash(home));
-        navIdx = 1;
-      } catch (_) {}
-      setTimeout(() => { navSilent = false; updateNetworkBarActive(); }, 90);
-    });
-    return;
-  }
+  // The appBase entry is an intentional exit boundary. Keep the rendered Home
+  // view in place on that boundary and let the NEXT Back leave the document.
+  if (e.state && e.state.appBase) return;
 
   if (!e.state || !e.state.view) {
+    // If Back has reached the browser-history boundary while Home is already
+    // displayed, do not rebuild Home or push another guard entry: that traps Back.
+    if (navSection === 'home') return;
     navSilent = true;
     navSection = 'home';
     goHome(false).finally(() => {
