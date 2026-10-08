@@ -50,6 +50,7 @@
 
   /* search-box suggestions (categories / tags / pornstars / studios) */
   #suggestBox { position: fixed; z-index: 200; display: none; overflow-y: auto; max-height: min(60vh, 440px);
+    overscroll-behavior: contain; touch-action: pan-y; -webkit-overflow-scrolling: touch;   /* scrolling the list never moves the feed behind it */
     background: #0c0f15; border: 1px solid #2c3750; border-radius: 14px; padding: .3rem;
     box-shadow: 0 18px 40px -12px rgba(0,0,0,.85); }
   #suggestBox.open { display: block; }
@@ -1192,7 +1193,8 @@ function openSourcePage(detail) {
    view: 'feed' | 'categories' | 'category-feed' | 'player' | 'search'
 ------------------------------------------------------------------- */
 let navSilent = false;
-let lastNavTs = 0;              // stamp of the history entry on screen: tells Back from Forward
+let navIdx = 0;                 // position of the history entry on screen: tells Back from Forward
+const NAV_SID = Math.random().toString(36).slice(2);   // entries from an earlier page load are not comparable
 let suggestGuardSkip = false;   // the Forward that cancels a Back (taken by the dropdown) must not navigate
 let navSection = 'home';
 let feedSearchEntryActive = false;
@@ -1320,13 +1322,13 @@ function hashToState() {
 function pushNav(partial) {
   if (navSilent) return;
   const state = { ...currentNavState(), ...partial, ts: Date.now() };
-  lastNavTs = state.ts;
+  state.idx = ++navIdx; state.sid = NAV_SID;
   try { history.pushState(state, '', stateToHash(state)); } catch {}
 }
 
 function replaceNav(partial) {
   const state = { ...currentNavState(), ...partial, ts: Date.now() };
-  lastNavTs = state.ts;
+  state.idx = navIdx; state.sid = NAV_SID;
   try { history.replaceState(state, '', stateToHash(state)); } catch {}
 }
 
@@ -1499,13 +1501,14 @@ function clearActiveSearch() {
 window.addEventListener('popstate', (e) => {
   // An open search dropdown takes the first Back: it closes, and the page stays where it is (the Back is undone with a Forward).
   if (suggestGuardSkip) { suggestGuardSkip = false; return; }
-  const isForward = !!(e.state && e.state.ts && e.state.ts > lastNavTs);
+  const to = e.state && e.state.sid === NAV_SID && typeof e.state.idx === 'number' ? e.state.idx : -1;   // -1 = not one of ours: treated as Back
+  const isForward = to > navIdx;
   if (window.closeSuggestBox && window.closeSuggestBox() && !isForward) {
     suggestGuardSkip = true;
-    history.forward();
+    history.forward();                      // undo this Back: the dropdown used it up
     return;
   }
-  if (e.state && e.state.ts) lastNavTs = e.state.ts;
+  if (to >= 0) navIdx = to;
   // Returning to the search results (from a video, or with Forward) keeps them exactly as they were - same cards, same scroll.
   // Any other Back out of a search goes Home; the search itself is never kept as a history step except the last one.
   const toSearch = !!(e.state && e.state.view === 'websearch');
@@ -3097,7 +3100,7 @@ function playInMainPlayer(detail, title, opts = {}) {
     // Remember exactly where the user was in the current results page so that closing the
     // panel returns to the same page at the same scroll position.
     const under = currentNavState(true);
-    try { history.replaceState({ ...under, scrollY: scrollBefore, ts: Date.now() }, '', ''); } catch {}
+    try { history.replaceState({ ...under, scrollY: scrollBefore, ts: Date.now(), idx: navIdx, sid: NAV_SID }, '', ''); } catch {}
     pushNav({
       ...under,
       view: 'player',
@@ -6097,7 +6100,7 @@ searchInput.addEventListener('keydown', (e) => {
   box.setAttribute('role', 'listbox');
   document.body.appendChild(box);
 
-  let rows = [], active = -1, timer = 0, ctl = null, seq = 0;
+  let rows = [], active = -1, timer = 0, ctl = null, seq = 0, keepOpen = false, drawnFor = null;   // keepOpen: input blurred on purpose (keyboard hidden), list stays
   const serverCache = new Map();
   const isOpen = () => box.classList.contains('open');
   const isHome = () => isMixKey(activeTab) || activeTab === WEBSEARCH_TAB;     // Home and its search results: all websites combined
@@ -6243,7 +6246,7 @@ searchInput.addEventListener('keydown', (e) => {
     box.style.top = (r.bottom + 6) + 'px';
     box.style.width = Math.max(r.width, 280) + 'px';
   }
-  function close() { box.classList.remove('open'); active = -1; }
+  function close() { box.classList.remove('open'); active = -1; keepOpen = false; drawnFor = null; }
   window.closeSuggestBox = () => { if (!isOpen()) return false; close(); return true; };   // used by the Back button
   function mark(i) {
     active = i;
@@ -6269,11 +6272,13 @@ searchInput.addEventListener('keydown', (e) => {
     box.innerHTML = html;
     place();
     box.classList.add('open');
+    drawnFor = text;
   }
 
   async function refresh() {
     const text = (searchInput.value || '').trim();
     if (document.activeElement !== searchInput) { close(); return; }
+    if (isOpen() && drawnFor === text) { place(); return; }       // tapping the box again keeps the list (and its scroll position) as it is
     const mine = ++seq;
     const groups = await build(text);
     if (mine !== seq && isHome()) { /* a newer lookup started; it will draw */ }
@@ -6318,9 +6323,9 @@ searchInput.addEventListener('keydown', (e) => {
   /* ----- events ----- */
   const later = () => { clearTimeout(timer); timer = setTimeout(refresh, 120); };
   searchInput.addEventListener('input', later);
-  searchInput.addEventListener('focus', refresh);
+  searchInput.addEventListener('focus', () => { keepOpen = false; refresh(); });
   searchInput.addEventListener('click', () => { if (!isOpen()) refresh(); });
-  searchInput.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== searchInput) close(); }, 120));
+  searchInput.addEventListener('blur', () => setTimeout(() => { if (!keepOpen && document.activeElement !== searchInput) close(); }, 120));
 
   // document-level + capture: runs before the box's own Enter / Escape handlers
   document.addEventListener('keydown', (e) => {
@@ -6342,6 +6347,23 @@ searchInput.addEventListener('keydown', (e) => {
     const row = e.target.closest('.sg');
     if (row && Number(row.dataset.i) !== active) mark(Number(row.dataset.i));
   });
+  /* ----- the list scrolls on its own ----- */
+  // Scrolling the list tucks the keyboard away (the list stays open); tapping the box brings the keyboard back.
+  // The feed behind never scrolls along (older iOS ignores overscroll-behavior, so the list's edges are guarded here too).
+  let touchY = 0;
+  const hideKeyboard = () => { if (document.activeElement === searchInput) { keepOpen = true; searchInput.blur(); } };
+  box.addEventListener('touchstart', (e) => { touchY = e.touches[0].clientY; }, { passive: true });
+  box.addEventListener('touchmove', (e) => {
+    const y = e.touches[0].clientY, dy = y - touchY;
+    touchY = y;
+    const atTop = box.scrollTop <= 0, atEnd = box.scrollTop + box.clientHeight >= box.scrollHeight - 1;
+    if (e.cancelable && (box.scrollHeight <= box.clientHeight + 1 || (atTop && dy > 0) || (atEnd && dy < 0))) e.preventDefault();
+    hideKeyboard();
+  }, { passive: false });
+  // a tap or scroll anywhere outside the list closes it - also when the keyboard is already hidden and the box is not focused
+  document.addEventListener('pointerdown', (e) => {
+    if (isOpen() && !box.contains(e.target) && e.target !== searchInput) close();
+  }, true);
   window.addEventListener('resize', () => { if (isOpen()) place(); });
   window.addEventListener('scroll', () => { if (isOpen()) place(); }, { passive: true });
 })();
