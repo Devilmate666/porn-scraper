@@ -273,7 +273,8 @@ export function rankCombined(results: any[], q: Query, indexHits: any[] = [], ca
 
 // ------------------------------------------------------------------ autocomplete (search-box dropdown)
 // Everything the scraper has cached is searchable here - not only what the page has loaded:
-//   keywords             = tags / categories / frequent title words of every video in the search index
+//   genres & tags        = METADATA only: tags / categories / genres of every cached video + every category and tag page of every website
+//                          (title words such as "have some" are never suggested)
 //   pornstars / networks = every taxonomy page of that kind (minus pages known to be empty) + names seen on indexed videos
 //   live channels        = every channel in the channel bundle
 export interface Hit { name: string; url?: string; count: number }
@@ -298,21 +299,43 @@ const viewOf = (o: object, name: string) => {
   return p;
 };
 
-interface Facets {
-  md: Map<string, number>; st: Map<string, number>; vi: Map<string, number>;
-  mdName: Map<string, string>; stName: Map<string, string>;
-  kw: { name: string; n: string; w: string[]; count: number }[];
-}
-const facetCache = new WeakMap<IndexRecord[], Facets>();
-const KW_STOP = new Set([...STOP, "her", "his", "she", "him", "this", "that", "you", "your", "are", "all", "get", "gets", "into", "out", "has", "was", "who",
-  "how", "its", "their", "they", "them", "than", "then", "but", "not", "can", "new", "when", "what", "over", "while", "after", "got", "own", "com", "www", "http", "https"]);
+/** a metadata value (genre / tag / category / star / studio) with how often and where it is seen */
+export interface Tag { name: string; n: string; w: string[]; count: number; hosts: string[]; page: boolean }
 
-/** one pass over the index (memoised per isolate): who is in it, and which keywords it knows */
+const KW_STOP = new Set([...STOP, "her", "his", "she", "him", "this", "that", "you", "your", "are", "all", "get", "gets", "into", "out", "has", "was", "who",
+  "how", "its", "their", "they", "them", "than", "then", "but", "not", "can", "new", "when", "what", "over", "while", "after", "got", "own", "com", "www", "http", "https",
+  "uhd", "4k", "1080p", "720p", "480p", "360p", "best", "top", "hot", "latest", "watch", "download", "tube", "pic", "pics", "photo", "photos", "gallery", "clip", "clips"]);
+const SITE_WORDS = new Set(["superporn", "pornvideobb", "freesexvideos", "bdsmhole", "lemoncams", "xlivetv", "porner", "fullporno", "porno666"]);
+
+/** a real genre / tag / star / studio name - not a filler word, a resolution, a number or a website name */
+function goodTag(raw: string): boolean {
+  const n = norm(raw);
+  if (n.length < 3 || n.length > 32) return false;
+  const w = n.split(" ");
+  if (w.length > 4 || /^\d+p?$/.test(n) || w.every((x) => /^\d+$/.test(x))) return false;
+  if (w.every((x) => KW_STOP.has(x))) return false;
+  return !SITE_WORDS.has(n.replace(/ /g, ""));
+}
+
+/** Fisher-Yates + round-robin over groups: a fresh sample every call, spread over the websites (groups) */
+function freshPick<T>(items: T[], k: number, groupOf: (t: T) => string): T[] {
+  const groups = new Map<string, T[]>();
+  for (const it of items) { const g = groupOf(it); (groups.get(g) || groups.set(g, []).get(g)!).push(it); }
+  const lists = [...groups.values()];
+  for (const l of lists) for (let i = l.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [l[i], l[j]] = [l[j], l[i]]; }
+  for (let i = lists.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [lists[i], lists[j]] = [lists[j], lists[i]]; }
+  const out: T[] = [];
+  for (let i = 0; out.length < k && lists.some((l) => i < l.length); i++) for (const l of lists) if (i < l.length && out.length < k) out.push(l[i]);
+  return out;
+}
+
+interface Facets { md: Map<string, number>; st: Map<string, number>; vi: Map<string, number>; mdName: Map<string, string>; stName: Map<string, string> }
+const facetCache = new WeakMap<IndexRecord[], Facets>();
+/** who (stars / studios) the index knows, and how many videos each has */
 function facetsOf(records: IndexRecord[]): Facets {
   let f = facetCache.get(records);
   if (f) return f;
-  f = { md: new Map(), st: new Map(), vi: new Map(), mdName: new Map(), stName: new Map(), kw: [] };
-  const people = new Set<string>();
+  f = { md: new Map(), st: new Map(), vi: new Map(), mdName: new Map(), stName: new Map() };
   const add = (m: Map<string, number>, names: Map<string, string> | null, list?: string[]) => {
     const seen = new Set<string>();
     for (const raw of list || []) {
@@ -324,44 +347,92 @@ function facetsOf(records: IndexRecord[]): Facets {
     }
   };
   for (const r of records) { add(f.md, f.mdName, r.md); add(f.st, f.stName, r.st); add(f.vi, null, r.vi); }
-  for (const k of [...f.md.keys(), ...f.st.keys()]) people.add(k);
-
-  const kwCount = new Map<string, { name: string; count: number }>();
-  const bump = (name: string) => {
-    const k = norm(name);
-    if (k.length < 3 || people.has(k)) return;
-    const e = kwCount.get(k) || { name, count: 0 };
-    e.count++; kwCount.set(k, e);
-  };
-  const words = new Map<string, number>();
-  for (const r of records) {
-    const seen = new Set<string>();
-    for (const t of [...(r.tg || []), ...(r.ct || [])]) { const k = norm(t); if (k && !seen.has(k)) { seen.add(k); bump(t); } }
-    const tw = new Set(norm(r.t).split(" ").filter((w) => w.length >= 3 && !/^\d+$/.test(w) && !KW_STOP.has(w)));
-    for (const w of tw) words.set(w, (words.get(w) || 0) + 1);
-  }
-  for (const [w, n] of words) if (n >= 2 && !people.has(w) && !kwCount.has(w)) kwCount.set(w, { name: w.charAt(0).toUpperCase() + w.slice(1), count: n });
-  f.kw = [...kwCount.entries()].map(([n, v]) => ({ name: v.name, n, w: n.split(" "), count: v.count }));
   facetCache.set(records, f);
   return f;
 }
 
-/** keywords of every cached video (tags, categories, title words) that fit what is being typed */
-export function suggestKeywords(records: IndexRecord[], rawQuery: string, limit = 6): string[] {
-  if (!records.length) return [];
-  const qn = norm(rawQuery), qw = qn.split(" ").filter(Boolean);
-  const out: { name: string; s: number; count: number }[] = [];
-  for (const k of facetsOf(records).kw) {
-    const s = nameScore(k.n, k.w, qn, qw);
-    if (s) out.push({ name: k.name, s, count: k.count });
+const metaCache = new WeakMap<IndexRecord[], { plain?: Tag[]; people?: Tag[] }>();
+/** METADATA ONLY: the tags / categories / genres of the indexed videos (+ stars and studios when `people`). Never title words. */
+function metaKeywords(records: IndexRecord[], people: boolean): Tag[] {
+  let m = metaCache.get(records);
+  if (!m) metaCache.set(records, (m = {}));
+  const hit = people ? m.people : m.plain;
+  if (hit) return hit;
+  const f = facetsOf(records);
+  const byKey = new Map<string, { names: Map<string, number>; count: number; hosts: Set<string> }>();
+  for (const r of records) {
+    const host = hostOfUrl(r.l);
+    const seen = new Set<string>();
+    for (const raw of [...(r.tg || []), ...(r.ct || []), ...(people ? [...(r.md || []), ...(r.st || [])] : [])]) {
+      if (!raw || !goodTag(raw)) continue;
+      const k = stems(raw).join(" ");
+      if (!k || seen.has(k)) continue;
+      if (!people && (f.md.has(norm(raw)) || f.st.has(norm(raw)))) continue;           // a star or studio is not a genre
+      seen.add(k);
+      const e = byKey.get(k) || { names: new Map(), count: 0, hosts: new Set() };
+      e.count++;
+      e.names.set(raw, (e.names.get(raw) || 0) + 1);
+      if (host && e.hosts.size < 4) e.hosts.add(host);
+      byKey.set(k, e);
+    }
   }
-  out.sort((a, b) => b.s - a.s || b.count - a.count || a.name.length - b.name.length);
-  return out.slice(0, limit).map((x) => x.name);
+  const out: Tag[] = [...byKey.entries()].map(([k, e]) => {
+    const name = [...e.names.entries()].sort((a, b) => b[1] - a[1])[0][0];
+    const n = norm(name);
+    return { name, n, w: n.split(" "), count: e.count, hosts: [...e.hosts], page: false };
+  });
+  if (people) m.people = out; else m.plain = out;
+  return out;
+}
+
+const poolCache = new WeakMap<IndexRecord[], WeakMap<TaxEntry[], Tag[]>>();
+/** Home pool: the genres / tags of the cached videos + the name of every category and tag page of every website (those pages exist). */
+export function tagPool(tax: TaxEntry[], records: IndexRecord[]): Tag[] {
+  let byTax = poolCache.get(records);
+  if (!byTax) poolCache.set(records, (byTax = new WeakMap()));
+  const hit = byTax.get(tax);
+  if (hit) return hit;
+  const map = new Map<string, Tag>();
+  for (const t of metaKeywords(records, false)) map.set(stems(t.name).join(" "), { ...t, hosts: [...t.hosts] });
+  for (const e of tax) {
+    if ((e.k !== "category" && e.k !== "tag") || e.c === 0 || !goodTag(e.n)) continue;
+    const k = stems(e.n).join(" ");
+    const t = map.get(k) || { name: e.n, n: norm(e.n), w: norm(e.n).split(" "), count: 0, hosts: [], page: false };
+    t.page = true;
+    t.count = Math.max(t.count, Number(e.c) || 0);
+    if (e.h && !t.hosts.includes(e.h)) t.hosts.push(e.h);
+    map.set(k, t);
+  }
+  const out = [...map.values()];
+  byTax.set(tax, out);
+  return out;
+}
+
+/** What is typed -> the best matching genres / tags (accurate: ranked by how the name fits).
+ *  Nothing typed + fresh -> a NEW random sample every call, spread over the websites, only values that really have data. */
+export function suggestTags(pool: Tag[], rawQuery: string, limit = 6, fresh = false, byHost = true): string[] {
+  const qn = norm(rawQuery), qw = qn.split(" ").filter(Boolean);
+  if (!qn) {
+    let ok = pool.filter((t) => t.page || t.count >= 2);
+    if (ok.length < limit) ok = pool;
+    if (fresh) return freshPick(ok, limit, (t) => (byHost && t.hosts.length ? t.hosts[Math.floor(Math.random() * t.hosts.length)] : "")).map((t) => t.name);
+    return [...ok].sort((a, b) => b.count - a.count).slice(0, limit).map((t) => t.name);
+  }
+  const out: { t: Tag; s: number }[] = [];
+  for (const t of pool) { const s = nameScore(t.n, t.w, qn, qw); if (s) out.push({ t, s }); }
+  out.sort((a, b) => b.s - a.s || b.t.count - a.t.count || a.t.name.length - b.t.name.length);
+  return out.slice(0, limit).map((x) => x.t.name);
+}
+
+/** Inside one section: the tags / categories / stars / studios of THAT section's cached videos */
+export function suggestKeywords(records: IndexRecord[], rawQuery: string, limit = 6, fresh = false): string[] {
+  if (!records.length) return [];
+  return suggestTags(metaKeywords(records, true), rawQuery, limit, fresh, false);
 }
 
 /** pornstars (kind "model") or networks (kind "studio"): every cached taxonomy page, plus names seen on indexed videos that
  *  have no page of their own (those are searched by name). Pages known to hold no videos are left out. */
-export function suggestFacet(entries: TaxEntry[], records: IndexRecord[], kind: "model" | "studio", rawQuery: string, limit = 5): Hit[] {
+export function suggestFacet(entries: TaxEntry[], records: IndexRecord[], kind: "model" | "studio", rawQuery: string, limit = 5, fresh = false): Hit[] {
   const qn = norm(rawQuery), qw = qn.split(" ").filter(Boolean);
   const f = facetsOf(records);
   const own = kind === "model" ? f.md : f.st;
@@ -381,13 +452,17 @@ export function suggestFacet(entries: TaxEntry[], records: IndexRecord[], kind: 
     const s = nameScore(n, n.split(" "), qn, qw);
     if (s) out.push({ h: { name: names.get(n) || n, count }, s });
   }
+  if (!qn && fresh) {                                       // nothing typed: a new sample every time, spread over the websites
+    const hostOf = (h: Hit) => (h.url ? hostOfUrl(h.url) : "");
+    return freshPick(out.map((x) => x.h), limit, hostOf);
+  }
   out.sort((a, b) => b.s - a.s || b.h.count - a.h.count || a.h.name.length - b.h.name.length);
   return out.slice(0, limit).map((x) => x.h);
 }
 
 export interface ChannelHit { name: string; url: string; slug: string }
 const chanCache = new WeakMap<object, { name: string; url: string; slug: string }[]>();
-export function suggestChannels(bundle: { pages?: Record<string, any> } | null, rawQuery: string, limit = 5): ChannelHit[] {
+export function suggestChannels(bundle: { pages?: Record<string, any> } | null, rawQuery: string, limit = 5, fresh = false): ChannelHit[] {
   if (!bundle?.pages) return [];
   let list = chanCache.get(bundle);
   if (!list) {
@@ -403,6 +478,7 @@ export function suggestChannels(bundle: { pages?: Record<string, any> } | null, 
     chanCache.set(bundle, list);
   }
   const qn = norm(rawQuery), qw = qn.split(" ").filter(Boolean);
+  if (!qn && fresh) return freshPick(list, limit, () => "");
   const out: { c: ChannelHit; s: number }[] = [];
   for (const c of list) {
     const { n, w } = viewOf(c, c.name);

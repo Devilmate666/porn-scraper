@@ -1,6 +1,6 @@
 import { Env } from "../types";
 import { scrapePage, searchOne, isBlockedHost } from "../scrape";
-import { parseQuery, queryKey, loadIndex, loadTaxonomy, searchIndex, matchTaxonomy, learnShapes, rankCombined, memoKV, hostOfUrl, suggestFacet, suggestKeywords, suggestChannels, parseScope, scopeRecords, type Query, type TaxEntry } from "../search";
+import { parseQuery, queryKey, loadIndex, loadTaxonomy, searchIndex, matchTaxonomy, learnShapes, rankCombined, memoKV, hostOfUrl, suggestFacet, suggestKeywords, suggestChannels, suggestTags, tagPool, parseScope, scopeRecords, type Query, type TaxEntry } from "../search";
 import { scrapeListing } from "../listings";
 import { resolveVideo, resolveFull } from "../resolve";
 import { fetchMetadata } from "../metadata";
@@ -407,13 +407,16 @@ export default {
           break;
 
         case "/api/suggest": {
-          // search-box dropdown (Home): keywords, pornstars, networks and live channels from EVERYTHING cached (taxonomy + search index + channel bundle). No scraping, KV only.
+          // search-box dropdown: genres / tags / stars / studios / channels from EVERYTHING cached (taxonomy + search index + channel bundle).
+          // Nothing typed (+ ?r=): a NEW random sample every call, spread over the websites. Typed: the best-fitting values. No scraping, KV only.
           if (!isGet) break;
           const text = (url.searchParams.get("q") || "").slice(0, 60);
+          const fresh = !text.trim() && url.searchParams.has("r");
+          const cc = fresh ? "no-store" : "public, max-age=300";
           const sc = parseScope(url.searchParams.get("scope"));
-          if (sc) {                                                // inside one section: only that section's keywords
+          if (sc) {                                                // inside one section: only that section's tags / stars / studios
             const own = scopeRecords(await loadIndex(env.SCRAPE_DATA), sc);
-            return json({ q: text, scoped: sc.name, videos: suggestKeywords(own, text, 10), pornstars: [], networks: [], channels: [] }, 200, { ...headers, "Cache-Control": "public, max-age=300" });
+            return json({ q: text, scoped: sc.name, videos: suggestKeywords(own, text, 10, fresh), pornstars: [], networks: [], channels: [] }, 200, { ...headers, "Cache-Control": cc });
           }
           const [tax, idx, bundle] = await Promise.all([
             loadTaxonomy(env.SCRAPE_DATA),
@@ -422,11 +425,11 @@ export default {
           ]);
           return json({
             q: text,
-            videos: suggestKeywords(idx, text, 6),
-            pornstars: suggestFacet(tax, idx, "model", text),
-            networks: suggestFacet(tax, idx, "studio", text),
-            channels: suggestChannels(bundle, text),
-          }, 200, { ...headers, "Cache-Control": "public, max-age=300" });
+            videos: suggestTags(tagPool(tax, idx), text, 6, fresh),
+            pornstars: suggestFacet(tax, idx, "model", text, 5, fresh),
+            networks: suggestFacet(tax, idx, "studio", text, 5, fresh),
+            channels: suggestChannels(bundle, text, 5, fresh),
+          }, 200, { ...headers, "Cache-Control": cc });
         }
 
         case "/api/catalog-urls":
