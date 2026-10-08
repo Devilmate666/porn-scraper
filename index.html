@@ -6475,16 +6475,21 @@ searchInput.addEventListener('keydown', (e) => {
     const sv = await fromServer(text, null, fresh);
     const vids = mergeUnique([...loaded, ...(((sv && sv.videos) || []).map(t => ({ type: 'kw', text: t, label: t })))], 'label').slice(0, 8);
     if (vids.length) groups.push({ title: '🎬 Videos · all websites', rows: vids });
-    const star = [], net = [], chan = [];
+    const star = [], net = [], series = [], chan = [];
+    const isSeriesUrl = (url) => /\/series\//i.test(url);
     const asRow = (x) => x.url ? { type: 'feed', url: x.url, name: x.name, label: x.name } : { type: 'kw', text: x.name, label: x.name };
+    const asSeriesRow = (x) => x.url ? { type: 'series', url: x.url, name: x.name, label: x.name } : { type: 'kw', text: x.name, label: x.name };
     for (const x of ((sv && sv.pornstars) || [])) star.push(asRow(x));
     const cs = catalogState.pornstars && catalogState.pornstars.items;
     if (cs) for (const c of cs) if (c.video_count !== 0 && c.link && nameFits(c.name, text)) star.push({ type: 'feed', url: c.link, name: c.name, label: c.name });
-    for (const x of ((sv && sv.networks) || [])) net.push(asRow(x));
+    for (const x of ((sv && sv.networks) || [])) {
+      if (isSeriesUrl(x.url)) series.push(asSeriesRow(x));
+      else net.push(asRow(x));
+    }
     for (const x of ((sv && sv.channels) || [])) chan.push({ type: 'chan', name: x.name, label: x.name });
     if (chanState) for (const c of chanState.items) if (c.title && nameFits(c.title, text)) chan.push({ type: 'chan', name: c.title, label: c.title });
     const add = (title, list) => { const u = mergeUnique(list, 'label').slice(0, 5); if (u.length) groups.push({ title, rows: u }); };
-    add('⭐ Pornstars', star); add('🌐 Networks', net); add('📺 Live Channels', chan);
+    add('⭐ Pornstars', star); add('🌐 Networks', net); add('📺 Porn Series', series); add('📺 Live Channels', chan);
     return groups;
   }
 
@@ -6594,6 +6599,9 @@ searchInput.addEventListener('keydown', (e) => {
       if (activeTab !== WEBSEARCH_TAB && !isMixKey(activeTab) && !feedSearchEntryActive && !sectionScope()) { pushNav(currentNavState()); feedSearchEntryActive = true; }
       onLiveInput();
     } else if (r.type === 'feed') {                              // pornstar / network: open its feed
+      resetCurrentFilter();
+      openCategoryFeed(r.url, r.name);
+    } else if (r.type === 'series') {                            // porn series: open its video feed
       resetCurrentFilter();
       openCategoryFeed(r.url, r.name);
     } else if (r.type === 'chan') {                              // live channel: open Live Channels showing just that channel
