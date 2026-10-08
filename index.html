@@ -6426,14 +6426,14 @@ searchInput.addEventListener('keydown', (e) => {
   }
 
   /* ----- Home extras: pornstars / networks / channels known to have data (server) + whatever is already loaded ----- */
-  async function fromServer(text, sc) {
-    const key = scopeKeyOf(sc) + '|' + text.toLowerCase();
+  async function fromServer(text, sc, fresh = false) {
+    const key = scopeKeyOf(sc) + '|' + text.toLowerCase() + (fresh ? '|fresh' : '');
     if (serverCache.has(key)) return serverCache.get(key);
     const mine = ++seq;
     if (ctl) ctl.abort();
     ctl = new AbortController();
     try {
-      const res = await fetch('/api/suggest?q=' + encodeURIComponent(text) + (sc ? '&scope=' + encodeURIComponent(JSON.stringify({ kind: sc.kind, name: sc.name, url: sc.url })) : ''), { signal: ctl.signal });
+      const res = await fetch('/api/suggest?q=' + encodeURIComponent(text) + (sc ? '&scope=' + encodeURIComponent(JSON.stringify({ kind: sc.kind, name: sc.name, url: sc.url })) : '') + (fresh ? '&r=1' : ''), { signal: ctl.signal });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const d = await res.json();
       if (serverCache.size > 100) serverCache.clear();
@@ -6445,7 +6445,7 @@ searchInput.addEventListener('keydown', (e) => {
   function mergeUnique(list, key) { const seen = new Set(), out = []; for (const x of list) { const k = normalizeSearchText(x[key]); if (k && !seen.has(k)) { seen.add(k); out.push(x); } } return out; }
 
   /* ----- build + draw ----- */
-  async function build(text) {
+  async function build(text, fresh = false) {
     const groups = [];
     if (activeTab === LIVECAMS_TAB) return groups;
     if (activeTab === LIVECHANNELS_TAB) {
@@ -6460,7 +6460,7 @@ searchInput.addEventListener('keydown', (e) => {
       : [];
     const sc = scopeNow();
     if (sc) {                                                    // inside a section (or its search results): everything cached for THIS section
-      const sv = await fromServer(text, sc), own = normalizeSearchText(sc.name);
+      const sv = await fromServer(text, sc, fresh), own = normalizeSearchText(sc.name);
       const rows = mergeUnique([...loaded, ...(((sv && sv.videos) || []).map(t => ({ type: 'kw', text: t, label: t })))], 'label')
         .filter(r => normalizeSearchText(r.label) !== own).slice(0, 10);
       if (rows.length) groups.push({ title: `🎬 In ${sc.name} · all cached videos`, rows });
@@ -6472,7 +6472,7 @@ searchInput.addEventListener('keydown', (e) => {
     }
     // Home / search results: EVERYTHING the scraper cached (tags, categories, title words, every pornstar and network page,
     // every live channel) - not only what this page happens to have loaded. Rows without a page of their own are searched by name.
-    const sv = await fromServer(text);
+    const sv = await fromServer(text, null, fresh);
     const vids = mergeUnique([...loaded, ...(((sv && sv.videos) || []).map(t => ({ type: 'kw', text: t, label: t })))], 'label').slice(0, 8);
     if (vids.length) groups.push({ title: '🎬 Videos · all websites', rows: vids });
     const star = [], net = [], chan = [];
@@ -6563,12 +6563,12 @@ searchInput.addEventListener('keydown', (e) => {
     return Promise.resolve();
   }
 
-  async function refresh() {
+  async function refresh(fresh = false) {
     const text = (searchInput.value || '').trim();
     if (document.activeElement !== searchInput) { closeSuggestHistory(); return; }
-    if (isOpen() && drawnFor === text) { place(); return; }       // tapping the box again keeps the list (and its scroll position) as it is
+    if (isOpen() && drawnFor === text && !fresh) { place(); return; }       // tapping the box again keeps the list (and its scroll position) as it is
     const mine = ++seq;
-    const groups = await build(text);
+    const groups = await build(text, fresh);
     if (mine !== seq && isHome()) { /* a newer lookup started; it will draw */ }
     if (document.activeElement !== searchInput || text !== (searchInput.value || '').trim()) return;
     draw(groups, text);
@@ -6609,16 +6609,16 @@ searchInput.addEventListener('keydown', (e) => {
   }
 
   /* ----- events ----- */
-  const later = () => { clearTimeout(timer); timer = setTimeout(refresh, 120); };
+  const later = () => { clearTimeout(timer); timer = setTimeout(() => refresh(false), 120); };
   searchInput.addEventListener('input', later);
-  searchInput.addEventListener('focus', () => { keepOpen = false; refresh(); });
-  searchInput.addEventListener('click', () => { if (!isOpen()) refresh(); });
+  searchInput.addEventListener('focus', () => { keepOpen = false; refresh(true); });
+  searchInput.addEventListener('click', () => { if (!isOpen()) refresh(true); });
   searchInput.addEventListener('blur', () => setTimeout(() => { if (!keepOpen && document.activeElement !== searchInput) closeSuggestHistory(); }, 120));
 
   // document-level + capture: runs before the box's own Enter / Escape handlers
   document.addEventListener('keydown', (e) => {
     if (e.target !== searchInput) return;
-    if (!isOpen()) { if (e.key === 'ArrowDown') { e.preventDefault(); refresh(); } return; }
+    if (!isOpen()) { if (e.key === 'ArrowDown') { e.preventDefault(); refresh(true); } return; }
     if (e.key === 'ArrowDown') { e.preventDefault(); mark((active + 1) % rows.length); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); mark(active <= 0 ? rows.length - 1 : active - 1); }
     else if (e.key === 'Enter' && active >= 0) { e.preventDefault(); e.stopPropagation(); pick(rows[active]); }

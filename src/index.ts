@@ -408,10 +408,10 @@ export default {
 
         case "/api/suggest": {
           // search-box dropdown: genres / tags / stars / studios / channels from EVERYTHING cached (taxonomy + search index + channel bundle).
-          // Nothing typed (+ ?r=): a NEW random sample every call, spread over the websites. Typed: the best-fitting values. No scraping, KV only.
+          // ?r=1: a NEW random sample every call, spread over the websites. Typed: the best-fitting values. No scraping, KV only.
           if (!isGet) break;
           const text = (url.searchParams.get("q") || "").slice(0, 60);
-          const fresh = !text.trim() && url.searchParams.has("r");
+          const fresh = url.searchParams.has("r");
           const cc = fresh ? "no-store" : "public, max-age=300";
           const sc = parseScope(url.searchParams.get("scope"));
           if (sc) {                                                // inside one section: only that section's tags / stars / studios
