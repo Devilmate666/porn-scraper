@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -997,7 +998,7 @@
 // Backend base URL. Injected at deploy time by GitHub Actions (repo variable API_URL).
 // Empty string = same origin (local Flask server).
 const API_BASE = (function () {
-  const v = '__API_BASE__';
+  const v = 'https://porn-archive-api.satanhisham.workers.dev';
   if (v.indexOf('__API') !== 0) return v.replace(/\/$/, '');   // baked in at deploy time
   const isLocal = /^(localhost|127\.|10\.|192\.168\.)/.test(location.hostname) ||
                   location.hostname.endsWith('.trycloudflare.com');
