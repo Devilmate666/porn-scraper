@@ -5371,7 +5371,8 @@ function activateSectionSnapshot(section, snapshot, scrollY, pressedButton, pres
   const activeFeed = results.querySelector('.feed');
   if (activeFeed) {
     placeFeedControlsInFeed(activeFeed);
-    if (state.view === 'feed' || state.view === 'category-feed') placeSearchInFeed(activeFeed);
+    if (state.view === 'websearch') adoptWebSearch(state);     // the restored results own the search state again (box text, scope, load-more)
+    if (state.view === 'feed' || state.view === 'category-feed' || state.view === 'websearch') placeSearchInFeed(activeFeed);
     else hideSearchBar();
   } else {
     restoreFeedControlsToHeader();
@@ -6350,6 +6351,15 @@ new MutationObserver((muts) => {
   const currentFeed = results.querySelector('.feed');
   if (currentFeed) placeFeedControlsInFeed(currentFeed);
   else restoreFeedControlsToHeader();
+  if (currentFeed && (isMixKey(activeTab) || activeTab === WEBSEARCH_TAB || sectionScope())) {   // never leave a video feed without its search box
+    const bar = document.getElementById('searchBarHost');
+    if (bar && (bar.style.display === 'none' || !currentFeed.contains(bar))) {
+      const controls = placeFeedControlsInFeed(currentFeed);
+      if (controls) controls.appendChild(bar);
+      bar.style.display = '';
+      bar.classList.add('in-feed');
+    }
+  }
   const addedCard = muts.some(m => [...m.addedNodes].some(n =>
     n.nodeType === 1 && (n.classList.contains('card') || (n.querySelector && n.querySelector('.card')))));
   if (!addedCard) return;
@@ -6415,6 +6425,15 @@ function cleanQuery(raw) {
     .replace(/[\u201c\u201d\u201e\u201f\u00ab\u00bb"]/g, ' ')
     .replace(/[\u2018\u2019\u201a\u201b\u02bc`\u00b4]/g, "'")
     .replace(/\s+/g, ' ').trim().slice(0, 80);
+}
+/** Make a restored search-results page the live search again (its query, section and loaded results). */
+function adoptWebSearch(state) {
+  if (!state || !state.query) return;
+  const scope = state.scope && state.scope.url ? state.scope : null;
+  webSearchQuery = state.query;
+  webSearchScope = scope;
+  const cached = webSearchCache.get(`${activeSourceId}:${scopeKeyOf(scope)}:${normalizeSearchText(state.query)}`);
+  if (cached) webSearchState = cached;
 }
 function scopeKeyOf(sc) { return sc && sc.url ? `${sc.kind || ''}|${sc.url}` : ''; }
 /** The pornstar / studio / network / category / tag / website feed that is open (null on Home, lists, cams, channels). */
