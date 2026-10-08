@@ -50,7 +50,6 @@
 
   /* search-box suggestions (categories / tags / pornstars / studios) */
   #suggestBox { position: fixed; z-index: 200; display: none; overflow-y: auto; max-height: min(60vh, 440px);
-    overscroll-behavior: contain; touch-action: pan-y; -webkit-overflow-scrolling: touch;   /* scrolling the list never moves the feed behind it */
     background: #0c0f15; border: 1px solid #2c3750; border-radius: 14px; padding: .3rem;
     box-shadow: 0 18px 40px -12px rgba(0,0,0,.85); }
   #suggestBox.open { display: block; }
@@ -1193,11 +1192,7 @@ function openSourcePage(detail) {
    view: 'feed' | 'categories' | 'category-feed' | 'player' | 'search'
 ------------------------------------------------------------------- */
 let navSilent = false;
-// Prevent the browser from restoring an old scroll position while Back/Forward is being handled.
-// Navigation code below restores the exact saved position instead.
-try { history.scrollRestoration = 'manual'; } catch (_) {}
-let navIdx = 0;                 // position of the history entry on screen: tells Back from Forward
-const NAV_SID = Math.random().toString(36).slice(2);   // entries from an earlier page load are not comparable
+let lastNavTs = 0;              // stamp of the history entry on screen: tells Back from Forward
 let suggestGuardSkip = false;   // the Forward that cancels a Back (taken by the dropdown) must not navigate
 let navSection = 'home';
 let feedSearchEntryActive = false;
@@ -1228,7 +1223,6 @@ function currentNavState(ignorePlayer = false) {
     view: 'feed',
     feedUrl: activeTab && !isListTab(activeTab) ? activeTab : activeSource().url,
     scrollY: window.scrollY,
-    navScrollLeft: siteActions ? siteActions.scrollLeft : 0,
   };
   if (!ignorePlayer && mainPlayer && mainPlayer.classList.contains('active') && mainPlayerInfo) {
     const under = currentNavState(true);
@@ -1326,13 +1320,13 @@ function hashToState() {
 function pushNav(partial) {
   if (navSilent) return;
   const state = { ...currentNavState(), ...partial, ts: Date.now() };
-  state.idx = ++navIdx; state.sid = NAV_SID;
+  lastNavTs = state.ts;
   try { history.pushState(state, '', stateToHash(state)); } catch {}
 }
 
 function replaceNav(partial) {
   const state = { ...currentNavState(), ...partial, ts: Date.now() };
-  state.idx = navIdx; state.sid = NAV_SID;
+  lastNavTs = state.ts;
   try { history.replaceState(state, '', stateToHash(state)); } catch {}
 }
 
@@ -1368,16 +1362,12 @@ function viewAlreadyShown(state) {
 /** After a view is (re)shown: bring back the network search filter and the scroll position. */
 function postRestore(state) {
   updateNetworkBarActive();
-  const restore = () => {
-    if (siteActions && typeof state.navScrollLeft === 'number') {
-      siteActions.scrollLeft = state.navScrollLeft;
-    }
-    if (typeof state.scrollY === 'number') {
-      window.scrollTo({ top: state.scrollY, left: 0, behavior: 'instant' });
-    }
-  };
-  requestAnimationFrame(restore);
-  setTimeout(restore, 150);
+  if (typeof state.scrollY === 'number') {
+    const y = state.scrollY;
+    const go = () => window.scrollTo({ top: y, left: 0, behavior: 'instant' });
+    requestAnimationFrame(go);
+    setTimeout(go, 150);
+  }
 }
 
 async function applyNavState(state) {
@@ -1507,54 +1497,48 @@ function clearActiveSearch() {
 }
 
 window.addEventListener('popstate', (e) => {
-  // The dropdown consumes the first Back press. Close only the dropdown and undo
-  // that browser-history movement; the loaded section remains untouched.
+  // An open search dropdown takes the first Back: it closes, and the page stays where it is (the Back is undone with a Forward).
   if (suggestGuardSkip) { suggestGuardSkip = false; return; }
-  const to = e.state && e.state.sid === NAV_SID && typeof e.state.idx === 'number' ? e.state.idx : -1;
-  const isForward = to > navIdx;
+  const isForward = !!(e.state && e.state.ts && e.state.ts > lastNavTs);
   if (window.closeSuggestBox && window.closeSuggestBox() && !isForward) {
-    // The dropdown is UI state, not a navigation state. Undo the browser Back
-    // without allowing the browser's saved scroll position to flash on screen.
-    const keepY = window.scrollY;
-    const keepX = window.scrollX;
     suggestGuardSkip = true;
     history.forward();
-    const restore = () => window.scrollTo({ top: keepY, left: keepX, behavior: 'instant' });
-    requestAnimationFrame(restore);
-    setTimeout(restore, 0);
-    setTimeout(restore, 80);
     return;
   }
-  if (to >= 0) navIdx = to;
-
-  // Search text is local UI state, so clear it before changing the section. Do not
-  // let that turn one Back press into several navigation steps.
+  if (e.state && e.state.ts) lastNavTs = e.state.ts;
+  // Returning to the search results (from a video, or with Forward) keeps them exactly as they were - same cards, same scroll.
+  // Any other Back out of a search goes Home; the search itself is never kept as a history step except the last one.
   const toSearch = !!(e.state && e.state.view === 'websearch');
   const hadSearch = toSearch ? false : clearActiveSearch();
-  if (hadSearch) feedSearchEntryActive = false;
-
-  // From an entry outside our current document history, Home is the safe root.
+  if (hadSearch) {
+    if (activeTab === WEBSEARCH_TAB && !webSearchScope) {
+      feedSearchEntryActive = false;
+      navSilent = true;
+      goHome(false).finally(() => { navSilent = false; });
+      return;
+    }
+    feedSearchEntryActive = false;
+  }
   if (!e.state || !e.state.view) {
     navSilent = true;
     navSection = 'home';
-    goHome(false).finally(() => {
-      navSilent = false;
-      // Home is a real top-level navigation state; make the highlight explicit
-      // after the asynchronous feed/snapshot restoration has completed.
-      navSection = 'home';
-      updateNetworkBarActive();
-    });
+    goHome(!hadSearch).finally(() => { navSilent = false; });
     return;
   }
-
-  // IMPORTANT: never collapse a nested view because its top-level section differs
-  // from the currently rendered tab. Every history entry carries its own section.
-  // Example: Networks -> See All -> Home becomes exactly three Back stages.
+  if (!hadSearch && !toSearch && navSection === 'home' &&
+      !(mainPlayer && mainPlayer.classList.contains('active'))) {
+    navSilent = true;
+    goHome(true).finally(() => { navSilent = false; });
+    return;
+  }
+  if (sectionForState(e.state) !== navSection) {
+    navSilent = true;
+    navSection = 'home';
+    goHome(!hadSearch).finally(() => { navSilent = false; });
+    return;
+  }
   navSilent = true;
-  applyNavState(e.state).finally(() => {
-    navSilent = false;
-    updateNetworkBarActive();
-  });
+  applyNavState(e.state).finally(() => { navSilent = false; });
 });
 
 function statsHtml(item) {
@@ -2092,30 +2076,16 @@ function hideSearchBar() {
 
 function updateNetworkBarActive() {
   restoreNavScroll();
-
-  // Highlight the section represented by the current history entry. This is more
-  // reliable than activeTab/navSection while Back is restoring an older snapshot.
-  const sectionBtn = {
-    home: 'homeBtn',
-    categories: 'categoriesBtn',
-    pornsites: 'pornSitesBtn',
-    networks: 'networksBtn',
-    pornstars: 'pornstarsBtn',
-    livecams: 'camsBtn',
-    livechannels: 'chansBtn',
+  if (homeBtn) homeBtn.classList.toggle('active', activeTab === mixKey(ALL_FEED.id));
+  const secBtn = {
+    [CATEGORIES_TAB]: 'categoriesBtn', [PORN_SITES_TAB]: 'pornSitesBtn',
+    [NETWORKS_TAB]: 'networksBtn', [PORNSTARS_TAB]: 'pornstarsBtn',
+    [LIVECAMS_TAB]: 'camsBtn', [LIVECHANNELS_TAB]: 'chansBtn',
   };
-  const historySection = history.state && history.state.sid === NAV_SID
-    ? sectionForState(history.state)
-    : navSection;
-  const activeSection = historySection || navSection || 'home';
-  const activeId = sectionBtn[activeSection] ||
-    (activeTab === mixKey(ALL_FEED.id) ? 'homeBtn' : null);
-
-  Object.values(sectionBtn).forEach(id => {
+  Object.values(secBtn).forEach(id => {
     const b = document.getElementById(id);
-    if (b) b.classList.toggle('active', id === activeId);
+    if (b) b.classList.toggle('active', secBtn[activeTab] === id);
   });
-
   document.querySelectorAll('.site-tab').forEach(t => {
     t.classList.toggle('active', t.dataset.sourceId === activeFeedId);
   });
@@ -3127,7 +3097,7 @@ function playInMainPlayer(detail, title, opts = {}) {
     // Remember exactly where the user was in the current results page so that closing the
     // panel returns to the same page at the same scroll position.
     const under = currentNavState(true);
-    try { history.replaceState({ ...under, scrollY: scrollBefore, ts: Date.now(), idx: navIdx, sid: NAV_SID }, '', ''); } catch {}
+    try { history.replaceState({ ...under, scrollY: scrollBefore, ts: Date.now() }, '', ''); } catch {}
     pushNav({
       ...under,
       view: 'player',
@@ -5401,8 +5371,7 @@ function activateSectionSnapshot(section, snapshot, scrollY, pressedButton, pres
   const activeFeed = results.querySelector('.feed');
   if (activeFeed) {
     placeFeedControlsInFeed(activeFeed);
-    if (state.view === 'websearch') adoptWebSearch(state);     // the restored results own the search state again (box text, scope, load-more)
-    if (state.view === 'feed' || state.view === 'category-feed' || state.view === 'websearch') placeSearchInFeed(activeFeed);
+    if (state.view === 'feed' || state.view === 'category-feed') placeSearchInFeed(activeFeed);
     else hideSearchBar();
   } else {
     restoreFeedControlsToHeader();
@@ -6127,7 +6096,7 @@ searchInput.addEventListener('keydown', (e) => {
   box.setAttribute('role', 'listbox');
   document.body.appendChild(box);
 
-  let rows = [], active = -1, timer = 0, ctl = null, seq = 0, keepOpen = false, drawnFor = null;   // keepOpen: input blurred on purpose (keyboard hidden), list stays
+  let rows = [], active = -1, timer = 0, ctl = null, seq = 0;
   const serverCache = new Map();
   const isOpen = () => box.classList.contains('open');
   const isHome = () => isMixKey(activeTab) || activeTab === WEBSEARCH_TAB;     // Home and its search results: all websites combined
@@ -6273,7 +6242,7 @@ searchInput.addEventListener('keydown', (e) => {
     box.style.top = (r.bottom + 6) + 'px';
     box.style.width = Math.max(r.width, 280) + 'px';
   }
-  function close() { box.classList.remove('open'); active = -1; keepOpen = false; drawnFor = null; }
+  function close() { box.classList.remove('open'); active = -1; }
   window.closeSuggestBox = () => { if (!isOpen()) return false; close(); return true; };   // used by the Back button
   function mark(i) {
     active = i;
@@ -6299,13 +6268,11 @@ searchInput.addEventListener('keydown', (e) => {
     box.innerHTML = html;
     place();
     box.classList.add('open');
-    drawnFor = text;
   }
 
   async function refresh() {
     const text = (searchInput.value || '').trim();
     if (document.activeElement !== searchInput) { close(); return; }
-    if (isOpen() && drawnFor === text) { place(); return; }       // tapping the box again keeps the list (and its scroll position) as it is
     const mine = ++seq;
     const groups = await build(text);
     if (mine !== seq && isHome()) { /* a newer lookup started; it will draw */ }
@@ -6350,9 +6317,9 @@ searchInput.addEventListener('keydown', (e) => {
   /* ----- events ----- */
   const later = () => { clearTimeout(timer); timer = setTimeout(refresh, 120); };
   searchInput.addEventListener('input', later);
-  searchInput.addEventListener('focus', () => { keepOpen = false; refresh(); });
+  searchInput.addEventListener('focus', refresh);
   searchInput.addEventListener('click', () => { if (!isOpen()) refresh(); });
-  searchInput.addEventListener('blur', () => setTimeout(() => { if (!keepOpen && document.activeElement !== searchInput) close(); }, 120));
+  searchInput.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== searchInput) close(); }, 120));
 
   // document-level + capture: runs before the box's own Enter / Escape handlers
   document.addEventListener('keydown', (e) => {
@@ -6374,23 +6341,6 @@ searchInput.addEventListener('keydown', (e) => {
     const row = e.target.closest('.sg');
     if (row && Number(row.dataset.i) !== active) mark(Number(row.dataset.i));
   });
-  /* ----- the list scrolls on its own ----- */
-  // Scrolling the list tucks the keyboard away (the list stays open); tapping the box brings the keyboard back.
-  // The feed behind never scrolls along (older iOS ignores overscroll-behavior, so the list's edges are guarded here too).
-  let touchY = 0;
-  const hideKeyboard = () => { if (document.activeElement === searchInput) { keepOpen = true; searchInput.blur(); } };
-  box.addEventListener('touchstart', (e) => { touchY = e.touches[0].clientY; }, { passive: true });
-  box.addEventListener('touchmove', (e) => {
-    const y = e.touches[0].clientY, dy = y - touchY;
-    touchY = y;
-    const atTop = box.scrollTop <= 0, atEnd = box.scrollTop + box.clientHeight >= box.scrollHeight - 1;
-    if (e.cancelable && (box.scrollHeight <= box.clientHeight + 1 || (atTop && dy > 0) || (atEnd && dy < 0))) e.preventDefault();
-    hideKeyboard();
-  }, { passive: false });
-  // a tap or scroll anywhere outside the list closes it - also when the keyboard is already hidden and the box is not focused
-  document.addEventListener('pointerdown', (e) => {
-    if (isOpen() && !box.contains(e.target) && e.target !== searchInput) close();
-  }, true);
   window.addEventListener('resize', () => { if (isOpen()) place(); });
   window.addEventListener('scroll', () => { if (isOpen()) place(); }, { passive: true });
 })();
@@ -6400,15 +6350,6 @@ new MutationObserver((muts) => {
   const currentFeed = results.querySelector('.feed');
   if (currentFeed) placeFeedControlsInFeed(currentFeed);
   else restoreFeedControlsToHeader();
-  if (currentFeed && (isMixKey(activeTab) || activeTab === WEBSEARCH_TAB || sectionScope())) {   // never leave a video feed without its search box
-    const bar = document.getElementById('searchBarHost');
-    if (bar && (bar.style.display === 'none' || !currentFeed.contains(bar))) {
-      const controls = placeFeedControlsInFeed(currentFeed);
-      if (controls) controls.appendChild(bar);
-      bar.style.display = '';
-      bar.classList.add('in-feed');
-    }
-  }
   const addedCard = muts.some(m => [...m.addedNodes].some(n =>
     n.nodeType === 1 && (n.classList.contains('card') || (n.querySelector && n.querySelector('.card')))));
   if (!addedCard) return;
@@ -6474,15 +6415,6 @@ function cleanQuery(raw) {
     .replace(/[\u201c\u201d\u201e\u201f\u00ab\u00bb"]/g, ' ')
     .replace(/[\u2018\u2019\u201a\u201b\u02bc`\u00b4]/g, "'")
     .replace(/\s+/g, ' ').trim().slice(0, 80);
-}
-/** Make a restored search-results page the live search again (its query, section and loaded results). */
-function adoptWebSearch(state) {
-  if (!state || !state.query) return;
-  const scope = state.scope && state.scope.url ? state.scope : null;
-  webSearchQuery = state.query;
-  webSearchScope = scope;
-  const cached = webSearchCache.get(`${activeSourceId}:${scopeKeyOf(scope)}:${normalizeSearchText(state.query)}`);
-  if (cached) webSearchState = cached;
 }
 function scopeKeyOf(sc) { return sc && sc.url ? `${sc.kind || ''}|${sc.url}` : ''; }
 /** The pornstar / studio / network / category / tag / website feed that is open (null on Home, lists, cams, channels). */
