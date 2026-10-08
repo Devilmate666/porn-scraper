@@ -6333,12 +6333,14 @@ searchInput.addEventListener('keydown', (e) => {
    Inside a section (a pornstar, studio, category, tag, website ...) it lists keywords found in THAT section's loaded videos,
    each with the number of loaded videos it leads to. On Home (all websites combined) it shows four groups:
    Videos (keywords of every loaded video), Pornstars, Networks, Live Channels. Everything offered has data behind it.
-Nothing is filtered while typing: picking a row (or Enter) applies it. */
+   Nothing is filtered while typing: picking a row (or Enter) applies it. */
 (function suggestDropdown() {
   const STOPW = new Set(['the', 'and', 'for', 'with', 'from', 'her', 'his', 'she', 'him', 'this', 'that', 'you', 'your', 'are', 'all', 'get', 'gets',
     'into', 'out', 'one', 'two', 'has', 'was', 'who', 'how', 'its', 'their', 'they', 'them', 'than', 'then', 'but', 'not', 'can', 'new', 'hd', 'xxx',
     'sex', 'movie', 'movies', 'online', 'com', 'www', 'http', 'https', 'when', 'what', 'over', 'her', 'she', 'while', 'after', 'gets', 'got', 'own']);
-  const esc = (t) => String(t == null ? '' : t).replace(/[&<>"']/g, c => ({ '&': '&', '<': '<', '>': '>', '"': '"', "'": ''' }[c]));
+  const okWord = (w) => w.length >= 3 && !/^\d+$/.test(w) && !STOPW.has(w) && !URL_STOP_WORDS.has(w);
+  const cap = (t) => t.replace(/(^|\s)(\S)/g, (m, a, b) => a + b.toUpperCase());
+  const esc = (t) => String(t == null ? '' : t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const PHRASE_KEYS = ['models', 'pornstars', 'stars', 'performers', 'tags', 'categories', 'genres'];
   const SINGLE_KEYS = ['studio', 'series', 'channel'];
 
@@ -6384,10 +6386,18 @@ Nothing is filtered while typing: picking a row (or Enter) applies it. */
     });
   }
 
-  /** keywords of a set of loaded videos, each with how many of them contain it (counted from metadata tags only) */
+  /** keywords of a set of loaded videos, each with how many of them contain it (counted from words the filter will match) */
   function buildKeywords(docs) {
-    const ph = new Map();
+    const uni = new Map(), bi = new Map(), ph = new Map();
     for (const d of docs) {
+      const toks = new Set(normalizeSearchText(d.text).split(' ').filter(okWord));
+      for (const t of toks) uni.set(t, (uni.get(t) || 0) + 1);
+      const tw = normalizeSearchText(d.title).split(' ').filter(Boolean), seenB = new Set();
+      for (let i = 0; i < tw.length - 1; i++) {
+        if (!okWord(tw[i]) || !okWord(tw[i + 1])) continue;
+        const k = tw[i] + ' ' + tw[i + 1];
+        if (!seenB.has(k)) { seenB.add(k); bi.set(k, (bi.get(k) || 0) + 1); }
+      }
       const seenP = new Set();
       for (const p of d.phrases) {
         const k = normalizeSearchText(p);
@@ -6397,8 +6407,11 @@ Nothing is filtered while typing: picking a row (or Enter) applies it. */
         e.count++; ph.set(k, e);
       }
     }
-    // Only return metadata phrases (tags, categories, models, studios) - no individual title words
-    return [...ph.values()];
+    const all = new Map();
+    for (const [k, n] of uni) all.set(k, { key: k, text: cap(k), count: n, words: [k], multi: false });
+    for (const [k, n] of bi) if (n >= 2) all.set(k, { key: k, text: cap(k), count: n, words: k.split(' '), multi: true });
+    for (const [k, e] of ph) { const was = all.get(k); if (was) e.count = Math.max(e.count, was.count); all.set(k, e); }   // real tag / star names win over plain words
+    return [...all.values()];
   }
   function pickKeywords(cands, text, limit) {
     const qw = queryWords(text), qn = qw.join(' ');
