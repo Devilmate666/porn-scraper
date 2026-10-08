@@ -1280,20 +1280,26 @@ function closeSectionMenu() {
 }
 document.addEventListener('keydown', (e) => { if (sectionMenuOpen && e.key === 'Escape') { e.preventDefault(); closeSectionMenu(); } });
 let lastRootBack = 0;               // time of the Back that showed "Press back again to exit"
-/** small message at the top of the screen (above the Where-to sheet) */
+/** small message that sits right ABOVE the Where-to sheet when it is open (bottom of the screen otherwise), over everything else */
 function showToast(msg, ms = 2500) {
   let t = document.getElementById('appToast');
   if (!t) {
     t = document.createElement('div');
     t.id = 'appToast';
     t.setAttribute('role', 'status');
-    t.style.cssText = 'position:fixed;left:50%;top:calc(env(safe-area-inset-top,0px) + 18px);transform:translateX(-50%);z-index:500;max-width:min(92vw,420px);' +
-      'background:#1a2133;color:#e2e8f0;border:1px solid #2c3750;border-radius:14px;padding:.7rem 1rem;font-size:.85rem;line-height:1.35;text-align:center;' +
-      'box-shadow:0 18px 40px -12px rgba(0,0,0,.85);pointer-events:none';
+    t.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);z-index:2147483000;max-width:min(92vw,420px);' +
+      'background:#243049;color:#f1f5fb;border:1px solid #4a5c80;border-radius:14px;padding:.7rem 1.1rem;font-size:.88rem;font-weight:500;line-height:1.35;text-align:center;' +
+      'box-shadow:0 10px 34px rgba(0,0,0,.75);pointer-events:none';
     document.body.appendChild(t);
   }
+  const place = () => {                                              // measured after the sheet has opened
+    const sheet = document.querySelector('#sectionMenu.open .sm-sheet');
+    t.style.bottom = sheet ? (sheet.offsetHeight + 14) + 'px' : 'calc(env(safe-area-inset-bottom, 0px) + 24px)';
+  };
   t.textContent = msg;
   t.style.display = 'block';
+  place();
+  requestAnimationFrame(place);
   clearTimeout(t._h);
   t._h = setTimeout(() => { t.style.display = 'none'; }, ms);
 }
