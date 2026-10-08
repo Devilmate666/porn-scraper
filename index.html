@@ -1290,30 +1290,9 @@ document.addEventListener('keydown', (e) => { if (sectionMenuOpen && e.key === '
 function exitSite() {
   exiting = true;
   closeSectionMenu();
-  let gone = false;                                                  // becomes true the moment the page really goes away
-  addEventListener('pagehide', () => { gone = true; }, { once: true });
-  document.addEventListener('visibilitychange', () => { if (document.hidden) gone = true; }, { once: true });
-  // 1. Really close: browsers allow it for an installed app, a window opened by a script, or a tab with a single history entry.
-  try { window.close(); } catch (_) {}
-  // 2. Otherwise leave the whole visit: back to whatever was open before the app (new-tab page, another site, the launcher).
-  setTimeout(() => { if (!gone) { try { history.go(-(navIdx + 1)); } catch (_) {} } }, 250);
-  // 3. Nothing to go back to and the browser refuses to close the page: stay in the app (no blank page) and say what to do.
-  setTimeout(() => {
-    if (gone) return;
-    exiting = false;
-    let t = document.getElementById('exitHint');
-    if (!t) {
-      t = document.createElement('div');
-      t.id = 'exitHint';
-      t.style.cssText = 'position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom,0px) + 24px);transform:translateX(-50%);z-index:400;max-width:min(92vw,420px);' +
-        'background:#1a2133;color:#e2e8f0;border:1px solid #2c3750;border-radius:14px;padding:.8rem 1rem;font-size:.85rem;line-height:1.35;text-align:center;box-shadow:0 18px 40px -12px rgba(0,0,0,.85)';
-      t.textContent = 'Your browser does not let a page close itself. Swipe the app away or press Home. (Installed to the home screen as an app, Exit closes it.)';
-      document.body.appendChild(t);
-    }
-    t.style.display = 'block';
-    clearTimeout(t._h);
-    t._h = setTimeout(() => { t.style.display = 'none'; }, 6000);
-  }, 1400);
+  try { history.go(-(navIdx + 1)); } catch (_) {}                  // back out of the whole visit (the guard entry is the first one)
+  setTimeout(() => { try { window.close(); } catch (_) {} }, 350);   // nothing to go back to (a fresh tab): close, or blank the page
+  setTimeout(() => { location.replace('about:blank'); }, 800);
 }
 let feedSearchEntryActive = false;
 
@@ -6402,24 +6381,36 @@ searchInput.addEventListener('keydown', (e) => {
     if (!chanState) return [];
     return chanState.items.map(it => {
       const cats = (it.categories || []).map(c => c.name).filter(Boolean);
-      return { text: '', title: '', phrases: cats };
+      return { text: [it.title, it.description, ...cats].join(' ').toLowerCase(), title: it.title || '', phrases: cats };
     });
   }
 
-  /** metadata values (tags / categories / genres / stars / studios) of a set of loaded videos. Title words are never suggested. */
+  /** keywords of a set of loaded videos, each with how many of them contain it (counted from words the filter will match) */
   function buildKeywords(docs) {
-    const ph = new Map();
+    const uni = new Map(), bi = new Map(), ph = new Map();
     for (const d of docs) {
+      const toks = new Set(normalizeSearchText(d.text).split(' ').filter(okWord));
+      for (const t of toks) uni.set(t, (uni.get(t) || 0) + 1);
+      const tw = normalizeSearchText(d.title).split(' ').filter(Boolean), seenB = new Set();
+      for (let i = 0; i < tw.length - 1; i++) {
+        if (!okWord(tw[i]) || !okWord(tw[i + 1])) continue;
+        const k = tw[i] + ' ' + tw[i + 1];
+        if (!seenB.has(k)) { seenB.add(k); bi.set(k, (bi.get(k) || 0) + 1); }
+      }
       const seenP = new Set();
       for (const p of d.phrases) {
         const k = normalizeSearchText(p);
-        if (k.length < 3 || seenP.has(k) || k.split(' ').every(w => STOPW.has(w) || /^\d+p?$/.test(w))) continue;
+        if (k.length < 3 || seenP.has(k)) continue;
         seenP.add(k);
         const e = ph.get(k) || { key: k, text: p, count: 0, words: k.split(' '), multi: k.includes(' ') };
         e.count++; ph.set(k, e);
       }
     }
-    return [...ph.values()];
+    const all = new Map();
+    for (const [k, n] of uni) all.set(k, { key: k, text: cap(k), count: n, words: [k], multi: false });
+    for (const [k, n] of bi) if (n >= 2) all.set(k, { key: k, text: cap(k), count: n, words: k.split(' '), multi: true });
+    for (const [k, e] of ph) { const was = all.get(k); if (was) e.count = Math.max(e.count, was.count); all.set(k, e); }   // real tag / star names win over plain words
+    return [...all.values()];
   }
   function pickKeywords(cands, text, limit) {
     const qw = queryWords(text), qn = qw.join(' ');
@@ -6436,18 +6427,17 @@ searchInput.addEventListener('keydown', (e) => {
 
   /* ----- Home extras: pornstars / networks / channels known to have data (server) + whatever is already loaded ----- */
   async function fromServer(text, sc) {
-    const fresh = !text.trim();                                 // empty box: new recommendations every time, never cached
     const key = scopeKeyOf(sc) + '|' + text.toLowerCase();
-    if (!fresh && serverCache.has(key)) return serverCache.get(key);
+    if (serverCache.has(key)) return serverCache.get(key);
     const mine = ++seq;
     if (ctl) ctl.abort();
     ctl = new AbortController();
     try {
-      const res = await fetch('/api/suggest?q=' + encodeURIComponent(text) + (fresh ? '&r=' + Math.random().toString(36).slice(2) : '') +
-        (sc ? '&scope=' + encodeURIComponent(JSON.stringify({ kind: sc.kind, name: sc.name, url: sc.url })) : ''), { signal: ctl.signal, cache: 'no-store' });
+      const res = await fetch('/api/suggest?q=' + encodeURIComponent(text) + (sc ? '&scope=' + encodeURIComponent(JSON.stringify({ kind: sc.kind, name: sc.name, url: sc.url })) : ''), { signal: ctl.signal });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const d = await res.json();
-      if (!fresh) { if (serverCache.size > 100) serverCache.clear(); serverCache.set(key, d); }
+      if (serverCache.size > 100) serverCache.clear();
+      serverCache.set(key, d);
       return mine === seq ? d : null;
     } catch (e) { return null; }
   }
@@ -6460,12 +6450,12 @@ searchInput.addEventListener('keydown', (e) => {
     if (activeTab === LIVECAMS_TAB) return groups;
     if (activeTab === LIVECHANNELS_TAB) {
       const k = pickKeywords(buildKeywords(docsFromChannels()), text, 10);
-      if (k.length) groups.push({ title: '📺 Channel categories', rows: k.map(c => ({ type: 'kw', text: c.text, label: c.text })) });
+      if (k.length) groups.push({ title: '📺 In Live Channels', rows: k.map(c => ({ type: 'kw', text: c.text, label: c.text, count: c.count })) });
       return groups;
     }
     const haveFeed = !!(feedEl(activeTab) || results.querySelector('.feed'));
     if (!haveFeed && !isHome()) return groups;
-    const loaded = haveFeed && text.trim()                       // nothing typed: only the server's fresh sample (no repeats of the same loaded tags)
+    const loaded = haveFeed
       ? pickKeywords(buildKeywords(docsFromCards()), text, isHome() ? 6 : 10).map(c => ({ type: 'kw', text: c.text, label: c.text }))
       : [];
     const sc = scopeNow();
@@ -6473,18 +6463,18 @@ searchInput.addEventListener('keydown', (e) => {
       const sv = await fromServer(text, sc), own = normalizeSearchText(sc.name);
       const rows = mergeUnique([...loaded, ...(((sv && sv.videos) || []).map(t => ({ type: 'kw', text: t, label: t })))], 'label')
         .filter(r => normalizeSearchText(r.label) !== own).slice(0, 10);
-      if (rows.length) groups.push({ title: `🏷️ In ${sc.name} · tags, stars & studios`, rows });
+      if (rows.length) groups.push({ title: `🎬 In ${sc.name} · all cached videos`, rows });
       return groups;
     }
     if (!isHome()) {                                             // inside a pornstar / studio / category / website: that section only
-      if (loaded.length) groups.push({ title: `In ${feedLabel(activeTab)} · tags of the loaded videos`, rows: loaded });
+      if (loaded.length) groups.push({ title: `In ${feedLabel(activeTab)} · keywords of the loaded videos`, rows: loaded });
       return groups;
     }
     // Home / search results: EVERYTHING the scraper cached (tags, categories, title words, every pornstar and network page,
     // every live channel) - not only what this page happens to have loaded. Rows without a page of their own are searched by name.
     const sv = await fromServer(text);
     const vids = mergeUnique([...loaded, ...(((sv && sv.videos) || []).map(t => ({ type: 'kw', text: t, label: t })))], 'label').slice(0, 8);
-    if (vids.length) groups.push({ title: '🏷️ Genres & tags · all websites', rows: vids });
+    if (vids.length) groups.push({ title: '🎬 Videos · all websites', rows: vids });
     const star = [], net = [], chan = [];
     const asRow = (x) => x.url ? { type: 'feed', url: x.url, name: x.name, label: x.name } : { type: 'kw', text: x.name, label: x.name };
     for (const x of ((sv && sv.pornstars) || [])) star.push(asRow(x));
