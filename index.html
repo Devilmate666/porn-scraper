@@ -1239,7 +1239,7 @@ function currentNavState(ignorePlayer = false) {
   if (activeTab === PORNSTARS_TAB) return { ...base, view: 'pornstars' };
   if (activeTab === LIVECAMS_TAB) return { ...base, view: 'livecams' };
   if (activeTab === LIVECHANNELS_TAB) return { ...base, view: 'livechannels' };
-  if (activeTab === WEBSEARCH_TAB) return { ...base, view: 'websearch', query: webSearchQuery };
+  if (activeTab === WEBSEARCH_TAB) return { ...base, view: 'websearch', query: webSearchQuery, scope: webSearchScope || null };
   // Home feed = a mixed feed or a source's exact homepage URL. (Comparing hosts here used to
   // classify every FullPorno category/network feed as "home", which sent the user back to the
   // home page after closing a video.)
@@ -1269,7 +1269,7 @@ function stateToHash(s) {
     case 'pornstars':    return '#/pornstars';
     case 'livecams':     return '#/cams';
     case 'livechannels': return '#/channels';
-    case 'websearch':    return `#/search/${enc(s.query || '')}`;
+    case 'websearch':    return `#/search/${enc(s.query || '')}` + (s.scope && s.scope.url ? `/${enc(s.scope.kind || '-')}/${enc(s.scope.name || '-')}/${enc(s.scope.url)}` : '');
     case 'category-feed':return `#/cat/${enc(s.feedUrl)}`;
     case 'feed': {
       const src = SOURCES.find(x => x.id === s.sourceId);
@@ -1296,7 +1296,7 @@ function hashToState() {
     case 'pornstars':return { ...base, view: 'pornstars' };
     case 'cams':     return { ...base, view: 'livecams' };
     case 'channels': return { ...base, view: 'livechannels' };
-    case 'search':   return arg ? { ...base, view: 'websearch', query: arg } : null;
+    case 'search':   return arg ? { ...base, view: 'websearch', query: arg, scope: parts[3] && parts[4] ? { kind: parts[2] === '-' ? '' : parts[2], name: parts[3] === '-' ? '' : parts[3], url: parts[4] } : null } : null;
     case 'site': {
       const src = SOURCES.find(x => x.id === arg) || SOURCES[0];
       return { view: 'feed', sourceId: src.id, feedId: feedOfSource(src.id).id, feedUrl: src.url };
@@ -1349,7 +1349,7 @@ function viewAlreadyShown(state) {
     case 'pornstars':     return activeTab === PORNSTARS_TAB && has(PORNSTARS_TAB);
     case 'livecams':      return activeTab === LIVECAMS_TAB && has(LIVECAMS_TAB);
     case 'livechannels':  return activeTab === LIVECHANNELS_TAB && has(LIVECHANNELS_TAB);
-    case 'websearch':     return activeTab === WEBSEARCH_TAB && has(WEBSEARCH_TAB) && (state.query || '') === webSearchQuery;
+    case 'websearch':     return activeTab === WEBSEARCH_TAB && has(WEBSEARCH_TAB) && (state.query || '') === webSearchQuery && scopeKeyOf(state.scope) === scopeKeyOf(webSearchScope);
     case 'feed':          return !!state.feedUrl && activeTab === state.feedUrl && (state.feedId || activeFeedId) === activeFeedId && has(state.feedUrl);
   }
   return false;
@@ -1450,7 +1450,7 @@ async function applyNavStateInner(state) {
     return;
   }
   if (state.view === 'websearch') {
-    if (state.query) await runWebSearch(state.query, { skipPush: true });
+    if (state.query) await runWebSearch(state.query, { skipPush: true, scope: state.scope || null });
     return;
   }
   if (state.view === 'feed' && state.sourceId && state.feedUrl) {
@@ -1498,7 +1498,7 @@ window.addEventListener('popstate', (e) => {
   const toSearch = !!(e.state && e.state.view === 'websearch');
   const hadSearch = toSearch ? false : clearActiveSearch();
   if (hadSearch) {
-    if (activeTab === WEBSEARCH_TAB) {
+    if (activeTab === WEBSEARCH_TAB && !webSearchScope) {
       feedSearchEntryActive = false;
       navSilent = true;
       goHome(false).finally(() => { navSilent = false; });
@@ -6007,7 +6007,7 @@ searchInput.addEventListener('input', () => {
   clearTimeout(liveTimer);
   const typed = (searchInput.value || '').trim();
   // Home / search results manage their own single history entry (runWebSearch); only section feeds get one here.
-  if (typed && !feedSearchEntryActive && activeTab !== WEBSEARCH_TAB && !isMixKey(activeTab)) {
+  if (typed && !feedSearchEntryActive && activeTab !== WEBSEARCH_TAB && !isMixKey(activeTab) && !sectionScope()) {
     pushNav(currentNavState());
     feedSearchEntryActive = true;
   }
@@ -6085,6 +6085,7 @@ searchInput.addEventListener('keydown', (e) => {
   const serverCache = new Map();
   const isOpen = () => box.classList.contains('open');
   const isHome = () => isMixKey(activeTab) || activeTab === WEBSEARCH_TAB;     // Home and its search results: all websites combined
+  const scopeNow = () => activeTab === WEBSEARCH_TAB ? webSearchScope : (isMixKey(activeTab) ? null : sectionScope());   // the section being searched, if any
 
   /* ----- the loaded videos of the open section ----- */
   function phrasesOf(it) {
@@ -6158,14 +6159,14 @@ searchInput.addEventListener('keydown', (e) => {
   }
 
   /* ----- Home extras: pornstars / networks / channels known to have data (server) + whatever is already loaded ----- */
-  async function fromServer(text) {
-    const key = text.toLowerCase();
+  async function fromServer(text, sc) {
+    const key = scopeKeyOf(sc) + '|' + text.toLowerCase();
     if (serverCache.has(key)) return serverCache.get(key);
     const mine = ++seq;
     if (ctl) ctl.abort();
     ctl = new AbortController();
     try {
-      const res = await fetch('/api/suggest?q=' + encodeURIComponent(text), { signal: ctl.signal });
+      const res = await fetch('/api/suggest?q=' + encodeURIComponent(text) + (sc ? '&scope=' + encodeURIComponent(JSON.stringify({ kind: sc.kind, name: sc.name, url: sc.url })) : ''), { signal: ctl.signal });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const d = await res.json();
       if (serverCache.size > 100) serverCache.clear();
@@ -6190,6 +6191,14 @@ searchInput.addEventListener('keydown', (e) => {
     const loaded = haveFeed
       ? pickKeywords(buildKeywords(docsFromCards()), text, isHome() ? 6 : 10).map(c => ({ type: 'kw', text: c.text, label: c.text }))
       : [];
+    const sc = scopeNow();
+    if (sc) {                                                    // inside a section (or its search results): everything cached for THIS section
+      const sv = await fromServer(text, sc), own = normalizeSearchText(sc.name);
+      const rows = mergeUnique([...loaded, ...(((sv && sv.videos) || []).map(t => ({ type: 'kw', text: t, label: t })))], 'label')
+        .filter(r => normalizeSearchText(r.label) !== own).slice(0, 10);
+      if (rows.length) groups.push({ title: `🎬 In ${sc.name} · all cached videos`, rows });
+      return groups;
+    }
     if (!isHome()) {                                             // inside a pornstar / studio / category / website: that section only
       if (loaded.length) groups.push({ title: `In ${feedLabel(activeTab)} · keywords of the loaded videos`, rows: loaded });
       return groups;
@@ -6272,7 +6281,7 @@ searchInput.addEventListener('keydown', (e) => {
       clearTimeout(liveTimer);
       searchInput.value = r.text;
       searchInput._hadText = true;
-      if (activeTab !== WEBSEARCH_TAB && !isMixKey(activeTab) && !feedSearchEntryActive) { pushNav(currentNavState()); feedSearchEntryActive = true; }
+      if (activeTab !== WEBSEARCH_TAB && !isMixKey(activeTab) && !feedSearchEntryActive && !sectionScope()) { pushNav(currentNavState()); feedSearchEntryActive = true; }
       onLiveInput();
     } else if (r.type === 'feed') {                              // pornstar / network: open its feed
       resetCurrentFilter();
@@ -6381,6 +6390,25 @@ function fetchWithTimeout(url, opts = {}, ms = 20000) {
 }
 let webSearchState = null;      // { query, results, seen, items, nexts, loading, exhausted }
 let webSearchQuery = '';
+let webSearchScope = null;      // { kind, name, url } while the results are searched INSIDE one section; null = Home (all websites)
+function scopeKeyOf(sc) { return sc && sc.url ? `${sc.kind || ''}|${sc.url}` : ''; }
+/** The pornstar / studio / network / category / tag / website feed that is open (null on Home, lists, cams, channels). */
+function sectionScope() {
+  const key = activeTab;
+  if (!key || isMixKey(key) || key === WEBSEARCH_TAB || key.startsWith('__') || isListTab(key)) return null;
+  const src = SOURCES.find(s => s.url === key);
+  if (src) return { kind: 'site', name: src.name, url: key };
+  const entry = sites.find(s => s.url === key);
+  if (!entry) return null;
+  const kind = { pornstars: 'model', networks: 'studio', pornsites: 'studio', categories: 'category', porntags: 'tag' }[navSection] || '';
+  return { kind, name: entry.name, url: key };
+}
+/** later pages of a section are not keyword-filtered by any site: keep only the videos that match every typed word */
+function scopedKeep(it, query) {
+  const text = [it.title, it.description, it.link, ...['tags', 'categories', 'models', 'studios'].flatMap(k => (Array.isArray(it[k]) ? it[k] : []).map(x => (typeof x === 'string' ? x : x && x.name)))].filter(Boolean).join(' ');
+  const toks = normalizeSearchText(text).split(' ').filter(Boolean);
+  return queryWords(query).every(w => toks.some(t => t.startsWith(w)));
+}
 let webSearchToken = 0;
 const webSearchCache = new Map();
 
@@ -6405,6 +6433,7 @@ function rankTail(tail) {
 
 function ingestWebSearchJson(st, json) {
   st.errors += (json.results || []).filter(r => r && r.error).length;
+  if (json.scope_next && json.scope_next.url) st.nexts.push({ url: json.scope_next.url, num: json.scope_next.num || 2 });
   for (const r of json.results || []) {
     const page = r && r.next_page;
     if (page && (r.items || []).length) st.nexts.push({ url: page, num: (r.page_num || 1) + 1 });
@@ -6444,7 +6473,7 @@ function dispatchWebSearchSites(st, token) {
         const res = await fetch('/api/search', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sites: [src.url], query: st.query, max_items: 30 }),
+          body: JSON.stringify({ sites: [src.url], query: st.query, max_items: 30, scope: st.scope ? { kind: st.scope.kind, name: st.scope.name, url: st.scope.url } : undefined }),
           signal: ac.signal,
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -6490,13 +6519,16 @@ async function searchNextWebSourceBatch(st, token) {
 async function runWebSearch(query, opts = {}) {
   query = (query || '').trim();
   if (!query) return;
+  // scope: opts.scope (a section search) / the open results' own scope when refining them / none = Home (all websites)
+  const scope = opts.scope !== undefined ? (opts.scope && opts.scope.url ? opts.scope : null) : (activeTab === WEBSEARCH_TAB ? webSearchScope : null);
+  webSearchScope = scope;
   const replacingSearch = activeTab === WEBSEARCH_TAB;
   const updateSearchHistory = () => {
     if (opts.skipPush) return;
-    const update = replacingSearch ? replaceNav : pushNav;
-    update({ view: 'websearch', query });
+    const update = replacingSearch ? replaceNav : pushNav;      // first search adds ONE history entry, later ones replace it
+    update({ view: 'websearch', query, scope });
   };
-  const cacheKey = `${activeSourceId}:${query.toLocaleLowerCase()}`;
+  const cacheKey = `${activeSourceId}:${scopeKeyOf(scope)}:${query.toLocaleLowerCase()}`;
   const cached = webSearchCache.get(cacheKey);
   if (cached && cached.loading && webSearchState === cached) {
     webSearchState = cached;
@@ -6524,16 +6556,16 @@ async function runWebSearch(query, opts = {}) {
     }
     renderWebSearch();
     updateSearchHistory();
-    setStatus(`“${query}” — ${cached.items.length} matches on ${SOURCES.length} websites`, false);
+    setStatus(`“${query}” — ${cached.items.length} matches ${scope ? 'in ' + scope.name : 'on ' + SOURCES.length + ' websites'}`, false);
     return;
   }
-  const sources = [
+  const sources = scope ? [{ id: '__scope__', name: scope.name, url: scope.url }] : [
     ...SOURCES.filter(src => src.id === activeSourceId),
     ...SOURCES.filter(src => src.id !== activeSourceId),
   ];
   const batchSize = 2;
   const state = webSearchState = {
-    query, seen: new Set(), items: [], nexts: [],
+    query, scope, seen: new Set(), items: [], nexts: [],
     sources, sourceCursor: 0, batchSize,
     loading: true, loadingTarget: WEB_PAGE, exhausted: false, paused: false, errors: 0, completedSites: 0, visibleLimit: WEB_PAGE, t0: Date.now(),
   };
@@ -6541,7 +6573,7 @@ async function runWebSearch(query, opts = {}) {
   if (webSearchCache.size > 12) webSearchCache.delete(webSearchCache.keys().next().value);
   webSearchQuery = query;
   activeTab = WEBSEARCH_TAB;
-  setStatus(`Searching ${sources.length} websites for “${query}”…`, true);
+  setStatus(`Searching ${scope ? scope.name : sources.length + ' websites'} for “${query}”…`, true);
   renderWebSearch();
   setTimeout(() => { if (webSearchState === state && activeTab === WEBSEARCH_TAB && state.loading) renderWebSearch(); }, 1550);
   try {
@@ -6558,13 +6590,13 @@ async function runWebSearch(query, opts = {}) {
     state.exhausted = !state.nexts.length && state.sourceCursor >= state.sources.length && !(state.pending && state.pending.size);
     if (activeTab === WEBSEARCH_TAB) {
       renderWebSearch();
-      setStatus(`“${query}” — ${state.items.length} matches on ${sources.length} websites`, false);
+      setStatus(`“${query}” — ${state.items.length} matches ${scope ? 'in ' + scope.name : 'on ' + sources.length + ' websites'}`, false);
     }
     if (activeTab === WEBSEARCH_TAB && !state.items.length) {
       const feed = results.querySelector('.feed');
       if (feed) feed.querySelector('.videos').innerHTML =
         `<div style="grid-column:1/-1;padding:2rem;text-align:center;color:#7a8aaa;">
-           No matches for “${escapeHtml(query)}” on any website.${state.errors ? ' (some sites failed to answer)' : ''}
+           No matches for “${escapeHtml(query)}” ${scope ? 'in ' + escapeHtml(scope.name) : 'on any website'}.${state.errors ? ' (some sites failed to answer)' : ''}
          </div>`;
     }
   } catch (err) {
@@ -6579,7 +6611,7 @@ async function runWebSearch(query, opts = {}) {
 function renderWebSearch(force = false) {
   const st = webSearchState;
   activeTab = WEBSEARCH_TAB;
-  const warming = st.loading && !st.locked && st.completedSites < SOURCES.length && Date.now() - (st.t0 || 0) < 1500;   // first page waits (max 1.5 s) for every website
+  const warming = st.loading && !st.locked && st.completedSites < st.sources.length && Date.now() - (st.t0 || 0) < 1500;   // first page waits (max 1.5 s) for every website
   const canShow = !warming && (st.loading || st.items.length >= st.visibleLimit || (!st.loading && (st.exhausted || st.paused)));
   const visibleItems = canShow ? st.items.slice(0, st.visibleLimit) : [];
   st.locked = visibleItems.length;
@@ -6587,14 +6619,15 @@ function renderWebSearch(force = false) {
   const canLoadMore = !st.exhausted && (st.nexts.length > 0 || st.sourceCursor < st.sources.length || !!(st.pending && st.pending.size));
   const moreNote = !st.loading && st.visibleLimit === WEB_PAGE && visibleItems.length >= WEB_PAGE && canLoadMore
     ? '<div class="live-more live-scroll-more"><span>Scroll for more.</span></div>' : '';
-  const urlLine = st.loading ? `searching ${st.completedSites}/${SOURCES.length} websites…` : 'every website · ranked, duplicates removed';
+  const urlLine = st.scope ? (st.loading ? `searching inside ${escapeHtml(st.scope.name)}…` : `inside ${escapeHtml(st.scope.name)} · ranked, duplicates removed`)
+    : st.loading ? `searching ${st.completedSites}/${st.sources.length} websites…` : 'every website · ranked, duplicates removed';
   const badge = `🔎 Showing ${visibleItems.length} of ${st.items.length} matches`;
 
   // Fast path: the same search is already on screen -> only add the new cards (no rebuild, no flicker, no scroll jump)
   const cur = results.querySelector(`.feed[data-site="${WEBSEARCH_TAB}"]`);
   const grid = cur && cur.querySelector('.videos');
   const slot = grid && grid.querySelector('.loading-row-slot');
-  if (!force && cur && slot && cur.getAttribute('data-q') === st.query) {
+  if (!force && cur && slot && cur.getAttribute('data-q') === st.query && (cur.getAttribute('data-scope') || '') === scopeKeyOf(st.scope)) {
     const have = [...grid.querySelectorAll(':scope > .card')];
     const n = have.length;
     if (n <= visibleItems.length && (!n || have[n - 1].getAttribute('data-detail') === visibleItems[n - 1].link)) {
@@ -6612,10 +6645,10 @@ function renderWebSearch(force = false) {
   setTimeout(updateNetworkBarActive, 0);
   const cards = visibleItems.map((it, i) => cardHtml(it, `w-${i}`)).join('');
   rescueSearchBar(); results.innerHTML = `
-    <div class="feed" data-site="${WEBSEARCH_TAB}" data-q="${escapeHtml(st.query)}">
+    <div class="feed" data-site="${WEBSEARCH_TAB}" data-q="${escapeHtml(st.query)}" data-scope="${escapeHtml(scopeKeyOf(st.scope))}">
       <div class="feed-header">
         <div>
-          <div class="feed-name">🌐 Search: “${escapeHtml(st.query)}”</div>
+          <div class="feed-name">${st.scope ? '🔎 ' + escapeHtml(st.scope.name) + ': ' : '🌐 Search: '}“${escapeHtml(st.query)}”</div>
           <div class="feed-url">${urlLine}</div>
         </div>
         <div class="badges"><span class="count-badge">${badge}</span></div>
@@ -6657,7 +6690,9 @@ async function loadMoreWebSearch(initial = false) {
         st.exhausted = true;
         break;
       }
+      if (st.scope && (st.scopePages || 0) >= 24) { st.nexts.length = 0; continue; }   // a section is paged at most 24 pages per search
       const jobs = st.nexts.splice(0, 4);
+      if (st.scope) st.scopePages = (st.scopePages || 0) + jobs.length;
       const settled = await Promise.allSettled(jobs.map(j =>
         fetchWithTimeout('/api/scrape', {
           method: 'POST',
@@ -6674,6 +6709,7 @@ async function loadMoreWebSearch(initial = false) {
         for (const it of data.items || []) {
           const k = (it.link || '').split('?')[0];
           if (!k || st.seen.has(k)) continue;
+          if (st.scope && !scopedKeep(it, st.query)) continue;
           st.seen.add(k);
           const src = sourceForUrl(it.link || '') || null;
           const sf = src ? feedOfSource(src.id)
@@ -6714,9 +6750,11 @@ const _onLiveInputOrig = onLiveInput;
 onLiveInput = function () {
   // On Home (and on its search results) a keyword searches the METADATA of every website at once - the same pages a tag /
   // category / star / studio click opens - and merges them into ONE feed. An empty box does nothing: results stay.
-  if (activeTab === WEBSEARCH_TAB || isMixKey(activeTab)) {
+  // Inside a pornstar / studio / network / category / tag / website feed the same thing happens, scoped to that section.
+  const sc = activeTab === WEBSEARCH_TAB ? webSearchScope : (isMixKey(activeTab) ? null : sectionScope());
+  if (activeTab === WEBSEARCH_TAB || isMixKey(activeTab) || sc) {
     const q = (searchInput.value || '').trim();
-    if (q && q.length >= 2 && !(activeTab === WEBSEARCH_TAB && q.toLowerCase() === webSearchQuery.toLowerCase())) runWebSearch(q);
+    if (q && q.length >= 2 && !(activeTab === WEBSEARCH_TAB && q.toLowerCase() === webSearchQuery.toLowerCase())) runWebSearch(q, { scope: sc });
     return;
   }
   _onLiveInputOrig();

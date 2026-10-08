@@ -412,3 +412,39 @@ export function suggestChannels(bundle: { pages?: Record<string, any> } | null, 
   out.sort((a, b) => b.s - a.s || a.c.name.length - b.c.name.length);
   return out.slice(0, limit).map((x) => x.c);
 }
+
+// ------------------------------------------------------------------ scoped search (inside ONE section)
+// Inside a pornstar / studio / network / category / tag / website feed the keyword searches the metadata of THAT section's videos
+// (everything the scraper indexed for it, from every website that has it), not only the cards the page has loaded.
+export interface Scope { kind: string; name: string; url: string }
+export function parseScope(raw: unknown): Scope | null {
+  try {
+    const o: any = typeof raw === "string" ? JSON.parse(raw) : raw;
+    const url = String(o?.url || "").slice(0, 500);
+    if (!/^https?:\/\//i.test(url)) return null;
+    const kind = String(o?.kind || "");
+    return { kind: ["model", "studio", "category", "tag", "site"].includes(kind) ? kind : "", name: String(o?.name || "").slice(0, 80), url };
+  } catch { return null; }
+}
+const scopeMemo = new WeakMap<IndexRecord[], Map<string, IndexRecord[]>>();
+/** the index records that belong to the section. A name matches when a field IS the name (a short relaxed match is the fallback). */
+export function scopeRecords(records: IndexRecord[], sc: Scope): IndexRecord[] {
+  const n = norm(sc.name), host = hostOfUrl(sc.url);
+  const key = `${sc.kind}|${n}|${sc.kind === "site" ? host : ""}`;
+  let m = scopeMemo.get(records);
+  if (!m) scopeMemo.set(records, (m = new Map()));
+  const hit = m.get(key);
+  if (hit) return hit;
+  let out: IndexRecord[] = [];
+  if (sc.kind === "site") out = records.filter((r) => hostOfUrl(r.l) === host);
+  else if (n) {
+    const lists = (r: IndexRecord) =>
+      sc.kind === "model" ? [r.md] : sc.kind === "studio" ? [r.st, r.vi] : sc.kind === "category" ? [r.ct] : sc.kind === "tag" ? [r.tg] : [r.md, r.st, r.ct, r.tg, r.vi];
+    const has = (r: IndexRecord, ok: (v: string) => boolean) => lists(r).some((l) => (l || []).some((v) => ok(norm(v))));
+    out = records.filter((r) => has(r, (v) => v === n));
+    if (!out.length && n.length >= 4) out = records.filter((r) => has(r, (v) => (" " + v + " ").includes(" " + n + " ")));
+  }
+  if (m.size > 50) m.clear();
+  m.set(key, out);
+  return out;
+}

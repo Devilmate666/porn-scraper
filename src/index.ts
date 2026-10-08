@@ -1,6 +1,6 @@
 import { Env } from "../types";
 import { scrapePage, searchOne, isBlockedHost } from "../scrape";
-import { parseQuery, queryKey, loadIndex, loadTaxonomy, searchIndex, matchTaxonomy, learnShapes, rankCombined, memoKV, hostOfUrl, suggestFacet, suggestKeywords, suggestChannels, type Query, type TaxEntry } from "../search";
+import { parseQuery, queryKey, loadIndex, loadTaxonomy, searchIndex, matchTaxonomy, learnShapes, rankCombined, memoKV, hostOfUrl, suggestFacet, suggestKeywords, suggestChannels, parseScope, scopeRecords, type Query, type TaxEntry } from "../search";
 import { scrapeListing } from "../listings";
 import { resolveVideo, resolveFull } from "../resolve";
 import { fetchMetadata } from "../metadata";
@@ -410,6 +410,11 @@ export default {
           // search-box dropdown (Home): keywords, pornstars, networks and live channels from EVERYTHING cached (taxonomy + search index + channel bundle). No scraping, KV only.
           if (!isGet) break;
           const text = (url.searchParams.get("q") || "").slice(0, 60);
+          const sc = parseScope(url.searchParams.get("scope"));
+          if (sc) {                                                // inside one section: only that section's keywords
+            const own = scopeRecords(await loadIndex(env.SCRAPE_DATA), sc);
+            return json({ q: text, scoped: sc.name, videos: suggestKeywords(own, text, 10), pornstars: [], networks: [], channels: [] }, 200, { ...headers, "Cache-Control": "public, max-age=300" });
+          }
           const [tax, idx, bundle] = await Promise.all([
             loadTaxonomy(env.SCRAPE_DATA),
             loadIndex(env.SCRAPE_DATA),
@@ -464,6 +469,29 @@ export default {
           const query = queryKey(b.query || "");                 // trimmed, lower-cased, single spaces = same key the scraper writes
           if (!sites.length || !query) return err("sites and query are required", 400, headers);
           const q = parseQuery(query);
+
+          // SCOPED: a keyword searched inside one section (pornstar / studio / network / category / tag / website). Answered from KV only:
+          // the section's indexed videos (every website that has it) + its own cached listing pages. Never the sites' general search.
+          const scope = parseScope((b as any).scope);
+          if (scope) {
+            try {
+              const hits = searchIndex(scopeRecords(await loadIndex(env.SCRAPE_DATA), scope), q, 300);
+              const pageItems: any[] = [];
+              let next = scope.url, num = 1;
+              for (let i = 0; i < 4 && next; i++) {
+                let page: any = await kvGet<any>(env.SCRAPE_DATA, `scrape:${next}`);
+                if (!page?.items?.length && i === 0) page = await nativePage(next, null).catch(() => null);
+                if (!page?.items?.length) break;
+                for (const it of page.items) pageItems.push({ ...it, page: it.page || page.page || scope.url });
+                num = (page.page_num || i + 1) + 1;
+                next = page.next_page || "";
+              }
+              const combined = rankCombined([], q, [...hits, ...pageItems]);
+              return send({ results: [], query, combined, count: combined.length, scoped: scope.name, scope_next: next ? { url: next, num } : null }, "scope");
+            } catch {
+              return send({ results: [], query, combined: [], count: 0, scoped: scope.name }, "scope");
+            }
+          }
 
           // the local index answers instantly (no network): everything the scraper has seen, matched on title + tags + genres + stars + studios
           const indexHits = searchIndex(await loadIndex(env.SCRAPE_DATA), q);
