@@ -1192,6 +1192,8 @@ function openSourcePage(detail) {
    view: 'feed' | 'categories' | 'category-feed' | 'player' | 'search'
 ------------------------------------------------------------------- */
 let navSilent = false;
+let lastNavTs = 0;              // stamp of the history entry on screen: tells Back from Forward
+let suggestGuardSkip = false;   // the Forward that cancels a Back (taken by the dropdown) must not navigate
 let navSection = 'home';
 let feedSearchEntryActive = false;
 const sectionDomSnapshots = new Map();
@@ -1318,11 +1320,13 @@ function hashToState() {
 function pushNav(partial) {
   if (navSilent) return;
   const state = { ...currentNavState(), ...partial, ts: Date.now() };
+  lastNavTs = state.ts;
   try { history.pushState(state, '', stateToHash(state)); } catch {}
 }
 
 function replaceNav(partial) {
   const state = { ...currentNavState(), ...partial, ts: Date.now() };
+  lastNavTs = state.ts;
   try { history.replaceState(state, '', stateToHash(state)); } catch {}
 }
 
@@ -1493,6 +1497,15 @@ function clearActiveSearch() {
 }
 
 window.addEventListener('popstate', (e) => {
+  // An open search dropdown takes the first Back: it closes, and the page stays where it is (the Back is undone with a Forward).
+  if (suggestGuardSkip) { suggestGuardSkip = false; return; }
+  const isForward = !!(e.state && e.state.ts && e.state.ts > lastNavTs);
+  if (window.closeSuggestBox && window.closeSuggestBox() && !isForward) {
+    suggestGuardSkip = true;
+    history.forward();
+    return;
+  }
+  if (e.state && e.state.ts) lastNavTs = e.state.ts;
   // Returning to the search results (from a video, or with Forward) keeps them exactly as they were - same cards, same scroll.
   // Any other Back out of a search goes Home; the search itself is never kept as a history step except the last one.
   const toSearch = !!(e.state && e.state.view === 'websearch');
@@ -6228,6 +6241,7 @@ searchInput.addEventListener('keydown', (e) => {
     box.style.width = Math.max(r.width, 280) + 'px';
   }
   function close() { box.classList.remove('open'); active = -1; }
+  window.closeSuggestBox = () => { if (!isOpen()) return false; close(); return true; };   // used by the Back button
   function mark(i) {
     active = i;
     box.querySelectorAll('.sg').forEach((el, n) => el.classList.toggle('active', n === i));
@@ -6522,6 +6536,12 @@ async function runWebSearch(query, opts = {}) {
   // scope: opts.scope (a section search) / the open results' own scope when refining them / none = Home (all websites)
   const scope = opts.scope !== undefined ? (opts.scope && opts.scope.url ? opts.scope : null) : (activeTab === WEBSEARCH_TAB ? webSearchScope : null);
   webSearchScope = scope;
+  if (!opts.skipPush) {                                         // a search the user just started shows its results from the top (Back / links keep their scroll)
+    const top = () => window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    top();
+    requestAnimationFrame(top);
+    setTimeout(top, 150);
+  }
   const replacingSearch = activeTab === WEBSEARCH_TAB;
   const updateSearchHistory = () => {
     if (opts.skipPush) return;
