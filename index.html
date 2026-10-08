@@ -1494,7 +1494,10 @@ function clearActiveSearch() {
 }
 
 window.addEventListener('popstate', (e) => {
-  const hadSearch = clearActiveSearch();
+  // Returning to the search results (from a video, or with Forward) keeps them exactly as they were - same cards, same scroll.
+  // Any other Back out of a search goes Home; the search itself is never kept as a history step except the last one.
+  const toSearch = !!(e.state && e.state.view === 'websearch');
+  const hadSearch = toSearch ? false : clearActiveSearch();
   if (hadSearch) {
     if (activeTab === WEBSEARCH_TAB) {
       feedSearchEntryActive = false;
@@ -1510,7 +1513,7 @@ window.addEventListener('popstate', (e) => {
     goHome(!hadSearch).finally(() => { navSilent = false; });
     return;
   }
-  if (!hadSearch && navSection === 'home' &&
+  if (!hadSearch && !toSearch && navSection === 'home' &&
       !(mainPlayer && mainPlayer.classList.contains('active'))) {
     navSilent = true;
     goHome(true).finally(() => { navSilent = false; });
@@ -2647,13 +2650,15 @@ function homeLoadingHtml() {
   </div>`;
 }
 
-function renderMixedFeed(feedId) {
+function renderMixedFeed(feedId, opts = {}) {
   const key = mixKey(feedId);
   activeTab = key;
   setTimeout(updateNetworkBarActive, 0);
   const ss = mixStates.get(feedId);
   ss.filter = homeFilter;
-  const cards = ss.items.map((it, i) => cardHtml(it, `m-${i}`)).join('');
+  const FIRST = 48;
+  const chunked = !!opts.chunk && ss.items.length > FIRST * 1.5;
+  const cards = ss.items.slice(0, chunked ? FIRST : ss.items.length).map((it, i) => cardHtml(it, `m-${i}`)).join('');
   rescueSearchBar(); results.innerHTML = `
     <div class="feed" data-site="${key}">
       <div class="feed-header mix-header">
@@ -2674,6 +2679,21 @@ function renderMixedFeed(feedId) {
   observeSentinel(key);
   if (feedEl) placeSearchInFeed(feedEl);
   scheduleMixRecheck(key);
+  if (chunked && gridEl) {                              // the rest is added in small slices so the page stays responsive
+    let at = FIRST;
+    const total = ss.items.length;
+    const step = () => {
+      if (activeTab !== key || !gridEl.isConnected) return;
+      const slot = gridEl.querySelector('.loading-row-slot');
+      if (!slot) return;
+      const end = Math.min(total, at + FIRST);
+      slot.insertAdjacentHTML('beforebegin', ss.items.slice(at, end).map((it, i) => cardHtml(it, `m-${at + i}`)).join(''));
+      at = end;
+      applyMixFilter(gridEl, ss);
+      if (at < total) requestAnimationFrame(() => setTimeout(step, 30)); else updateMixHeader(feedEl, ss);
+    };
+    requestAnimationFrame(() => setTimeout(step, 30));
+  }
 }
 
 /** Show a main tab: mixed feed for multi-site tabs, normal feed for single-site tabs. */
@@ -5842,6 +5862,13 @@ async function runFeedSearch() {
 /** A feed was (re)drawn: put back ITS text in the box and re-apply it. */
 function restoreFeedSearch(key) {
   clearTimeout(liveTimer);
+  if (key === WEBSEARCH_TAB) {                      // search results: show the keyword, never re-filter the cards
+    searchInput.value = webSearchQuery || '';
+    searchInput.placeholder = feedPlaceholder(key);
+    shuffleBtn.disabled = false;
+    searchToken++;
+    return;
+  }
   const q = feedQueries.get(key) || '';
   searchInput.value = q;
   searchInput.placeholder = feedPlaceholder(key);
@@ -5919,7 +5946,7 @@ window.addEventListener('scroll', () => {
     const key = activeTab;
     if (!key) return;
     if (key === WEBSEARCH_TAB) {
-      if (isAtFeedBottom(120)) loadMoreWebSearch();
+      if (isAtFeedBottom(700)) loadMoreWebSearch();
       return;
     }
     if (feedQueries.get(key) && isAtFeedBottom(120)) revealNext(key);
@@ -5953,11 +5980,19 @@ function onLiveInput() {
 function shuffleCurrentFeed() {
   const key = activeTab;
   if (!feedEl(key) || shuffleBtn.disabled) return;
+  if (key === WEBSEARCH_TAB) {                        // only the few cards on screen are rebuilt: no lag on phones
+    const st = webSearchState;
+    if (!st || st.loading || st.items.length < 2) return;
+    st.items = shuffleArray(st.items);
+    renderWebSearch(true);
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    return;
+  }
   if (isMixKey(key)) {
     const ss = mixStateFor(key);
     if (!ss) return;
     ss.items = shuffleArray(ss.items);
-    renderMixedFeed(key.slice(MIX_PREFIX.length));
+    renderMixedFeed(key.slice(MIX_PREFIX.length), { chunk: true });
   } else {
     const store = siteData.get(key);
     if (!store) return;
@@ -5965,21 +6000,20 @@ function shuffleCurrentFeed() {
     renderFeed(key);
     scheduleRecheck(key);
   }
-  window.scrollTo({ top: 0, behavior: 'smooth' });
+  window.scrollTo({ top: 0, left: 0, behavior: 'instant' });   // smooth-scrolling a huge page is what froze phones
 }
 
 shuffleBtn.addEventListener('click', shuffleCurrentFeed);
 searchInput.addEventListener('input', () => {
   clearTimeout(liveTimer);
   const typed = (searchInput.value || '').trim();
-  if (typed && !feedSearchEntryActive && activeTab !== WEBSEARCH_TAB) {
+  // Home / search results manage their own single history entry (runWebSearch); only section feeds get one here.
+  if (typed && !feedSearchEntryActive && activeTab !== WEBSEARCH_TAB && !isMixKey(activeTab)) {
     pushNav(currentNavState());
     feedSearchEntryActive = true;
   }
-  // No live filtering while typing: the dropdown suggests, and a filter runs only when a suggestion is picked or Enter is pressed.
-  // The one exception: emptying the box puts the unfiltered feed back.
-  if (!typed && (feedQueries.get(activeTab) || (chanState && activeTab === LIVECHANNELS_TAB && chanState.q) ||
-                 (activeTab === LIVECAMS_TAB && camsFilter.q))) onLiveInput();
+  // Nothing happens while typing - and deleting the keyword keeps the current results until the next search is started
+  // (Enter or a dropdown pick).
 });
 document.addEventListener('input', (e) => {
   const input = e.target;
@@ -6051,7 +6085,7 @@ searchInput.addEventListener('keydown', (e) => {
   let rows = [], active = -1, timer = 0, ctl = null, seq = 0;
   const serverCache = new Map();
   const isOpen = () => box.classList.contains('open');
-  const isHome = () => activeTab === mixKey(ALL_FEED.id);
+  const isHome = () => isMixKey(activeTab) || activeTab === WEBSEARCH_TAB;     // Home and its search results: all websites combined
 
   /* ----- the loaded videos of the open section ----- */
   function phrasesOf(it) {
@@ -6235,7 +6269,7 @@ searchInput.addEventListener('keydown', (e) => {
       clearTimeout(liveTimer);
       searchInput.value = r.text;
       searchInput._hadText = true;
-      if (activeTab !== WEBSEARCH_TAB && !feedSearchEntryActive) { pushNav(currentNavState()); feedSearchEntryActive = true; }
+      if (activeTab !== WEBSEARCH_TAB && !isMixKey(activeTab) && !feedSearchEntryActive) { pushNav(currentNavState()); feedSearchEntryActive = true; }
       onLiveInput();
     } else if (r.type === 'feed') {                              // pornstar / network: open its feed
       resetCurrentFilter();
@@ -6335,6 +6369,13 @@ if (homeBtn) homeBtn.addEventListener('click', () => enterNavSection('home', () 
    WEB SEARCH — ranked search results, also supported by direct links.
 -------------------------------------------------------------- */
 const WEBSEARCH_TAB = '__websearch__';
+const WEB_PAGE = 12;                               // results shown first, and added on every scroll step
+/** fetch that gives up (instead of hanging with the shimmer forever) */
+function fetchWithTimeout(url, opts = {}, ms = 20000) {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), ms);
+  return fetch(url, { ...opts, signal: ac.signal }).finally(() => clearTimeout(t));
+}
 let webSearchState = null;      // { query, results, seen, items, nexts, loading, exhausted }
 let webSearchQuery = '';
 let webSearchToken = 0;
@@ -6342,15 +6383,31 @@ const webSearchCache = new Map();
 
 /* Merge one site's answer into the search state. Cards already on screen keep their place
    (st.locked); only the not-yet-shown tail is re-ranked, so late answers never reshuffle the page. */
+function rankTail(tail) {
+  const sorted = [...tail].sort((a, b) => (b._score || 0) - (a._score || 0));
+  const buckets = new Map();
+  for (const it of sorted) {                               // similar relevance (3-point bands) = same band
+    const b = Math.round((it._score || 0) / 3);
+    (buckets.get(b) || buckets.set(b, []).get(b)).push(it);
+  }
+  const out = [];
+  for (const b of [...buckets.keys()].sort((x, y) => y - x)) {
+    const by = new Map();
+    for (const it of buckets.get(b)) (by.get(it._host) || by.set(it._host, []).get(it._host)).push(it);
+    const lists = [...by.values()];                         // round-robin over the websites inside the band
+    for (let i = 0; lists.some(l => i < l.length); i++) for (const l of lists) if (i < l.length) out.push(l[i]);
+  }
+  return out;
+}
+
 function ingestWebSearchJson(st, json) {
   st.errors += (json.results || []).filter(r => r && r.error).length;
   for (const r of json.results || []) {
     const page = r && r.next_page;
     if (page && (r.items || []).length) st.nexts.push({ url: page, num: (r.page_num || 1) + 1 });
   }
-  const words = queryWords(st.query);
   for (const it of json.combined || []) {
-    if (!searchWordsMatch(searchTextOf(it), words)) continue;
+    // no title re-check: matches on tags / categories / stars / studios never carry the keyword in the title
     const key = (it.link || '').split('?')[0];
     if (!key || st.seen.has(key)) continue;
     st.seen.add(key);
@@ -6366,7 +6423,7 @@ function ingestWebSearchJson(st, json) {
     });
   }
   const locked = Math.min(st.locked || 0, st.items.length);
-  st.items = st.items.slice(0, locked).concat(st.items.slice(locked).sort((a, b) => (b._score || 0) - (a._score || 0)));
+  st.items = st.items.slice(0, locked).concat(rankTail(st.items.slice(locked)));
 }
 
 /* Ask EVERY website at the same time (one request per site) instead of two at a time, one batch
@@ -6475,7 +6532,7 @@ async function runWebSearch(query, opts = {}) {
   const state = webSearchState = {
     query, seen: new Set(), items: [], nexts: [],
     sources, sourceCursor: 0, batchSize,
-    loading: true, loadingTarget: 6, exhausted: false, paused: false, errors: 0, completedSites: 0, visibleLimit: 6,
+    loading: true, loadingTarget: WEB_PAGE, exhausted: false, paused: false, errors: 0, completedSites: 0, visibleLimit: WEB_PAGE, t0: Date.now(),
   };
   webSearchCache.set(cacheKey, state);
   if (webSearchCache.size > 12) webSearchCache.delete(webSearchCache.keys().next().value);
@@ -6483,6 +6540,7 @@ async function runWebSearch(query, opts = {}) {
   activeTab = WEBSEARCH_TAB;
   setStatus(`Searching ${sources.length} websites for “${query}”…`, true);
   renderWebSearch();
+  setTimeout(() => { if (webSearchState === state && activeTab === WEBSEARCH_TAB && state.loading) renderWebSearch(); }, 1550);
   try {
     dispatchWebSearchSites(state, token);
     await waitForWebItems(state, token, state.visibleLimit);
@@ -6515,31 +6573,54 @@ async function runWebSearch(query, opts = {}) {
   }
 }
 
-function renderWebSearch() {
+function renderWebSearch(force = false) {
   const st = webSearchState;
-  hideSearchBar();
   activeTab = WEBSEARCH_TAB;
-  setTimeout(updateNetworkBarActive, 0);
-  const canShow = st.loading || st.items.length >= st.visibleLimit || (!st.loading && (st.exhausted || st.paused));
+  const warming = st.loading && !st.locked && st.completedSites < SOURCES.length && Date.now() - (st.t0 || 0) < 1500;   // first page waits (max 1.5 s) for every website
+  const canShow = !warming && (st.loading || st.items.length >= st.visibleLimit || (!st.loading && (st.exhausted || st.paused)));
   const visibleItems = canShow ? st.items.slice(0, st.visibleLimit) : [];
   st.locked = visibleItems.length;
-  const cards = visibleItems.map((it, i) => cardHtml(it, `w-${i}`)).join('');
   const skeletonCount = st.loading ? Math.max(0, (st.loadingTarget || st.visibleLimit) - visibleItems.length) : 0;
   const canLoadMore = !st.exhausted && (st.nexts.length > 0 || st.sourceCursor < st.sources.length || !!(st.pending && st.pending.size));
+  const moreNote = !st.loading && st.visibleLimit === WEB_PAGE && visibleItems.length >= WEB_PAGE && canLoadMore
+    ? '<div class="live-more live-scroll-more"><span>Scroll for more.</span></div>' : '';
+  const urlLine = st.loading ? `searching ${st.completedSites}/${SOURCES.length} websites…` : 'every website · ranked, duplicates removed';
+  const badge = `🔎 Showing ${visibleItems.length} of ${st.items.length} matches`;
+
+  // Fast path: the same search is already on screen -> only add the new cards (no rebuild, no flicker, no scroll jump)
+  const cur = results.querySelector(`.feed[data-site="${WEBSEARCH_TAB}"]`);
+  const grid = cur && cur.querySelector('.videos');
+  const slot = grid && grid.querySelector('.loading-row-slot');
+  if (!force && cur && slot && cur.getAttribute('data-q') === st.query) {
+    const have = [...grid.querySelectorAll(':scope > .card')];
+    const n = have.length;
+    if (n <= visibleItems.length && (!n || have[n - 1].getAttribute('data-detail') === visibleItems[n - 1].link)) {
+      grid.querySelectorAll(':scope > .search-skeletons, :scope > .live-more').forEach(e => e.remove());
+      if (visibleItems.length > n) slot.insertAdjacentHTML('beforebegin', visibleItems.slice(n).map((it, i) => cardHtml(it, `w-${n + i}`)).join(''));
+      if (skeletonCount) slot.insertAdjacentHTML('beforebegin', searchSkeletonsHtml(skeletonCount));
+      if (moreNote) slot.insertAdjacentHTML('beforebegin', moreNote);
+      const u = cur.querySelector('.feed-url'); if (u) u.textContent = urlLine;
+      const bd = cur.querySelector('.count-badge'); if (bd) bd.textContent = badge;
+      return;
+    }
+  }
+
+  hideSearchBar();
+  setTimeout(updateNetworkBarActive, 0);
+  const cards = visibleItems.map((it, i) => cardHtml(it, `w-${i}`)).join('');
   rescueSearchBar(); results.innerHTML = `
-    <div class="feed" data-site="${WEBSEARCH_TAB}">
+    <div class="feed" data-site="${WEBSEARCH_TAB}" data-q="${escapeHtml(st.query)}">
       <div class="feed-header">
         <div>
           <div class="feed-name">🌐 Search: “${escapeHtml(st.query)}”</div>
-          <div class="feed-url">${st.loading ? `searching ${st.completedSites}/${SOURCES.length} websites…` : 'every website · ranked, duplicates removed'}</div>
+          <div class="feed-url">${urlLine}</div>
         </div>
-        <div class="badges"><span class="count-badge">🔎 Showing ${visibleItems.length} of ${st.items.length} matches</span></div>
+        <div class="badges"><span class="count-badge">${badge}</span></div>
       </div>
       <div class="videos">
         ${cards || ''}
         ${skeletonCount ? searchSkeletonsHtml(skeletonCount) : ''}
-        ${!st.loading && st.visibleLimit === 6 && visibleItems.length >= 6 && canLoadMore
-          ? '<div class="live-more live-scroll-more"><span>Scroll for more.</span></div>' : ''}
+        ${moreNote}
         <div class="loading-row-slot"></div>
       </div>
       <div class="sentinel" data-site="${WEBSEARCH_TAB}"></div>
@@ -6552,7 +6633,7 @@ function renderWebSearch() {
 async function loadMoreWebSearch(initial = false) {
   const st = webSearchState;
   if (!st || (st.loading && !initial) || st.exhausted) return;
-  const target = initial ? st.visibleLimit : st.visibleLimit + 6;
+  const target = initial ? st.visibleLimit : st.visibleLimit + WEB_PAGE;
   st.loadingTarget = target;
   if (st.items.length >= target) {
     st.visibleLimit = target;
@@ -6575,11 +6656,11 @@ async function loadMoreWebSearch(initial = false) {
       }
       const jobs = st.nexts.splice(0, 4);
       const settled = await Promise.allSettled(jobs.map(j =>
-        fetch('/api/scrape', {
+        fetchWithTimeout('/api/scrape', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ urls: [{ url: j.url, page_num: j.num }] }),
-        }).then(async r => {
+        }, 20000).then(async r => {
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
           return r.json();
         })));
@@ -6589,12 +6670,12 @@ async function loadMoreWebSearch(initial = false) {
         const data = ((r.value.results || [])[0]) || {};
         for (const it of data.items || []) {
           const k = (it.link || '').split('?')[0];
-          if (!k || st.seen.has(k) || !searchWordsMatch(searchTextOf(it), queryWords(st.query))) continue;
+          if (!k || st.seen.has(k)) continue;
           st.seen.add(k);
           const src = sourceForUrl(it.link || '') || null;
           const sf = src ? feedOfSource(src.id)
             : (hostOf(it.link || '').includes('bdsmhole') ? FEEDS[1] : FEEDS[0]);
-          st.items.push({ ...it, _host: hostOf(data.page || it.link || ''),
+          st.items.push({ ...it, _score: 1, _host: hostOf(data.page || it.link || ''),
             _label: src ? src.name : hostOf(data.page || '').replace(/^www\./, ''),
             _feed: sf.id, _sourceId: src ? src.id : '' });
         }
@@ -6605,7 +6686,7 @@ async function loadMoreWebSearch(initial = false) {
         }
       }
       { const lk = Math.min(st.locked || 0, st.items.length);
-        st.items = st.items.slice(0, lk).concat(st.items.slice(lk).sort((a, b) => (b._score || 0) - (a._score || 0))); }
+        st.items = st.items.slice(0, lk).concat(rankTail(st.items.slice(lk))); }
     }
   } catch (err) {
     st.errors++;
@@ -6620,6 +6701,7 @@ async function loadMoreWebSearch(initial = false) {
       const currentFeed = results.querySelector(`.feed[data-site="${WEBSEARCH_TAB}"]`);
       const badge = currentFeed && currentFeed.querySelector('.count-badge');
       if (badge) badge.textContent = `🔎 Showing ${Math.min(st.visibleLimit, st.items.length)} of ${st.items.length} matches`;
+      if (!st.exhausted) requestAnimationFrame(() => { if (webSearchState === st && activeTab === WEBSEARCH_TAB && isAtFeedBottom(700)) loadMoreWebSearch(); });
     }
   }
 }
@@ -6627,9 +6709,11 @@ async function loadMoreWebSearch(initial = false) {
 /* Typing in the box while the web-search feed is open starts a NEW web search. */
 const _onLiveInputOrig = onLiveInput;
 onLiveInput = function () {
-  if (activeTab === WEBSEARCH_TAB) {
+  // On Home (and on its search results) a keyword searches the METADATA of every website at once - the same pages a tag /
+  // category / star / studio click opens - and merges them into ONE feed. An empty box does nothing: results stay.
+  if (activeTab === WEBSEARCH_TAB || isMixKey(activeTab)) {
     const q = (searchInput.value || '').trim();
-    if (q && q !== webSearchQuery && q.length >= 2) runWebSearch(q);
+    if (q && q.length >= 2 && !(activeTab === WEBSEARCH_TAB && q.toLowerCase() === webSearchQuery.toLowerCase())) runWebSearch(q);
     return;
   }
   _onLiveInputOrig();
