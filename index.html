@@ -876,6 +876,35 @@
     }
   }
 
+
+  /* ---- section buttons: edge fades + press feedback ---- */
+  .site-actions { -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; }
+  .site-actions.fade-right { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+  .site-actions.fade-left { -webkit-mask-image: linear-gradient(to right, transparent, #000 28px); mask-image: linear-gradient(to right, transparent, #000 28px); }
+  .site-actions.fade-left.fade-right { -webkit-mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); }
+  .site-actions .action { transition: transform .15s ease, background-color .2s, border-color .2s, box-shadow .2s; }
+  .site-actions .action:active { transform: scale(.93); }
+  .site-actions .action.active { box-shadow: 0 6px 16px -8px #6366f1; }
+
+  /* ---- "Where to?" sheet: Back on a section's main page ---- */
+  #sectionMenu { position: fixed; inset: 0; z-index: 400; display: none; align-items: flex-end; justify-content: center; }
+  #sectionMenu.open { display: flex; }
+  #sectionMenu .sm-backdrop { position: absolute; inset: 0; background: rgba(5, 8, 14, .66); animation: smFade .18s ease; }
+  #sectionMenu .sm-sheet { position: relative; width: min(30rem, 100%); max-height: 82vh; overflow-y: auto; overscroll-behavior: contain;
+    background: #131822; border: 1px solid #2e3749; border-bottom: 0; border-radius: 1.3rem 1.3rem 0 0;
+    padding: .95rem .9rem calc(.9rem + env(safe-area-inset-bottom, 0px)); box-shadow: 0 -18px 50px -20px #000; animation: smUp .22s ease; }
+  #sectionMenu .sm-title { font-size: .95rem; font-weight: 600; color: #e6ecf8; margin: 0 .25rem .15rem; }
+  #sectionMenu .sm-sub { font-size: .72rem; color: #7d8aa5; margin: 0 .25rem .7rem; }
+  #sectionMenu .sm-item { display: flex; align-items: center; width: 100%; text-align: left; margin: 0 0 .4rem; padding: .78rem 1rem;
+    background: #1b2231; border: 1px solid #2b3447; border-radius: .95rem; color: #d7e0f2; font: inherit; font-size: .9rem; cursor: pointer;
+    transition: background-color .15s, transform .12s; }
+  #sectionMenu .sm-item:hover { background: #242d41; }
+  #sectionMenu .sm-item:active { transform: scale(.98); }
+  #sectionMenu .sm-item:disabled { opacity: .45; cursor: not-allowed; }
+  #sectionMenu .sm-item.exit { margin-top: .7rem; margin-bottom: 0; color: #fca5a5; background: #2a1a20; border-color: #5b2a33; }
+  @keyframes smUp { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+  @keyframes smFade { from { opacity: 0; } to { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { #sectionMenu .sm-sheet, #sectionMenu .sm-backdrop { animation: none; } .site-actions .action { transition: none; } }
 </style>
 <base target="_blank">
 <base target="_blank">
@@ -1203,8 +1232,68 @@ let suggestHistoryOpen = false; // the dropdown owns one history entry while it 
 let suggestHistoryClosing = false;
 let suggestHistoryCloseWaiters = [];
 let navSection = 'home';
+let exiting = false;                // "Exit" was chosen in the Where-to sheet
+let sectionMenuOpen = false;
+
+/** A section's main page: Home / a website's feed, or one of the section lists (not a nested page, search or video). */
+function isSectionRootState(st) {
+  if (!st) return false;
+  return st.view === 'feed' || ['categories', 'pornsites', 'porntags', 'networks', 'pornstars', 'livecams', 'livechannels'].includes(st.view);
+}
+const SECTION_MENU_ITEMS = [['home', 'homeBtn'], ['categories', 'categoriesBtn'], ['pornsites', 'pornSitesBtn'], ['networks', 'networksBtn'],
+  ['pornstars', 'pornstarsBtn'], ['livecams', 'camsBtn'], ['livechannels', 'chansBtn']];
+function sectionMenuEl() {
+  let el = document.getElementById('sectionMenu');
+  if (el) return el;
+  el = document.createElement('div');
+  el.id = 'sectionMenu';
+  el.setAttribute('role', 'dialog');
+  el.setAttribute('aria-modal', 'true');
+  el.setAttribute('aria-label', 'Where to?');
+  el.innerHTML = '<div class="sm-backdrop"></div><div class="sm-sheet" tabindex="-1"><div class="sm-title">Where to?</div>' +
+    '<div class="sm-sub">Pick a section, or leave.</div><div class="sm-list"></div></div>';
+  el.querySelector('.sm-backdrop').addEventListener('click', () => closeSectionMenu());
+  document.body.appendChild(el);
+  return el;
+}
+function openSectionMenu() {
+  const el = sectionMenuEl(), list = el.querySelector('.sm-list');
+  list.textContent = '';
+  SECTION_MENU_ITEMS.forEach(([section, id]) => {
+    const b = document.getElementById(id);
+    if (!b || section === navSection || b.hidden) return;        // the other sections only
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'sm-item';
+    item.textContent = (b.textContent || '').trim();
+    item.disabled = !!b.disabled;
+    item.addEventListener('click', () => { closeSectionMenu(); b.click(); });
+    list.appendChild(item);
+  });
+  const exit = document.createElement('button');
+  exit.type = 'button';
+  exit.className = 'sm-item exit';
+  exit.textContent = '🚪 Exit';
+  exit.addEventListener('click', () => exitSite());
+  list.appendChild(exit);                                          // Exit is always last
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+  el.classList.add('open');
+  sectionMenuOpen = true;
+}
+function closeSectionMenu() {
+  const el = document.getElementById('sectionMenu');
+  if (el) el.classList.remove('open');
+  sectionMenuOpen = false;
+}
+document.addEventListener('keydown', (e) => { if (sectionMenuOpen && e.key === 'Escape') { e.preventDefault(); closeSectionMenu(); } });
+function exitSite() {
+  exiting = true;
+  closeSectionMenu();
+  try { history.go(-(navIdx + 1)); } catch (_) {}                  // back out of the whole visit (the guard entry is the first one)
+  setTimeout(() => { try { window.close(); } catch (_) {} }, 350);   // nothing to go back to (a fresh tab): close, or blank the page
+  setTimeout(() => { location.replace('about:blank'); }, 800);
+}
 let feedSearchEntryActive = false;
-const sectionDomSnapshots = new Map();
 
 function sectionForState(state) {
   if (state && state.section) return state.section;
@@ -1458,11 +1547,6 @@ function viewAlreadyShown(state) {
 /** After a view is (re)shown: bring back the network search filter and the scroll position. */
 function postRestore(state) {
   updateNetworkBarActive();
-  const restoreBar = () => {
-    if (siteActions && typeof state.navScrollLeft === 'number') siteActions.scrollLeft = state.navScrollLeft;
-  };
-  requestAnimationFrame(restoreBar);
-  setTimeout(restoreBar, 150);
   if (typeof state.scrollY === 'number') restoreScrollRobust(state.scrollY);
 }
 
@@ -1622,11 +1706,41 @@ window.addEventListener('popstate', (e) => {
     const k = entryView.get(navIdx);
     if (k && k === navViewKey(currentNavState(true)) && !pageIsLocked() && !scrollRestoring) entryScroll.set(navIdx, Math.round(window.scrollY));
   } catch (_) {}
+  if (exiting) return;                                            // Exit was chosen: the browser is leaving the app
+  const fromIdx = navIdx;
+  const goingBack = to === -1 || to < fromIdx;
+  if (goingBack && !(mainPlayer && mainPlayer.classList.contains('active')) && (sectionMenuOpen || isSectionRootState(currentNavState(true)))) {
+    // Back on a section's main page does not walk through the history: it asks where to go (other sections, or Exit).
+    // The Back is undone by putting the same page on top of the history again - nothing is re-rendered, nothing moves.
+    const keep = { ...currentNavState(true), ts: Date.now(), sid: NAV_SID, idx: fromIdx };
+    navIdx = fromIdx;
+    navSilent = true;
+    forgetEntryScrollFrom(fromIdx + 1);
+    try { history.pushState(keep, '', stateToHash(keep)); } catch (_) {}
+    setTimeout(() => { navSilent = false; }, 90);                 // the hashchange of that Back is over by then
+    if (sectionMenuOpen) closeSectionMenu(); else openSectionMenu();
+    return;
+  }
   if (to >= 0) navIdx = to;
 
   const toSearch = !!(e.state && e.state.view === 'websearch');
   const hadSearch = toSearch ? false : clearActiveSearch();
   if (hadSearch) feedSearchEntryActive = false;
+
+  if (e.state && e.state.appBase) {                               // Back out of a nested page straight down to the guard under Home
+    navSilent = true;
+    navSection = 'home';
+    goHome(false).finally(() => {
+      const home = { ...currentNavState(true), ts: Date.now(), sid: NAV_SID, idx: 1 };
+      try {
+        history.replaceState({ appBase: true, sid: NAV_SID, idx: 0 }, '', location.href);
+        history.pushState(home, '', stateToHash(home));
+        navIdx = 1;
+      } catch (_) {}
+      setTimeout(() => { navSilent = false; updateNetworkBarActive(); }, 90);
+    });
+    return;
+  }
 
   if (!e.state || !e.state.view) {
     navSilent = true;
@@ -2103,8 +2217,7 @@ let navActionsScrollLeft = 0;
 })();
 function restoreNavScroll() {
   if (!siteActions) return;
-  const x = navActionsScrollLeft;
-  const apply = () => { if (siteActions.scrollLeft !== x) siteActions.scrollLeft = x; };
+  const apply = () => { const x = navActionsScrollLeft; if (siteActions.scrollLeft !== x) siteActions.scrollLeft = x; };
   apply();
   requestAnimationFrame(apply);
   setTimeout(apply, 60);
@@ -2182,19 +2295,6 @@ function hideSearchBar() {
 }
 
 
-function ensureNavButtonVisible(button) {
-  if (!button || !siteActions) return;
-  const bar = siteActions;
-  const br = bar.getBoundingClientRect();
-  const r = button.getBoundingClientRect();
-  const pad = 6;
-  let next = bar.scrollLeft;
-  if (r.left < br.left + pad) next -= (br.left + pad) - r.left;
-  else if (r.right > br.right - pad) next += r.right - (br.right - pad);
-  next = Math.max(0, Math.min(next, bar.scrollWidth - bar.clientWidth));
-  if (Math.abs(next - bar.scrollLeft) > 1) bar.scrollLeft = next;
-}
-
 function updateNetworkBarActive() {
   restoreNavScroll();
 
@@ -2210,10 +2310,7 @@ function updateNetworkBarActive() {
     livecams: 'camsBtn',
     livechannels: 'chansBtn',
   };
-  const historySection = history.state && history.state.sid === NAV_SID
-    ? sectionForState(history.state)
-    : navSection;
-  const activeSection = historySection || navSection || 'home';
+  const activeSection = navSection || 'home';             // the open section (a nested page keeps its parent highlighted)
   const activeId = sectionBtn[activeSection] ||
     (activeTab === mixKey(ALL_FEED.id) ? 'homeBtn' : null);
 
@@ -2238,8 +2335,39 @@ function updateNetworkBarActive() {
   // navigation bar. Do not use scrollIntoView(): it can move the document
   // vertically and cause the page to jump.
   if (activeButton) {
-    requestAnimationFrame(() => ensureNavButtonVisible(activeButton));
+    requestAnimationFrame(() => alignNavButton(activeButton));
+    setTimeout(() => alignNavButton(activeButton), 320);   // again once the page below has finished moving the button row around
   }
+  updateNavFades();
+}
+
+/** Fade the edges of the button row where more buttons are hidden. */
+function updateNavFades() {
+  if (!siteActions) return;
+  const max = siteActions.scrollWidth - siteActions.clientWidth;
+  siteActions.classList.toggle('fade-left', siteActions.scrollLeft > 4);
+  siteActions.classList.toggle('fade-right', max > 4 && siteActions.scrollLeft < max - 4);
+}
+/** Scroll the button row so this button sits at its left edge: the buttons after it come into view. */
+function alignNavButton(button) {
+  if (!button || !siteActions || !siteActions.isConnected || siteActions.closest('#navActionStaging')) return;
+  const bar = siteActions, br = bar.getBoundingClientRect(), r = button.getBoundingClientRect();
+  if (!br.width || !r.width) return;
+  const max = Math.max(0, bar.scrollWidth - bar.clientWidth);
+  const target = Math.max(0, Math.min(Math.round(bar.scrollLeft + (r.left - br.left) - 12), max));
+  if (Math.abs(target - bar.scrollLeft) > 1) {
+    try { bar.scrollTo({ left: target, behavior: 'smooth' }); } catch (_) { bar.scrollLeft = target; }
+  }
+  updateNavFades();
+}
+if (siteActions) {
+  siteActions.addEventListener('click', (e) => {          // pressing a button scrolls the row to it: the next buttons show up
+    const b = e.target.closest && e.target.closest('button.action');
+    if (b && siteActions.contains(b)) alignNavButton(b);
+  }, true);
+  siteActions.addEventListener('scroll', updateNavFades, { passive: true });
+  window.addEventListener('resize', updateNavFades);
+  window.addEventListener('load', updateNavFades);
 }
 
 /** Text-only tag pills grouped by letter (Porn Tags). */
@@ -5492,77 +5620,17 @@ async function openLiveChannels(force = false, opts = {}) {
   if (!opts.skipPush) pushNav({ view: 'livechannels' });
 }
 
-function activateSectionSnapshot(section, snapshot, scrollY, pressedButton, pressedButtonTop) {
-  sectionDomSnapshots.delete(section);
-  results.style.minHeight = snapshot.minHeight || '';
-  results.replaceChildren(snapshot.fragment);
-  const state = snapshot.state || {};
-  navSection = section;
-  activeSourceId = state.sourceId || activeSourceId;
-  activeFeedId = state.feedId || activeFeedId;
-  if (snapshot.studioTab) studioTab = snapshot.studioTab;
-  switch (state.view) {
-    case 'categories': activeTab = CATEGORIES_TAB; break;
-    case 'pornsites': activeTab = PORN_SITES_TAB; break;
-    case 'networks': activeTab = NETWORKS_TAB; break;
-    case 'porntags': activeTab = PORN_TAGS_TAB; break;
-    case 'pornstars': activeTab = PORNSTARS_TAB; break;
-    case 'livecams': activeTab = LIVECAMS_TAB; break;
-    case 'livechannels': activeTab = LIVECHANNELS_TAB; break;
-    case 'websearch': activeTab = WEBSEARCH_TAB; break;
-    case 'category-feed': activeTab = state.feedUrl; break;
-    case 'feed': activeTab = state.feedUrl || mixKey(state.feedId || ALL_FEED.id); break;
-  }
-  renderSiteTabs();
-  statusText.textContent = snapshot.statusText;
-  dot.className = snapshot.dotClass;
-  const activeFeed = results.querySelector('.feed');
-  if (activeFeed) {
-    placeFeedControlsInFeed(activeFeed);
-    if (state.view === 'websearch') adoptWebSearch(state);     // the restored results own the search state again (box text, scope, load-more)
-    if (state.view === 'feed' || state.view === 'category-feed' || state.view === 'websearch') placeSearchInFeed(activeFeed);
-    else hideSearchBar();
-  } else {
-    restoreFeedControlsToHeader();
-    hideSearchBar();
-  }
-  updateNetworkBarActive();
-  const restore = () => restoreSectionAnchor(scrollY, pressedButton, pressedButtonTop);
-  requestAnimationFrame(restore);
-  setTimeout(restore, 120);
-  // history is handled by enterNavSection (one slot for all section menus): no entry is pushed here
-}
-
-function restoreSectionAnchor(scrollY, pressedButton, pressedButtonTop) {
-  preserveSectionScrollRange(scrollY);
-  if (pressedButton && pressedButton.isConnected && Number.isFinite(pressedButtonTop)) {
-    const offset = pressedButton.getBoundingClientRect().top - pressedButtonTop;
-    window.scrollTo({ top: Math.max(0, window.scrollY + offset), left: 0, behavior: 'instant' });
-    return;
-  }
-  window.scrollTo({ top: scrollY, left: 0, behavior: 'instant' });
-}
-
 function preserveSectionScrollRange(y) {
   const resultsTop = results.getBoundingClientRect().top + window.scrollY;
   const needed = Math.max(0, y + (window.innerHeight || 0) - resultsTop);
   results.style.minHeight = `${Math.max(results.scrollHeight, needed)}px`;
 }
 
-function stashCurrentSection(section) {
+/** Sections never come back "as they were": the page is cleared and the next section is built fresh, at the top. */
+function discardCurrentSection() {
   if (!results.childNodes.length) return;
   rescueSearchBar();
-  const fragment = document.createDocumentFragment();
-  while (results.firstChild) fragment.appendChild(results.firstChild);
-  sectionDomSnapshots.set(section, {
-    fragment,
-    state: currentNavState(),
-    studioTab,
-    scrollY: window.scrollY,
-    statusText: statusText.textContent,
-    dotClass: dot.className,
-    minHeight: results.style.minHeight,
-  });
+  results.replaceChildren();
 }
 
 /** True while the section's own main page (not a nested page of it) is on screen. */
@@ -5585,9 +5653,6 @@ function enterNavSection(section, action, force = false, pressedButton = null) {
   if (busy) return;
   const previousSection = navSection;
   const currentScrollY = window.scrollY;
-  const buttonsScrollLeft = siteActions ? siteActions.scrollLeft : 0;
-  const restoringSnapshot = !force && section !== previousSection && sectionDomSnapshots.has(section);
-  if (restoringSnapshot) preserveSectionScrollRange(sectionDomSnapshots.get(section).scrollY || 0);
   if (activeTab === CATEGORIES_TAB && categoriesState.categories.length) {
     categoriesState.scrollY = currentScrollY;
     saveCategoryCache(COMBINED_CAT_CACHE_KEY);
@@ -5597,28 +5662,13 @@ function enterNavSection(section, action, force = false, pressedButton = null) {
   }
   saveCatalogScroll(currentScrollY);
 
-  // Top-level sections share ONE history slot. The first section opened from Home
-  // gets a history entry; switching between sections replaces that entry.
-  // Therefore Back from any section menu always returns directly to Home, never
-  // through previously visited section menus. Nested pages inside a section still
-  // use pushState and retain their normal Back steps.
+  // Top-level sections share ONE history slot. The first section opened from Home gets a history entry; switching between
+  // sections replaces that entry. Sections are never restored "as they were": each one is built fresh, at the top.
+  // Back on a section's main page opens the "Where to?" sheet (popstate handler); nested pages inside a section
+  // (a network's videos, search results...) use pushState and keep their normal Back steps.
   const sectionMenuNavigation = section !== previousSection;
   const collapseSectionHistory = sectionMenuNavigation && previousSection !== 'home';
   const firstSectionFromHome = sectionMenuNavigation && previousSection === 'home' && section !== 'home';
-
-  const cachedSnapshot = !force && section !== previousSection
-    ? sectionDomSnapshots.get(section)
-    : null;
-  if (cachedSnapshot) {
-    stashCurrentSection(previousSection);
-    const ownScrollY = Number.isFinite(cachedSnapshot.scrollY) ? cachedSnapshot.scrollY : 0;
-    activateSectionSnapshot(section, cachedSnapshot, ownScrollY, null, null);
-    if (siteActions) siteActions.scrollLeft = buttonsScrollLeft;
-    if (collapseSectionHistory) replaceNav(currentNavState());
-    else if (firstSectionFromHome) pushNav(currentNavState());
-    updateNetworkBarActive();
-    return;
-  }
 
   if (section === previousSection && !force && onSectionRoot(section)) {   // its own main page is open: the button scrolls to the top
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
@@ -5626,22 +5676,21 @@ function enterNavSection(section, action, force = false, pressedButton = null) {
     return;
   }
   // (inside a nested page of this section - a network's videos, search results... - the button opens the section's main page)
-  if (force) sectionDomSnapshots.delete(section);
   const targetScrollY = 0;
-  stashCurrentSection(previousSection);
+  discardCurrentSection();
   studioState.scrollY = 0;
   categoriesState.scrollY = 0;
   Object.values(catalogState).forEach(c => { if (c) c.scrollY = 0; });
   results.style.minHeight = '';
   window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
   navSection = section;
+  updateNetworkBarActive();                              // the pressed section is highlighted at once
   feedSearchEntryActive = false;
   clearTimeout(liveTimer);
 
   const restoreScroll = () => {
     const restore = () => {
       window.scrollTo({ top: targetScrollY, left: 0, behavior: 'instant' });
-      if (siteActions) siteActions.scrollLeft = buttonsScrollLeft;
       updateNetworkBarActive();
     };
     requestAnimationFrame(restore);
@@ -7143,6 +7192,19 @@ document.addEventListener('keydown', (e) => {
 // Start immediately (no waiting for the load event): filter chips show up at once, feed loads behind them.
 // A URL hash (#/categories, #/cat/<url>, #/search/<q>, #/video/<url> ...) deep-links straight into that view.
 (function start() {
+  // The first history entry of a visit is a guard UNDER Home: Back from a section's main page lands on it and opens the
+  // "Where to?" sheet instead of leaving. A reload keeps the place it had in the visit.
+  try {
+    const prev = history.state;
+    if (prev && typeof prev.idx === 'number') {
+      navIdx = prev.idx;
+      history.replaceState({ ...prev, sid: NAV_SID }, '', location.href);
+    } else {
+      history.replaceState({ appBase: true, sid: NAV_SID, idx: 0 }, '', location.href);
+      history.pushState({ appHome: true, sid: NAV_SID, idx: 1 }, '', location.href);
+      navIdx = 1;
+    }
+  } catch (_) {}
   renderSiteTabs();
   if (!results.querySelector('.feed[data-site="__loading__"] .feed-controls-sticky')) {
     rescueSearchBar();
@@ -7156,7 +7218,7 @@ document.addEventListener('keydown', (e) => {
   bindChips();
   const navigation = performance.getEntriesByType('navigation')[0];
   if (navigation && navigation.type === 'reload') {
-    history.replaceState(null, '', `${location.pathname}${location.search}`);
+    history.replaceState({ appHome: true, sid: NAV_SID, idx: navIdx }, '', `${location.pathname}${location.search}`);
     scrapeAll(true);
     return;
   }
@@ -7164,7 +7226,7 @@ document.addEventListener('keydown', (e) => {
   if (initial && (location.hash || '').length > 1) {
     navSilent = true;
     _hashApplying = true;
-    applyNavState(initial).finally(() => { navSilent = false; _hashApplying = false; });
+    applyNavState(initial).finally(() => { navSilent = false; _hashApplying = false; try { replaceNav({}); } catch (_) {} });
   } else {
     scrapeAll();
   }
