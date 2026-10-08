@@ -901,7 +901,6 @@
   #sectionMenu .sm-item:hover { background: #242d41; }
   #sectionMenu .sm-item:active { transform: scale(.98); }
   #sectionMenu .sm-item:disabled { opacity: .45; cursor: not-allowed; }
-  #sectionMenu .sm-item.exit { margin-top: .7rem; margin-bottom: 0; color: #fca5a5; background: #2a1a20; border-color: #5b2a33; }
   @keyframes smUp { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
   @keyframes smFade { from { opacity: 0; } to { opacity: 1; } }
   @media (prefers-reduced-motion: reduce) { #sectionMenu .sm-sheet, #sectionMenu .sm-backdrop { animation: none; } .site-actions .action { transition: none; } }
@@ -1232,7 +1231,7 @@ let suggestHistoryOpen = false; // the dropdown owns one history entry while it 
 let suggestHistoryClosing = false;
 let suggestHistoryCloseWaiters = [];
 let navSection = 'home';
-let exiting = false;                // "Exit" was chosen in the Where-to sheet
+let exiting = false;                // the second Back ("Press back again to exit") is leaving the app
 let sectionMenuOpen = false;
 
 /** A section's main page: Home / a website's feed, or one of the section lists (not a nested page, search or video). */
@@ -1251,7 +1250,7 @@ function sectionMenuEl() {
   el.setAttribute('aria-modal', 'true');
   el.setAttribute('aria-label', 'Where to?');
   el.innerHTML = '<div class="sm-backdrop"></div><div class="sm-sheet" tabindex="-1"><div class="sm-title">Where to?</div>' +
-    '<div class="sm-sub">Pick a section, or leave.</div><div class="sm-list"></div></div>';
+    '<div class="sm-sub">Pick a section.</div><div class="sm-list"></div></div>';
   el.querySelector('.sm-backdrop').addEventListener('click', () => closeSectionMenu());
   document.body.appendChild(el);
   return el;
@@ -1270,12 +1269,6 @@ function openSectionMenu() {
     item.addEventListener('click', () => { closeSectionMenu(); b.click(); });
     list.appendChild(item);
   });
-  const exit = document.createElement('button');
-  exit.type = 'button';
-  exit.className = 'sm-item exit';
-  exit.textContent = '🚪 Exit';
-  exit.addEventListener('click', () => exitSite());
-  list.appendChild(exit);                                          // Exit is always last
   if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
   el.classList.add('open');
   sectionMenuOpen = true;
@@ -1286,32 +1279,47 @@ function closeSectionMenu() {
   sectionMenuOpen = false;
 }
 document.addEventListener('keydown', (e) => { if (sectionMenuOpen && e.key === 'Escape') { e.preventDefault(); closeSectionMenu(); } });
+let lastRootBack = 0;               // time of the Back that showed "Press back again to exit"
+/** small message at the top of the screen (above the Where-to sheet) */
+function showToast(msg, ms = 2500) {
+  let t = document.getElementById('appToast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'appToast';
+    t.setAttribute('role', 'status');
+    t.style.cssText = 'position:fixed;left:50%;top:calc(env(safe-area-inset-top,0px) + 18px);transform:translateX(-50%);z-index:500;max-width:min(92vw,420px);' +
+      'background:#1a2133;color:#e2e8f0;border:1px solid #2c3750;border-radius:14px;padding:.7rem 1rem;font-size:.85rem;line-height:1.35;text-align:center;' +
+      'box-shadow:0 18px 40px -12px rgba(0,0,0,.85);pointer-events:none';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.display = 'block';
+  clearTimeout(t._h);
+  t._h = setTimeout(() => { t.style.display = 'none'; }, ms);
+}
+function hideToast() { const t = document.getElementById('appToast'); if (t) { clearTimeout(t._h); t.style.display = 'none'; } }
+
+/** Leave the app (second Back). A page cannot always close itself, so: try to close, then go back past the whole visit. */
 function exitSite() {
   exiting = true;
   closeSectionMenu();
   let gone = false;                                                  // becomes true the moment the page really goes away
   addEventListener('pagehide', () => { gone = true; }, { once: true });
   document.addEventListener('visibilitychange', () => { if (document.hidden) gone = true; }, { once: true });
-  // 1. Really close: browsers allow it for an installed app, a window opened by a script, or a tab with a single history entry.
-  try { window.close(); } catch (_) {}
-  // 2. Otherwise leave the whole visit: back to whatever was open before the app (new-tab page, another site, the launcher).
-  setTimeout(() => { if (!gone) { try { history.go(-(navIdx + 1)); } catch (_) {} } }, 250);
-  // 3. Nothing to go back to and the browser refuses to close the page: stay in the app (no blank page) and say what to do.
+  try { window.close(); } catch (_) {}                               // installed app / window opened by a script / single-entry tab
+  setTimeout(() => { if (!gone) { try { history.go(-(navIdx + 1)); } catch (_) {} } }, 250);   // back to whatever was open before the app
   setTimeout(() => {
     if (gone) return;
-    exiting = false;
-    let t = document.getElementById('exitHint');
-    if (!t) {
-      t = document.createElement('div');
-      t.id = 'exitHint';
-      t.style.cssText = 'position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom,0px) + 24px);transform:translateX(-50%);z-index:400;max-width:min(92vw,420px);' +
-        'background:#1a2133;color:#e2e8f0;border:1px solid #2c3750;border-radius:14px;padding:.8rem 1rem;font-size:.85rem;line-height:1.35;text-align:center;box-shadow:0 18px 40px -12px rgba(0,0,0,.85)';
-      t.textContent = 'Your browser does not let a page close itself. Swipe the app away or press Home. (Installed to the home screen as an app, Exit closes it.)';
-      document.body.appendChild(t);
-    }
-    t.style.display = 'block';
-    clearTimeout(t._h);
-    t._h = setTimeout(() => { t.style.display = 'none'; }, 6000);
+    exiting = false;                                                 // nothing before the app and the browser will not close it: stay, no blank page
+    try {                                                            // put the page back on top of the history so Back keeps working
+      const idx = navIdx + 1;
+      const keep = { ...currentNavState(true), ts: Date.now(), sid: NAV_SID, idx };
+      navSilent = true;
+      history.pushState(keep, '', stateToHash(keep));
+      navIdx = idx;
+      setTimeout(() => { navSilent = false; }, 90);
+    } catch (_) {}
+    showToast('Your browser does not let a page close itself. Swipe the app away or press Home.', 5000);
   }, 1400);
 }
 let feedSearchEntryActive = false;
@@ -1727,19 +1735,29 @@ window.addEventListener('popstate', (e) => {
     const k = entryView.get(navIdx);
     if (k && k === navViewKey(currentNavState(true)) && !pageIsLocked() && !scrollRestoring) entryScroll.set(navIdx, Math.round(window.scrollY));
   } catch (_) {}
-  if (exiting) return;                                            // Exit was chosen: the browser is leaving the app
+  if (exiting) return;                                            // leaving the app: nothing to handle
   const fromIdx = navIdx;
   const goingBack = to === -1 || to < fromIdx;
   if (goingBack && !(mainPlayer && mainPlayer.classList.contains('active')) && (sectionMenuOpen || isSectionRootState(currentNavState(true)))) {
-    // Back on a section's main page does not walk through the history: it asks where to go (other sections, or Exit).
+    // Back on a section's main page does not walk through the history: it shows the Where-to sheet and "Press back again to exit".
     // The Back is undone by putting the same page on top of the history again - nothing is re-rendered, nothing moves.
+    const now = Date.now();
+    if (now - lastRootBack < 2500) {                              // second Back while the message is still showing: leave
+      lastRootBack = 0;
+      hideToast();
+      navIdx = to >= 0 ? to : Math.max(fromIdx - 1, 0);           // where the browser is now = how far back the whole visit is
+      exitSite();
+      return;
+    }
+    lastRootBack = now;
+    showToast('Press back again to exit', 2500);
     const keep = { ...currentNavState(true), ts: Date.now(), sid: NAV_SID, idx: fromIdx };
     navIdx = fromIdx;
     navSilent = true;
     forgetEntryScrollFrom(fromIdx + 1);
     try { history.pushState(keep, '', stateToHash(keep)); } catch (_) {}
     setTimeout(() => { navSilent = false; }, 90);                 // the hashchange of that Back is over by then
-    if (sectionMenuOpen) closeSectionMenu(); else openSectionMenu();
+    if (!sectionMenuOpen) openSectionMenu();
     return;
   }
   if (to >= 0) navIdx = to;
