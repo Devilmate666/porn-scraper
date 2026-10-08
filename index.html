@@ -1552,6 +1552,33 @@ window.addEventListener('popstate', (e) => {
     return;
   }
 
+  // Top-level section menus are never a Back-to-previous-section stack.
+  // If Back lands on another top-level section (for example:
+  // Home -> Porn Stars -> Networks -> Back), resolve that entry directly to Home.
+  // Nested views such as Networks -> See All are still allowed to use their own
+  // history steps.
+  const topLevelViews = new Set([
+    'feed', 'categories', 'pornsites', 'porntags', 'networks',
+    'pornstars', 'livecams', 'livechannels'
+  ]);
+  const currentState = history.state;
+  const targetIsTopLevel = !!(e.state && topLevelViews.has(e.state.view) &&
+    !['category-feed', 'player', 'websearch'].includes(e.state.view));
+  const currentIsTopLevel = !!(currentState && topLevelViews.has(currentState.view) &&
+    !['category-feed', 'player', 'websearch'].includes(currentState.view));
+  const targetSection = sectionForState(e.state);
+
+  if (targetIsTopLevel && currentIsTopLevel && targetSection !== 'home' && navSection !== 'home') {
+    navSilent = true;
+    navSection = 'home';
+    goHome(false).finally(() => {
+      navSilent = false;
+      navSection = 'home';
+      updateNetworkBarActive();
+    });
+    return;
+  }
+
   navSilent = true;
   applyNavState(e.state).finally(() => {
     navSilent = false;
