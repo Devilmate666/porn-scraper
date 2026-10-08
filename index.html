@@ -941,8 +941,8 @@
           </div>
         </div>
         <div class="search-bar" id="searchBarHost">
-          <input id="searchInput" type="text" placeholder="Search this feed…"
-                 autocomplete="off" spellcheck="false" />
+          <input id="searchInput" type="text" placeholder="Search this feed…" aria-label="Search" aria-autocomplete="list"
+                 enterkeyhint="search" inputmode="search" maxlength="80" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
           <button class="action" id="shuffleBtn" type="button" title="Shuffle the videos in this feed">🔀 Shuffle</button>
         </div>
       </div>
@@ -1298,7 +1298,7 @@ function hashToState() {
     case 'pornstars':return { ...base, view: 'pornstars' };
     case 'cams':     return { ...base, view: 'livecams' };
     case 'channels': return { ...base, view: 'livechannels' };
-    case 'search':   return arg ? { ...base, view: 'websearch', query: arg, scope: parts[3] && parts[4] ? { kind: parts[2] === '-' ? '' : parts[2], name: parts[3] === '-' ? '' : parts[3], url: parts[4] } : null } : null;
+    case 'search':   return cleanQuery(arg) ? { ...base, view: 'websearch', query: cleanQuery(arg), scope: parts[3] && parts[4] ? { kind: parts[2] === '-' ? '' : parts[2], name: parts[3] === '-' ? '' : parts[3], url: parts[4] } : null } : null;
     case 'site': {
       const src = SOURCES.find(x => x.id === arg) || SOURCES[0];
       return { view: 'feed', sourceId: src.id, feedId: feedOfSource(src.id).id, feedUrl: src.url };
@@ -1573,7 +1573,7 @@ const itemSearchExtra = new Map();       // video link -> extra text learned fro
 const URL_STOP_WORDS = new Set(['video', 'videos', 'watch', 'view', 'embed', 'play', 'player', 'en', 'html', 'php', 'htm', 'porn', 'full']);
 function normalizeSearchText(value) {
   return String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase().replace(/[^a-z0-9\u00c0-\uffff]+/g, ' ').trim();
+    .toLowerCase().replace(/['\u2019\u2018\u02bc`]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 }
 function searchWordsMatch(text, words) {
   const tokens = normalizeSearchText(text).split(' ').filter(Boolean);
@@ -6040,6 +6040,8 @@ document.addEventListener('input', (e) => {
   const IDS = ['searchInput', 'categorySearchInput', 'tagSearchInput', 'studioSearchInput', 'catalogSearchInput'];
   const isSearch = (el) => el && IDS.includes(el.id);
   const hasText = (el) => (el.value || '').trim() !== '';
+  // On Home, in a section and on search results an emptied box keeps the results (until the next search), so the page must stay put.
+  const keepsResults = (el) => el.id === 'searchInput' && (activeTab === WEBSEARCH_TAB || isMixKey(activeTab) || !!sectionScope());
   const toTop = () => {
     const go = () => window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
     go();
@@ -6052,12 +6054,12 @@ document.addEventListener('input', (e) => {
     if (!isSearch(el)) return;
     const had = el._hadText === true;
     el._hadText = hasText(el);
-    if (had && !el._hadText) toTop();
+    if (had && !el._hadText && !keepsResults(el)) toTop();
   }, true);
   document.addEventListener('keydown', (e) => {
     const el = e.target;
     if (e.key !== 'Escape' || !isSearch(el) || !hasText(el)) return;
-    setTimeout(() => { el._hadText = hasText(el); if (!el._hadText) toTop(); }, 0);   // Esc clears the box in code
+    setTimeout(() => { el._hadText = hasText(el); if (!el._hadText && !keepsResults(el)) toTop(); }, 0);   // Esc clears the box in code
   }, true);
 })();
 
@@ -6405,6 +6407,15 @@ function fetchWithTimeout(url, opts = {}, ms = 20000) {
 let webSearchState = null;      // { query, results, seen, items, nexts, loading, exhausted }
 let webSearchQuery = '';
 let webSearchScope = null;      // { kind, name, url } while the results are searched INSIDE one section; null = Home (all websites)
+/** One tidy form of what was typed: no control / invisible characters, no quote marks, curly apostrophes made plain,
+ *  one space between words, at most 80 characters. Used for the search, its history entry, its cache and shared links. */
+function cleanQuery(raw) {
+  return String(raw || '').normalize('NFC')
+    .replace(/[\u0000-\u001f\u007f\u200b-\u200f\u2028\u2029\ufeff]/g, ' ')
+    .replace(/[\u201c\u201d\u201e\u201f\u00ab\u00bb"]/g, ' ')
+    .replace(/[\u2018\u2019\u201a\u201b\u02bc`\u00b4]/g, "'")
+    .replace(/\s+/g, ' ').trim().slice(0, 80);
+}
 function scopeKeyOf(sc) { return sc && sc.url ? `${sc.kind || ''}|${sc.url}` : ''; }
 /** The pornstar / studio / network / category / tag / website feed that is open (null on Home, lists, cams, channels). */
 function sectionScope() {
@@ -6421,7 +6432,9 @@ function sectionScope() {
 function scopedKeep(it, query) {
   const text = [it.title, it.description, it.link, ...['tags', 'categories', 'models', 'studios'].flatMap(k => (Array.isArray(it[k]) ? it[k] : []).map(x => (typeof x === 'string' ? x : x && x.name)))].filter(Boolean).join(' ');
   const toks = normalizeSearchText(text).split(' ').filter(Boolean);
-  return queryWords(query).every(w => toks.some(t => t.startsWith(w)));
+  const words = queryWords(query);
+  const hit = words.filter(w => toks.some(t => t.startsWith(w))).length;
+  return hit >= (words.length > 1 ? Math.ceil(words.length / 2) : 1);   // same rule as the Worker: all words rank first, at least half still count
 }
 let webSearchToken = 0;
 const webSearchCache = new Map();
@@ -6531,7 +6544,7 @@ async function searchNextWebSourceBatch(st, token) {
 }
 
 async function runWebSearch(query, opts = {}) {
-  query = (query || '').trim();
+  query = cleanQuery(query);
   if (!query) return;
   // scope: opts.scope (a section search) / the open results' own scope when refining them / none = Home (all websites)
   const scope = opts.scope !== undefined ? (opts.scope && opts.scope.url ? opts.scope : null) : (activeTab === WEBSEARCH_TAB ? webSearchScope : null);
@@ -6548,7 +6561,7 @@ async function runWebSearch(query, opts = {}) {
     const update = replacingSearch ? replaceNav : pushNav;      // first search adds ONE history entry, later ones replace it
     update({ view: 'websearch', query, scope });
   };
-  const cacheKey = `${activeSourceId}:${scopeKeyOf(scope)}:${query.toLocaleLowerCase()}`;
+  const cacheKey = `${activeSourceId}:${scopeKeyOf(scope)}:${normalizeSearchText(query)}`;
   const cached = webSearchCache.get(cacheKey);
   if (cached && cached.loading && webSearchState === cached) {
     webSearchState = cached;
@@ -6773,8 +6786,9 @@ onLiveInput = function () {
   // Inside a pornstar / studio / network / category / tag / website feed the same thing happens, scoped to that section.
   const sc = activeTab === WEBSEARCH_TAB ? webSearchScope : (isMixKey(activeTab) ? null : sectionScope());
   if (activeTab === WEBSEARCH_TAB || isMixKey(activeTab) || sc) {
-    const q = (searchInput.value || '').trim();
-    if (q && q.length >= 2 && !(activeTab === WEBSEARCH_TAB && q.toLowerCase() === webSearchQuery.toLowerCase())) runWebSearch(q, { scope: sc });
+    const q = cleanQuery(searchInput.value), nq = normalizeSearchText(q);
+    if (q && searchInput.value !== q) searchInput.value = q;                  // the box shows exactly what is searched
+    if (nq.length >= 2 && !(activeTab === WEBSEARCH_TAB && nq === normalizeSearchText(webSearchQuery))) runWebSearch(q, { scope: sc });
     return;
   }
   _onLiveInputOrig();

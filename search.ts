@@ -13,7 +13,7 @@ import { hash12, noQuery } from "./scrape";
 
 // ------------------------------------------------------------------ text normalisation
 export const norm = (s: string | null | undefined): string =>
-  (s || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  (s || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/['\u2019\u2018\u02bc`]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 
 /** words that say nothing about a video on an adult site; dropped only when real keywords remain */
 const STOP = new Set(["the", "a", "an", "and", "or", "of", "in", "on", "with", "for", "to", "video", "videos", "porn", "free", "hd", "xxx", "full", "movie", "movies", "sex", "online"]);
