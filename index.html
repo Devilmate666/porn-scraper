@@ -1745,26 +1745,27 @@ window.addEventListener('popstate', (e) => {
   if (exiting) return;                                            // leaving the app: nothing to handle
   const fromIdx = navIdx;
   const goingBack = to === -1 || to < fromIdx;
-  if (goingBack && !(mainPlayer && mainPlayer.classList.contains('active')) && isSectionRootState(currentNavState(true))) {
-    // Top-level section menus are not a Back stack. From any non-Home section,
-    // Back returns directly to Home; it must not open a menu or promise to close
-    // a browser tab (browsers generally block script-initiated window.close()).
-    if (navSection !== 'home') {
+  if (goingBack && !(mainPlayer && mainPlayer.classList.contains('active')) && (sectionMenuOpen || isSectionRootState(currentNavState(true)))) {
+    // Preserve the original section menu and two-Back exit prompt. The first
+    // Back is consumed by restoring the current root entry; the second attempts
+    // to leave the app through exitSite().
+    const now = Date.now();
+    if (now - lastRootBack < 2500) {
+      lastRootBack = 0;
       hideToast();
-      closeSectionMenu();
-      navSilent = true;
-      navSection = 'home';
-      goHome(false).finally(() => {
-        replaceNav({ ...currentNavState(true), view: 'feed', section: 'home' });
-        navSilent = false;
-        updateNetworkBarActive();
-      });
+      navIdx = to >= 0 ? to : Math.max(fromIdx - 1, 0);
+      exitSite();
       return;
     }
-    // At Home, do not trap Back with a fake exit prompt. Let the browser move
-    // to its previous history entry naturally.
-    closeSectionMenu();
-    hideToast();
+    lastRootBack = now;
+    showToast('Press back again to exit', 2500);
+    const keep = { ...currentNavState(true), ts: Date.now(), sid: NAV_SID, idx: fromIdx };
+    navIdx = fromIdx;
+    navSilent = true;
+    forgetEntryScrollFrom(fromIdx + 1);
+    try { history.pushState(keep, '', stateToHash(keep)); } catch (_) {}
+    setTimeout(() => { navSilent = false; }, 90);
+    if (!sectionMenuOpen) openSectionMenu();
     return;
   }
   if (to >= 0) navIdx = to;
