@@ -151,12 +151,14 @@
     .cam-name { font-size: .8rem; }
     .cam-viewers { font-size: .62rem; }
   }
-  .cams-chips { display: flex; flex-wrap: wrap; gap: .4rem; padding: .7rem 1.4rem 0; }
-  .cams-chips .cam-chip { cursor: pointer; user-select: none; font-size: .74rem; color: #b6c3dc; background: #171d28;
-    border: 1px solid #2a3347; border-radius: 999px; padding: .28rem .7rem; transition: .12s; }
-  .cams-chips .cam-chip:hover { filter: brightness(1.25); }
-  .cams-chips .cam-chip.active { background: #2b3556; color: #fff; border-color: #7c8af8; }
-  .cams-chips .cam-chip small { opacity: .65; margin-left: .3rem; }
+.cams-chips { display: flex; flex-wrap: wrap; gap: .4rem; padding: .7rem 1.4rem 0; }
+.cams-chips .cam-chip { cursor: pointer; user-select: none; font-size: .74rem; color: #b6c3dc; background: #171d28;
+  border: 1px solid #2a3347; border-radius: 999px; padding: .28rem .7rem; transition: .12s; }
+.cams-chips .cam-chip:hover { filter: brightness(1.25); }
+.cams-chips .cam-chip.active { background: #2b3556; color: #fff; border-color: #7c8af8; }
+.cams-chips .cam-chip small { opacity: .65; margin-left: .3rem; }
+.cams-filter-row { display: flex; align-items: center; gap: .6rem; padding: .5rem 1.4rem 0; flex-wrap: wrap; }
+.cams-filter-label { font-size: .7rem; font-weight: 600; color: #8a9cc0; text-transform: uppercase; letter-spacing: .05em; flex-shrink: 0; min-width: 70px; }
   .cam-tagline { margin-top: .22rem; font-size: .68rem; color: #6f7f9c; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .cams-empty { grid-column: 1 / -1; padding: 2rem; text-align: center; color: #7a8aaa; }
   .cam-thumb .cam-img { opacity: 0; transition: opacity .35s ease; z-index: 0; }
@@ -5292,6 +5294,9 @@ function renderLiveCams() {
   const bodyTypes = liveCamsFilters?.bodyTypes || [];
   const countries = liveCamsFilters?.countries || [];
   
+  // Helper to create filter row with label
+  const filterRow = (label, chipsHtml) => chipsHtml ? `<div class="cams-filter-row"><span class="cams-filter-label">${label}</span>${chipsHtml}</div>` : '';
+  
   const tagChips = tags.length
     ? `<div class="cams-chips" data-filter="tag"><span class="cam-chip" data-tag="">All</span>${tags.map(t => `<span class="cam-chip" data-tag="${escapeHtml(t)}">${escapeHtml(t)}</span>`).join('')}</div>`
     : '';
@@ -5325,7 +5330,13 @@ function renderLiveCams() {
         </div>
         <div class="badges"><span class="count-badge">🎥 ${n} live</span><span id="camsRefresh" class="chip-btn" title="Load a fresh list">🔄 Refresh</span></div>
       </div>
-      ${tagChips}${catChips}${genreChips}${hairChips}${bodyChips}${countryChips}${provChips}
+      ${filterRow('Tags', tagChips)}
+      ${filterRow('Categories', catChips)}
+      ${filterRow('Genres', genreChips)}
+      ${filterRow('Hair Color', hairChips)}
+      ${filterRow('Body Type', bodyChips)}
+      ${filterRow('Countries', countryChips)}
+      ${filterRow('Platforms', provChips)}
       <div class="cams-grid"></div>
       <div class="cams-more"></div>
     </div>`;
