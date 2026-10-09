@@ -1,6 +1,3 @@
-
-
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -6215,6 +6212,7 @@ window.addEventListener('scroll', () => {
       if (isAtFeedBottom(700)) loadMoreWebSearch();
       return;
     }
+    // Section search: initial result already has all index matches (up to 300), no "load more" needed
     if (feedQueries.get(key) && isAtFeedBottom(120)) revealNext(key);
   });
 }, { passive: true });
@@ -6239,7 +6237,114 @@ function onLiveInput() {
     mirror.dispatchEvent(new Event('input'));
     return;
   }
+  const sc = sectionScope();
+  if (sc) {
+    const q = cleanQuery(searchInput.value), nq = normalizeSearchText(q);
+    if (q && searchInput.value !== q) searchInput.value = q;
+    if (nq.length >= 2) runSectionSearch(q, sc);
+    else restoreSectionFeed(sc.url);
+    return;
+  }
   runFeedSearch();
+}
+
+/** Run a scoped search inside the current section (pornstar, studio, category, tag, website).
+ *  Fetches ALL matching videos from the server index and renders them in the current section feed. */
+async function runSectionSearch(query, scope) {
+  const key = activeTab;
+  const feed = feedEl(key);
+  const grid = gridOf(key);
+  if (!feed || !grid) return;
+
+  setStatus(`Searching ${scope.name} for "${query}"…`, true);
+  grid.classList.add('live-pending');
+
+  try {
+    const res = await fetch('/api/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, scope: { kind: scope.kind, name: scope.name, url: scope.url } })
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    if (json.error) throw new Error(json.error);
+
+    // Replace section feed items with search results
+    const items = (json.combined || []).map(it => ({ ...it, _host: hostOf(it.page || it.link || scope.url) }));
+    
+    // Update siteData for this section
+    const existing = siteData.get(key);
+    siteData.set(key, {
+      ...existing,
+      page: existing?.page || scope.url,
+      page_title: `${scope.name} — "${query}"`,
+      items,
+      _searchQuery: query,
+      _searchScope: scope,
+    });
+
+    // Update pagination state for "load more"
+    const st = siteState.get(key) || {};
+    st.next_page = json.scope_next?.url || '';
+    st.page_num = json.scope_next?.num || 1;
+    st.exhausted = !json.scope_next?.url;
+    st._searchMode = true;
+    siteState.set(key, st);
+
+    renderFeed(key);
+    setStatus(`${scope.name} — ${items.length} match${items.length !== 1 ? 'es' : ''} for "${query}"`, false);
+  } catch (err) {
+    setStatus(`Search error: ${err.message}`, false);
+    grid.classList.remove('live-pending');
+  }
+}
+
+/** Restore the original section feed (when search is cleared). */
+async function restoreSectionFeed(sectionUrl) {
+  const key = activeTab;
+  if (key !== sectionUrl) return;
+  
+  const grid = gridOf(key);
+  if (!grid) return;
+  
+  grid.classList.add('live-pending');
+  
+  try {
+    const res = await fetch('/api/scrape', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ urls: [sectionUrl] })
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    if (json.error) throw new Error(json.error);
+    
+    const data = (json.results || [])[0];
+    if (!data) throw new Error('No data returned');
+    
+    const pageUrl = data.page || sectionUrl;
+    siteData.set(pageUrl, {
+      page: pageUrl,
+      page_title: data.page_title,
+      error: data.error,
+      items: (data.items || []).map(it => ({ ...it, _host: hostOf(pageUrl) })),
+    });
+    siteState.set(pageUrl, {
+      next_page: data.next_page || guessNextUrl(pageUrl, 2) || '',
+      page_num: data.page_num || 1,
+      loading: false,
+      exhausted: !data.next_page,
+      emptyCount: 0, retryCount: 0, error: !!data.error,
+      _searchMode: false,
+    });
+    
+    renderFeed(pageUrl);
+    const total = data.items?.length || 0;
+    setStatus(`${nameFor(pageUrl)} — ${total} preview${total !== 1 ? 's' : ''}`, false);
+  } catch (err) {
+    setStatus(`Restore error: ${err.message}`, false);
+    grid.classList.remove('live-pending');
+  }
 }
 
 /** 🔀 Shuffle the videos of the open feed. */
