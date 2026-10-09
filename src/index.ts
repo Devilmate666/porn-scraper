@@ -155,7 +155,7 @@ async function refreshCams(env: Env, force = false): Promise<any | null> {
     try { cur = await env.SCRAPE_DATA.get(CAMS_KEY, { type: "json" }); } catch { /* treat as empty */ }
     const age = ageOf(cur);
     if (!force && cur?.items?.length && age !== null && age < 240) return cur;          // refreshed a moment ago
-    const fresh = await fetchLiveCams({ wm: env.CHATURBATE_WM, providers: env.CAM_PROVIDERS }).catch(() => null);
+    const fresh = await fetchLiveCams({ wm: env.CHATURBATE_WM, providers: env.CAM_PROVIDERS, proxy: env.LEMONCAMS_PROXY }).catch(() => null);
     if (!fresh || !fresh.items?.length) return null;
     // A platform that failed this time keeps ITS previous cams - but only cams that were really seen in the last
     // CAMS_CARRY seconds (each cam has its own `_seen`, which a carry-over does not renew), so a platform that stays
@@ -638,13 +638,13 @@ export default {
             return o;
           }
           // Fetch fresh from lemoncams
-          const fresh = await fetchLemoncamsFilters();
+          const fresh = await fetchLemoncamsFilters(env.LEMONCAMS_PROXY);
           if (fresh.tags.length || fresh.categories.length || fresh.genres.length) {
-            const payload = { tags: fresh.tags, categories: fresh.categories, genres: fresh.genres, _ts: nowSec() };
+            const payload = { tags: fresh.tags, categories: fresh.categories, genres: fresh.genres, hairColors: fresh.hairColors, bodyTypes: fresh.bodyTypes, _ts: nowSec() };
             ctx.waitUntil(env.SCRAPE_DATA.put(key, JSON.stringify(payload), { expirationTtl: 86400 }));
             return json(payload, 200, headers);
           }
-          return json({ tags: [], categories: [], genres: [], error: "No filters available" }, 200, headers);
+          return json({ tags: [], categories: [], genres: [], hairColors: [], bodyTypes: [], error: "No filters available" }, 200, headers);
         }
 
         // ---------------------------------------------------------------- live TV channels (bundle, stale-forever)

@@ -19,6 +19,8 @@ export interface Env {
   CHATURBATE_WM?: string;
   /** Comma list of direct cam platforms to fetch, default "chaturbate,stripchat,cam4,camsoda". */
   CAM_PROVIDERS?: string;
+  /** Optional proxy for Lemoncams scraping (e.g., "https://r.jina.ai/http://"). */
+  LEMONCAMS_PROXY?: string;
   /** Watchdog: lets the Worker's cron start the GitHub scraper workflow when data is stale. */
   GITHUB_TOKEN?: string;      // fine-grained PAT with Actions: read & write (set as secret)
   GITHUB_REPO?: string;       // "owner/name"

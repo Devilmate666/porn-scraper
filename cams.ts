@@ -28,6 +28,14 @@ const K_TITLE = ["room_subject", "subject", "topic", "title", "roomTitle", "room
 const K_LINK = ["link", "url", "profileUrl", "profile_url", "href", "permalink"];
 const NOT_PUBLIC = new Set(["private", "hidden", "group", "groupshow", "group_show", "offline", "away", "ticketshow", "spy", "p2p", "password"]);
 const LEMONCAMS_URL = "https://www.lemoncams.com/";
+const LEMONCAMS_PROXY = ""; // Set via fetchLiveCams opts.proxy
+
+function proxiedUrl(url: string, proxy: string): string {
+  if (proxy && url.startsWith("http")) {
+    return proxy + encodeURIComponent(url);
+  }
+  return url;
+}
 
 const empty = (v: any) => v === null || v === undefined || v === "" || (Array.isArray(v) && !v.length) || (typeof v === "object" && !Array.isArray(v) && !Object.keys(v).length);
 const first = (d: any, keys: string[]) => { for (const k of keys) if (k in d && !empty(d[k])) return d[k]; return null; };
@@ -158,7 +166,7 @@ const LEMONCAMS_PAGES = [
   "https://www.lemoncams.com/trans",
 ];
 
-async function fetchLemoncams(): Promise<{ cams: any[]; notes: string[] }> {
+async function fetchLemoncams(proxy: string = ""): Promise<{ cams: any[]; notes: string[] }> {
   const notes: string[] = [];
   const allCams: any[] = [];
   const seen = new Set<string>();
@@ -167,13 +175,13 @@ async function fetchLemoncams(): Promise<{ cams: any[]; notes: string[] }> {
 
   for (const url of LEMONCAMS_PAGES) {
     try {
-      const r = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
+      const r = await fetch(proxiedUrl(url, proxy), { headers, signal: AbortSignal.timeout(15000) });
       if (!r.ok) { notes.push(`lemoncams: ${url} -> HTTP ${r.status}`); continue; }
       const html = await r.text();
       const camUrls = [...html.matchAll(/href="(\/cam\/[^"]+)"/g)].map(m => `https://www.lemoncams.com${m[1]}`).slice(0, 30);
       for (const camUrl of camUrls) {
         try {
-          const cr = await fetch(camUrl, { headers, signal: AbortSignal.timeout(8000) });
+          const cr = await fetch(proxiedUrl(camUrl, proxy), { headers, signal: AbortSignal.timeout(8000) });
           if (!cr.ok) continue;
           const cHtml = await cr.text();
           const providerMatch = cHtml.match(/data-provider=["']([^"']+)["']/i);
@@ -218,7 +226,7 @@ async function fetchLemoncams(): Promise<{ cams: any[]; notes: string[] }> {
   return { cams: allCams, notes };
 }
 
-async function fetchLemoncamsTags(): Promise<{ tags: string[]; categories: string[]; genres: string[]; hairColors: string[]; bodyTypes: string[]; notes: string[] }> {
+async function fetchLemoncamsTags(proxy: string = ""): Promise<{ tags: string[]; categories: string[]; genres: string[]; hairColors: string[]; bodyTypes: string[]; notes: string[] }> {
   const notes: string[] = [];
   const tags = new Set<string>();
   const categories = new Set<string>();
@@ -238,7 +246,7 @@ async function fetchLemoncamsTags(): Promise<{ tags: string[]; categories: strin
 
   for (const url of pages) {
     try {
-      const r = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
+      const r = await fetch(proxiedUrl(url, proxy), { headers, signal: AbortSignal.timeout(15000) });
       if (!r.ok) { notes.push(`lemoncams-tags: ${url} -> HTTP ${r.status}`); continue; }
       const html = await r.text();
 
@@ -368,7 +376,7 @@ function merge(groups: Record<string, any[]>): any[] {
 
 /** Fetch every direct platform + Lemoncams in parallel (each independent). Returns a payload even when some platforms fail.
  *  Every cam carries `_seen` (unix seconds) so a cam carried over from an older copy can be expired by age. */
-export async function fetchLiveCams(opts: { wm?: string; providers?: string } = {}): Promise<any> {
+export async function fetchLiveCams(opts: { wm?: string; providers?: string; proxy?: string } = {}): Promise<any> {
   const specs = directSpecs(opts.wm || "dvafl");
   const want = (opts.providers || "").split(",").map((x) => x.trim().toLowerCase()).filter((x) => x in specs);
   const names = want.length ? want : Object.keys(specs);
@@ -380,7 +388,7 @@ export async function fetchLiveCams(opts: { wm?: string; providers?: string } = 
   }));
 
   // Also fetch from Lemoncams (aggregates many platforms)
-  const lemonResult = await fetchLemoncams().catch((e) => ({ cams: [] as any[], notes: [`lemoncams: ${e instanceof Error ? e.message : e}`] }));
+  const lemonResult = await fetchLemoncams(opts.proxy).catch((e) => ({ cams: [] as any[], notes: [`lemoncams: ${e instanceof Error ? e.message : e}`] }));
   const now = Math.floor(Date.now() / 1000);
 
   // Add lemoncams cams with _seen timestamp
@@ -406,6 +414,6 @@ export async function fetchLiveCams(opts: { wm?: string; providers?: string } = 
 }
 
 /** Fetch tags, categories, and genres from Lemoncams for filter UI. */
-export async function fetchLemoncamsFilters(): Promise<{ tags: string[]; categories: string[]; genres: string[]; hairColors: string[]; bodyTypes: string[]; notes: string[] }> {
-  return fetchLemoncamsTags();
+export async function fetchLemoncamsFilters(proxy: string = ""): Promise<{ tags: string[]; categories: string[]; genres: string[]; hairColors: string[]; bodyTypes: string[]; notes: string[] }> {
+  return fetchLemoncamsTags(proxy);
 }
