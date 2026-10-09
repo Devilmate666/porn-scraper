@@ -6214,7 +6214,9 @@ window.addEventListener('scroll', () => {
       if (isAtFeedBottom(700)) loadMoreWebSearch();
       return;
     }
-    if (feedQueries.get(key) && isAtFeedBottom(120)) revealNext(key);
+    const st = siteState.get(key);
+    if (st?._searchMode && isAtFeedBottom(120)) loadMoreSectionSearch(key);
+    else if (feedQueries.get(key) && isAtFeedBottom(120)) revealNext(key);
   });
 }, { passive: true });
 
@@ -6239,6 +6241,168 @@ function onLiveInput() {
     return;
   }
   runFeedSearch();
+}
+
+/** Run a scoped search inside the current section (pornstar, studio, category, tag, website).
+ *  Fetches ALL matching videos from the server index and renders them in the current section feed. */
+async function runSectionSearch(query, scope) {
+  const key = activeTab;
+  const feed = feedEl(key);
+  const grid = gridOf(key);
+  if (!feed || !grid) return;
+
+  setStatus(`Searching ${scope.name} for "${query}"…`, true);
+  grid.classList.add('live-pending');
+
+  try {
+    const res = await fetch('/api/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, scope: { kind: scope.kind, name: scope.name, url: scope.url } })
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    if (json.error) throw new Error(json.error);
+
+    // Replace section feed items with search results
+    const items = (json.combined || []).map(it => ({ ...it, _host: hostOf(it.page || it.link || scope.url) }));
+    
+    // Update siteData for this section
+    const existing = siteData.get(key);
+    siteData.set(key, {
+      ...existing,
+      page: existing?.page || scope.url,
+      page_title: `${scope.name} — "${query}"`,
+      items,
+      _searchQuery: query,
+      _searchScope: scope,
+    });
+
+    // Update pagination state for "load more"
+    const st = siteState.get(key) || {};
+    st.next_page = json.scope_next?.url || '';
+    st.page_num = json.scope_next?.num || 1;
+    st.exhausted = !json.scope_next?.url;
+    st._searchMode = true;
+    siteState.set(key, st);
+
+    renderFeed(key);
+    setStatus(`${scope.name} — ${items.length} match${items.length !== 1 ? 'es' : ''} for "${query}"`, false);
+  } catch (err) {
+    setStatus(`Search error: ${err.message}`, false);
+    grid.classList.remove('live-pending');
+  }
+}
+
+/** Restore the original section feed (when search is cleared). */
+async function restoreSectionFeed(sectionUrl) {
+  const key = activeTab;
+  if (key !== sectionUrl) return;  // only restore if still on same section
+  
+  const grid = gridOf(key);
+  if (!grid) return;
+  
+  grid.classList.add('live-pending');
+  
+  try {
+    const res = await fetch('/api/scrape', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ urls: [sectionUrl] })
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    if (json.error) throw new Error(json.error);
+    
+    const data = (json.results || [])[0];
+    if (!data) throw new Error('No data returned');
+    
+    const pageUrl = data.page || sectionUrl;
+    siteData.set(pageUrl, {
+      page: pageUrl,
+      page_title: data.page_title,
+      error: data.error,
+      items: (data.items || []).map(it => ({ ...it, _host: hostOf(pageUrl) })),
+    });
+    siteState.set(pageUrl, {
+      next_page: data.next_page || guessNextUrl(pageUrl, 2) || '',
+      page_num: data.page_num || 1,
+      loading: false,
+      exhausted: !data.next_page,
+      emptyCount: 0, retryCount: 0, error: !!data.error,
+      _searchMode: false,
+    });
+    
+    renderFeed(pageUrl);
+    const total = data.items?.length || 0;
+    setStatus(`${nameFor(pageUrl)} — ${total} preview${total !== 1 ? 's' : ''}`, false);
+  } catch (err) {
+    setStatus(`Restore error: ${err.message}`, false);
+    grid.classList.remove('live-pending');
+  }
+}
+
+/** Load more results for a section search (using server's scope_next pagination via /api/scrape). */
+async function loadMoreSectionSearch(key) {
+  const st = siteState.get(key);
+  if (!st || !st._searchMode || st.loading || st.exhausted || !st.next_page) return;
+  const query = siteData.get(key)?._searchQuery;
+  const scope = siteData.get(key)?._searchScope;
+  if (!query || !scope) return;
+
+  st.loading = true;
+  const grid = gridOf(key);
+  if (grid) {
+    const skeletons = document.createElement('div');
+    skeletons.className = 'search-skeletons';
+    skeletons.innerHTML = searchSkeletonsHtml(6);
+    const slot = grid.querySelector('.loading-row-slot');
+    grid.insertBefore(skeletons, slot);
+  }
+
+  try {
+    // Fetch the next page of the section listing via /api/scrape
+    const res = await fetch('/api/scrape', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ urls: [{ url: st.next_page, page_num: st.page_num }] })
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    if (json.error) throw new Error(json.error);
+
+    const data = (json.results || [])[0];
+    if (!data?.items?.length) {
+      st.exhausted = true;
+      siteState.set(key, st);
+      return;
+    }
+
+    // Filter items by the search query (same as server's scopedKeep)
+    const words = queryWords(query);
+    const filtered = data.items.filter(it => scopedKeep(it, query));
+    
+    const items = filtered.map(it => ({ ...it, _host: hostOf(it.page || it.link || scope.url) }));
+    const existing = siteData.get(key);
+    if (existing) {
+      existing.items.push(...items);
+      siteData.set(key, existing);
+    }
+
+    // Update pagination
+    st.next_page = data.next_page || '';
+    st.page_num = data.page_num || st.page_num + 1;
+    st.exhausted = !data.next_page;
+    siteState.set(key, st);
+
+    renderFeed(key);
+  } catch (err) {
+    setStatus(`Load more error: ${err.message}`, false);
+  } finally {
+    st.loading = false;
+    const grid2 = gridOf(key);
+    grid2?.querySelector(':scope > .search-skeletons')?.remove();
+  }
 }
 
 /** 🔀 Shuffle the videos of the open feed. */
@@ -7120,10 +7284,21 @@ onLiveInput = function () {
   // category / star / studio click opens - and merges them into ONE feed. An empty box does nothing: results stay.
   // Inside a pornstar / studio / network / category / tag / website feed the same thing happens, scoped to that section.
   const sc = activeTab === WEBSEARCH_TAB ? webSearchScope : (isMixKey(activeTab) ? null : sectionScope());
-  if (activeTab === WEBSEARCH_TAB || isMixKey(activeTab) || sc) {
+  if (activeTab === WEBSEARCH_TAB || isMixKey(activeTab)) {
     const q = cleanQuery(searchInput.value), nq = normalizeSearchText(q);
-    if (q && searchInput.value !== q) searchInput.value = q;                  // the box shows exactly what is searched
+    if (q && searchInput.value !== q) searchInput.value = q;
     if (nq.length >= 2 && !(activeTab === WEBSEARCH_TAB && nq === normalizeSearchText(webSearchQuery))) runWebSearch(q, { scope: sc });
+    return;
+  }
+  if (sc) {
+    const q = cleanQuery(searchInput.value), nq = normalizeSearchText(q);
+    if (q && searchInput.value !== q) searchInput.value = q;
+    if (nq.length >= 2) {
+      runSectionSearch(q, sc);
+    } else {
+      // Empty query - restore original section feed
+      restoreSectionFeed(sc.url);
+    }
     return;
   }
   _onLiveInputOrig();
