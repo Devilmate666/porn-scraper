@@ -5402,6 +5402,7 @@ async function openLiveCams(force = false, opts = {}) {
     ]);
     const camsJson = await camsRes.json().catch(() => ({}));
     const filtersJson = await filtersRes.json().catch(() => ({}));
+    console.log('[LiveCams] Filters API response:', filtersJson);
     
     if (!camsRes.ok || camsJson.error || !(camsJson.items || []).length) {
       const e = new Error(camsJson.error || camsJson.detail || (camsRes.ok ? 'No live cams were found.' : `HTTP ${camsRes.status}`));
@@ -5416,6 +5417,23 @@ async function openLiveCams(force = false, opts = {}) {
       hairColors: filtersJson.hairColors || [],
       bodyTypes: filtersJson.bodyTypes || []
     };
+    // Fallback: extract filters from cam data if API returned empty
+    if (!liveCamsFilters.tags.length && !liveCamsFilters.categories.length) {
+      const tagSet = new Set<string>();
+      const catSet = new Set<string>();
+      const hairSet = new Set<string>();
+      const bodySet = new Set<string>();
+      for (const c of liveCamsData.items) {
+        (c.tags || []).forEach(t => tagSet.add(t));
+        (c.categories || []).forEach(c => catSet.add(c));
+        if (c.hair_color) hairSet.add(c.hair_color);
+        if (c.body_type) bodySet.add(c.body_type);
+      }
+      liveCamsFilters.tags = Array.from(tagSet).sort();
+      liveCamsFilters.categories = Array.from(catSet).sort();
+      liveCamsFilters.hairColors = Array.from(hairSet).sort();
+      liveCamsFilters.bodyTypes = Array.from(bodySet).sort();
+    }
     renderLiveCams();
     if (!opts.skipPush) pushNav({ view: 'livecams' });
   } catch (err) {
