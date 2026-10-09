@@ -6451,7 +6451,11 @@ searchInput.addEventListener('keydown', (e) => {
     const sc = scopeNow();
     if (sc) {                                                    // inside a section (or its search results): everything cached for THIS section
       const sv = await fromServer(text, sc, fresh), own = normalizeSearchText(sc.name);
-      const rows = mergeUnique([...loaded, ...(((sv && sv.videos) || []).map(t => ({ type: 'kw', text: t, label: t })))], 'label')
+      const serverKws = ((sv && sv.videos) || []).map(t => {
+        const k = normalizeSearchText(t);
+        return { type: 'kw', text: t, label: t, key: k, words: k.split(' '), multi: k.includes(' '), count: 1 };
+      });
+      const rows = mergeUnique([...loaded, ...serverKws], 'label')
         .filter(r => normalizeSearchText(r.label) !== own).slice(0, 10);
       if (rows.length) groups.push({ title: `🎬 In ${sc.name} · all cached videos`, rows });
       return groups;
@@ -6463,7 +6467,11 @@ searchInput.addEventListener('keydown', (e) => {
     // Home / search results: EVERYTHING the scraper cached (tags, categories, title words, every pornstar and network page,
     // every live channel) - not only what this page happens to have loaded. Rows without a page of their own are searched by name.
     const sv = await fromServer(text, null, fresh);
-    const vids = mergeUnique([...loaded, ...(((sv && sv.videos) || []).map(t => ({ type: 'kw', text: t, label: t })))], 'label').slice(0, 8);
+    const serverVids = ((sv && sv.videos) || []).map(t => {
+      const k = normalizeSearchText(t);
+      return { type: 'kw', text: t, label: t, key: k, words: k.split(' '), multi: k.includes(' '), count: 1 };
+    });
+    const vids = mergeUnique([...loaded, ...serverVids], 'label').slice(0, 8);
     if (vids.length) groups.push({ title: '🎬 Videos · all websites', rows: vids });
     const star = [], net = [], series = [], chan = [];
     const isSeriesUrl = (url) => /\/series\//i.test(url);
