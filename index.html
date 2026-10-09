@@ -5419,13 +5419,13 @@ async function openLiveCams(force = false, opts = {}) {
     };
     // Fallback: extract filters from cam data if API returned empty
     if (!liveCamsFilters.tags.length && !liveCamsFilters.categories.length) {
-      const tagSet = new Set<string>();
-      const catSet = new Set<string>();
-      const hairSet = new Set<string>();
-      const bodySet = new Set<string>();
+      const tagSet = new Set();
+      const catSet = new Set();
+      const hairSet = new Set();
+      const bodySet = new Set();
       for (const c of liveCamsData.items) {
         (c.tags || []).forEach(t => tagSet.add(t));
-        (c.categories || []).forEach(c => catSet.add(c));
+        (c.categories || []).forEach(cat => catSet.add(cat));
         if (c.hair_color) hairSet.add(c.hair_color);
         if (c.body_type) bodySet.add(c.body_type);
       }
