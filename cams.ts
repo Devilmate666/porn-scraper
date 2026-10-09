@@ -27,6 +27,7 @@ const K_COUNTRY = ["country", "countryName", "country_name", "countryCode", "cou
 const K_TITLE = ["room_subject", "subject", "topic", "title", "roomTitle", "room_title", "headline", "statusMessage", "subject_html"];
 const K_LINK = ["link", "url", "profileUrl", "profile_url", "href", "permalink"];
 const NOT_PUBLIC = new Set(["private", "hidden", "group", "groupshow", "group_show", "offline", "away", "ticketshow", "spy", "p2p", "password"]);
+const LEMONCAMS_URL = "https://www.lemoncams.com/";
 
 const empty = (v: any) => v === null || v === undefined || v === "" || (Array.isArray(v) && !v.length) || (typeof v === "object" && !Array.isArray(v) && !Object.keys(v).length);
 const first = (d: any, keys: string[]) => { for (const k of keys) if (k in d && !empty(d[k])) return d[k]; return null; };
@@ -146,7 +147,76 @@ const directSpecs = (wm: string): Record<string, Spec> => ({
     [0, 60].map((o) => `https://stripchat.com/api/front/models?limit=60&offset=${o}&primaryTag=girls&sortBy=stripRanking`) ] },
   cam4: { base: "https://www.cam4.com", candidates: [[1, 2].map((p) => `https://www.cam4.com/directoryCams?directoryJson=true&online=true&url=true&page=${p}&resultsPerPage=60&gender=female`)] },
   camsoda: { base: "https://www.camsoda.com", candidates: [[1, 2].map((p) => `https://www.camsoda.com/api/v1/browse/react?p=${p}&perPage=60`)] },
+  lemoncams: { base: LEMONCAMS_URL, candidates: [[1, 2, 3, 4, 5].map((p) => `https://www.lemoncams.com/api/live?page=${p}&per_page=60&sort=rating`)] },
 });
+
+const LEMONCAMS_PAGES = [
+  "https://www.lemoncams.com/",
+  "https://www.lemoncams.com/female",
+  "https://www.lemoncams.com/male",
+  "https://www.lemoncams.com/couple",
+  "https://www.lemoncams.com/trans",
+];
+
+async function fetchLemoncams(): Promise<{ cams: any[]; notes: string[] }> {
+  const notes: string[] = [];
+  const allCams: any[] = [];
+  const seen = new Set<string>();
+
+  const headers = { "User-Agent": UA, Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "Accept-Language": "en-US,en;q=0.9", Referer: LEMONCAMS_URL };
+
+  for (const url of LEMONCAMS_PAGES) {
+    try {
+      const r = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
+      if (!r.ok) { notes.push(`lemoncams: ${url} -> HTTP ${r.status}`); continue; }
+      const html = await r.text();
+      const camUrls = [...html.matchAll(/href="(\/cam\/[^"]+)"/g)].map(m => `https://www.lemoncams.com${m[1]}`).slice(0, 30);
+      for (const camUrl of camUrls) {
+        try {
+          const cr = await fetch(camUrl, { headers, signal: AbortSignal.timeout(8000) });
+          if (!cr.ok) continue;
+          const cHtml = await cr.text();
+          const providerMatch = cHtml.match(/data-provider=["']([^"']+)["']/i);
+          const nameMatch = cHtml.match(/data-username=["']([^"']+)["']/i) || cHtml.match(/<title>([^<]+)<\/title>/i);
+          const thumbMatch = cHtml.match(/data-thumb=["']([^"']+)["']/i) || cHtml.match(/<meta property="og:image" content="([^"]+)"/i);
+          const viewersMatch = cHtml.match(/data-viewers=["'](\d+)["']/i);
+          const countryMatch = cHtml.match(/data-country=["']([^"']+)["']/i);
+          const tagsMatch = cHtml.match(/data-tags=["']([^"']+)["']/i);
+          const categoriesMatch = cHtml.match(/data-categories=["']([^"']+)["']/i);
+          const hdMatch = cHtml.match(/data-hd=["'](true|false)["']/i);
+          const newMatch = cHtml.match(/data-new=["'](true|false)["']/i);
+          const idMatch = cHtml.match(/data-id=["']([^"']+)["']/i);
+
+          const provider = providerMatch ? providerMatch[1].toLowerCase() : null;
+          const name = nameMatch ? nameMatch[1].replace(/\s*[-|]\s*lemoncams.*/i, "").trim() : null;
+          if (!name) continue;
+
+          const key = `${provider || "lemoncams"}|${name.toLowerCase()}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+
+          const cam = camFromDict({
+            username: name,
+            provider,
+            thumbnail: thumbMatch ? thumbMatch[1] : null,
+            viewers: viewersMatch ? parseInt(viewersMatch[1], 10) : null,
+            country: countryMatch ? countryMatch[1] : null,
+            tags: tagsMatch ? tagsMatch[1].split(",").map(s => s.trim()) : [],
+            categories: categoriesMatch ? categoriesMatch[1].split(",").map(s => s.trim()) : [],
+            is_hd: hdMatch ? hdMatch[1] === "true" : null,
+            is_new: newMatch ? newMatch[1] === "true" : null,
+            id: idMatch ? idMatch[1] : null,
+          }, LEMONCAMS_URL, provider);
+
+          if (cam) allCams.push(cam);
+        } catch { /* skip individual cam */ }
+      }
+    } catch (e) {
+      notes.push(`lemoncams: ${url} -> ${e instanceof Error ? e.message : e}`);
+    }
+  }
+  return { cams: allCams, notes };
+}
 
 class CamHttpError extends Error { constructor(public status: number, msg: string) { super(msg); } }
 
@@ -232,7 +302,7 @@ function merge(groups: Record<string, any[]>): any[] {
   return out;
 }
 
-/** Fetch every direct platform in parallel (each independent). Returns a payload even when some platforms fail.
+/** Fetch every direct platform + Lemoncams in parallel (each independent). Returns a payload even when some platforms fail.
  *  Every cam carries `_seen` (unix seconds) so a cam carried over from an older copy can be expired by age. */
 export async function fetchLiveCams(opts: { wm?: string; providers?: string } = {}): Promise<any> {
   const specs = directSpecs(opts.wm || "dvafl");
@@ -244,16 +314,29 @@ export async function fetchLiveCams(opts: { wm?: string; providers?: string } = 
     const r = await fetchDirect(n, specs[n]).catch((e) => ({ cams: [] as any[], notes: [`${n}: ${e instanceof Error ? e.message : e}`] }));
     return { ...r, ms: Date.now() - t };
   }));
+
+  // Also fetch from Lemoncams (aggregates many platforms)
+  const lemonResult = await fetchLemoncams().catch((e) => ({ cams: [] as any[], notes: [`lemoncams: ${e instanceof Error ? e.message : e}`] }));
   const now = Math.floor(Date.now() / 1000);
+
+  // Add lemoncams cams with _seen timestamp
+  for (const c of lemonResult.cams) c._seen = now;
+
   const groups: Record<string, any[]> = {}, diag: string[] = [], status: Record<string, { ok: boolean; count: number; ms: number }> = {};
   names.forEach((n, i) => {
     for (const c of timed[i].cams) c._seen = now;
     groups[n] = timed[i].cams; diag.push(...timed[i].notes);
     status[n] = { ok: timed[i].cams.length > 0, count: timed[i].cams.length, ms: timed[i].ms };
   });
+  // Add lemoncams as a separate source
+  if (lemonResult.cams.length) {
+    groups["lemoncams"] = lemonResult.cams;
+    diag.push(...lemonResult.notes);
+    status["lemoncams"] = { ok: true, count: lemonResult.cams.length, ms: 0 };
+  }
   const items = merge(groups);
   if (!items.length) return { page: CAMS_HOME, items: [], count: 0, platform_status: status, diagnostics: diag, error: "No live cams could be loaded: none of the cam platforms answered." };
   const by: Record<string, number> = {};
   for (const c of items) { const k = c.provider_name || c.provider || "?"; by[k] = (by[k] || 0) + 1; }
-  return { page: CAMS_HOME, items, count: items.length, providers: by, platform_status: status, source: "direct-worker", took_ms: Date.now() - t0, diagnostics: diag, fetched_at: now, _ts: now };
+  return { page: CAMS_HOME, items, count: items.length, providers: by, platform_status: status, source: "direct-worker+lemoncams", took_ms: Date.now() - t0, diagnostics: diag, fetched_at: now, _ts: now };
 }
