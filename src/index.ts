@@ -4,7 +4,7 @@ import { parseQuery, queryKey, loadIndex, loadTaxonomy, searchIndex, matchTaxono
 import { scrapeListing } from "../listings";
 import { resolveVideo, resolveFull } from "../resolve";
 import { fetchMetadata } from "../metadata";
-import { fetchLiveCams } from "../cams";
+import { fetchLiveCams, fetchLemoncamsFilters } from "../cams";
 import { fetchChannelsNative } from "../channels";
 
 // ---------------------------------------------------------------------------------------------------------
@@ -623,6 +623,28 @@ export default {
           let errBody: any = { items: [], count: 0, error: NOT_CACHED };
           try { if (text) errBody = { ...JSON.parse(text), error: JSON.parse(text).error || NOT_CACHED }; } catch { /* keep default */ }
           return json(errBody, 200, headers);
+        }
+
+        // ---------------------------------------------------------------- live cams filters (tags, categories, genres from Lemoncams)
+        case "/api/livecams-filters": {
+          if (!isPost) break;
+          const key = "livecams:filters";
+          const text = await kvText(env.SCRAPE_DATA, key, 86400); // 24h TTL
+          if (text) {
+            const age = (() => { const t = tsOfText(text); return t === null ? null : Math.max(0, nowSec() - t); })();
+            const o = new Response(text, { status: 200, headers: { ...headers, "Content-Type": "application/json" } });
+            o.headers.set("X-Source", "kv");
+            if (age !== null) o.headers.set("X-Cache-Age", String(age));
+            return o;
+          }
+          // Fetch fresh from lemoncams
+          const fresh = await fetchLemoncamsFilters();
+          if (fresh.tags.length || fresh.categories.length || fresh.genres.length) {
+            const payload = { tags: fresh.tags, categories: fresh.categories, genres: fresh.genres, _ts: nowSec() };
+            ctx.waitUntil(env.SCRAPE_DATA.put(key, JSON.stringify(payload), { expirationTtl: 86400 }));
+            return json(payload, 200, headers);
+          }
+          return json({ tags: [], categories: [], genres: [], error: "No filters available" }, 200, headers);
         }
 
         // ---------------------------------------------------------------- live TV channels (bundle, stale-forever)

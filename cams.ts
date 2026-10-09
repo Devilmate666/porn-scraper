@@ -218,6 +218,60 @@ async function fetchLemoncams(): Promise<{ cams: any[]; notes: string[] }> {
   return { cams: allCams, notes };
 }
 
+async function fetchLemoncamsTags(): Promise<{ tags: string[]; categories: string[]; genres: string[]; notes: string[] }> {
+  const notes: string[] = [];
+  const tags = new Set<string>();
+  const categories = new Set<string>();
+  const genres = new Set<string>();
+
+  const headers = { "User-Agent": UA, Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "Accept-Language": "en-US,en;q=0.9", Referer: LEMONCAMS_URL };
+
+  // Scrape tags/categories from main pages
+  const pages = [
+    "https://www.lemoncams.com/",
+    "https://www.lemoncams.com/tags",
+    "https://www.lemoncams.com/categories",
+    "https://www.lemoncams.com/pornstars",
+  ];
+
+  for (const url of pages) {
+    try {
+      const r = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
+      if (!r.ok) { notes.push(`lemoncams-tags: ${url} -> HTTP ${r.status}`); continue; }
+      const html = await r.text();
+
+      // Extract tags from tag cloud / sidebar
+      const tagMatches = [...html.matchAll(/href="\/tags\/([^"]+)"/gi)];
+      for (const m of tagMatches) tags.add(m[1].replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase()));
+
+      // Extract categories
+      const catMatches = [...html.matchAll(/href="\/categories\/([^"]+)"/gi)];
+      for (const m of catMatches) categories.add(m[1].replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase()));
+
+      // Extract genres (if separate)
+      const genreMatches = [...html.matchAll(/href="\/genres\/([^"]+)"/gi)];
+      for (const m of genreMatches) genres.add(m[1].replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase()));
+
+      // Also look for data attributes in cam cards
+      const dataTagMatches = [...html.matchAll(/data-tags=["']([^"']+)["']/gi)];
+      for (const m of dataTagMatches) m[1].split(",").forEach(t => tags.add(t.trim()));
+
+      const dataCatMatches = [...html.matchAll(/data-categories=["']([^"']+)["']/gi)];
+      for (const m of dataCatMatches) m[1].split(",").forEach(c => categories.add(c.trim()));
+
+    } catch (e) {
+      notes.push(`lemoncams-tags: ${url} -> ${e instanceof Error ? e.message : e}`);
+    }
+  }
+
+  return {
+    tags: Array.from(tags).sort(),
+    categories: Array.from(categories).sort(),
+    genres: Array.from(genres).sort(),
+    notes,
+  };
+}
+
 class CamHttpError extends Error { constructor(public status: number, msg: string) { super(msg); } }
 
 async function getJson(url: string, headers: Record<string, string>, ms = 12000): Promise<any> {
@@ -339,4 +393,9 @@ export async function fetchLiveCams(opts: { wm?: string; providers?: string } = 
   const by: Record<string, number> = {};
   for (const c of items) { const k = c.provider_name || c.provider || "?"; by[k] = (by[k] || 0) + 1; }
   return { page: CAMS_HOME, items, count: items.length, providers: by, platform_status: status, source: "direct-worker+lemoncams", took_ms: Date.now() - t0, diagnostics: diag, fetched_at: now, _ts: now };
+}
+
+/** Fetch tags, categories, and genres from Lemoncams for filter UI. */
+export async function fetchLemoncamsFilters(): Promise<{ tags: string[]; categories: string[]; genres: string[]; notes: string[] }> {
+  return fetchLemoncamsTags();
 }

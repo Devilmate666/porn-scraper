@@ -5061,8 +5061,9 @@ async function openCatalog(kind, opts = {}) {
 -------------------------------------------------------------- */
 const CAMS_BATCH = 24;                 // cards added to the page per step: only what is shown gets fetched
 let liveCamsData = null;               // { items, count, providers, source, fetched_at }
+let liveCamsFilters = null;            // { tags, categories, genres }
 let liveCamsShown = 0;
-let camsFilter = { provider: '', q: '' };
+let camsFilter = { provider: '', tag: '', category: '', genre: '', q: '' };
 
 /** Turn a scraped cam into a "video item" so the normal player panel (thumbnail + play + details) can show it. */
 const CAM_PROXY_FIRST = new Set(['stripchat', 'cam4']);      // their image CDNs block hot-linking from other sites
@@ -5128,6 +5129,9 @@ function visibleCams() {
   const words = queryWords(camsFilter.q);
   return liveCamsData.items.filter(c => {
     if (camsFilter.provider && (c.provider_name || c.provider) !== camsFilter.provider) return false;
+    if (camsFilter.tag && !(c.tags || []).map(t => t.toLowerCase()).includes(camsFilter.tag.toLowerCase())) return false;
+    if (camsFilter.category && !(c.categories || []).map(t => t.toLowerCase()).includes(camsFilter.category.toLowerCase())) return false;
+    if (camsFilter.genre && !(c.tags || []).map(t => t.toLowerCase()).includes(camsFilter.genre.toLowerCase())) return false;
     if (!words.length) return true;
     const hay = [c.username, c.provider_name, c.provider, c.country, c.gender, c.room_title,
                  ...(c.categories || []), ...(c.tags || []), ...(c.languages || [])].join(' ');
@@ -5276,9 +5280,26 @@ function renderLiveCams() {
   setTimeout(updateNetworkBarActive, 0);
   const n = liveCamsData.items.length;
   const provs = Object.entries(liveCamsData.providers || {}).sort((a, b) => b[1] - a[1]);
-  const chips = provs.length > 1
+  
+  // Build filter chips for tags, categories, genres from lemoncams
+  const tags = liveCamsFilters?.tags || [];
+  const categories = liveCamsFilters?.categories || [];
+  const genres = liveCamsFilters?.genres || [];
+  
+  const tagChips = tags.length
+    ? `<div class="cams-chips" data-filter="tag"><span class="cam-chip" data-tag="">All</span>${tags.map(t => `<span class="cam-chip" data-tag="${escapeHtml(t)}">${escapeHtml(t)}</span>`).join('')}</div>`
+    : '';
+  const catChips = categories.length
+    ? `<div class="cams-chips" data-filter="category"><span class="cam-chip" data-cat="">All</span>${categories.map(c => `<span class="cam-chip" data-cat="${escapeHtml(c)}">${escapeHtml(c)}</span>`).join('')}</div>`
+    : '';
+  const genreChips = genres.length
+    ? `<div class="cams-chips" data-filter="genre"><span class="cam-chip" data-genre="">All</span>${genres.map(g => `<span class="cam-chip" data-genre="${escapeHtml(g)}">${escapeHtml(g)}</span>`).join('')}</div>`
+    : '';
+  
+  const provChips = provs.length > 1
     ? `<div class="cams-chips"><span class="cam-chip" data-prov="">All<small>${n}</small></span>${provs.map(([p, k]) =>
         `<span class="cam-chip" data-prov="${escapeHtml(p)}">${escapeHtml(p)}<small>${k}</small></span>`).join('')}</div>` : '';
+  
   const sub = provs.length ? provs.map(([p]) => p).join(' · ') : 'live now';
   rescueSearchBar(); results.innerHTML = `
     <div class="feed" data-site="${LIVECAMS_TAB}">
@@ -5289,18 +5310,31 @@ function renderLiveCams() {
         </div>
         <div class="badges"><span class="count-badge">🎥 ${n} live</span><span id="camsRefresh" class="chip-btn" title="Load a fresh list">🔄 Refresh</span></div>
       </div>
-      ${chips}
+      ${tagChips}${catChips}${genreChips}${provChips}
       <div class="cams-grid"></div>
       <div class="cams-more"></div>
     </div>`;
   const feed = results.querySelector('.feed');
   liveCamsShown = 0;
-  camsFilter = { provider: '', q: '' };
+  camsFilter = { provider: '', tag: '', category: '', genre: '', q: '' };
   if (searchInput) searchInput.value = '';
   renderCamBatch(feed);
-  feed.querySelectorAll('.cam-chip').forEach(ch => {
+  // Bind all filter chips
+  feed.querySelectorAll('.cam-chip[data-prov]').forEach(ch => {
     ch.classList.toggle('active', !ch.getAttribute('data-prov'));
     ch.addEventListener('click', () => { camsFilter.provider = ch.getAttribute('data-prov') || ''; refreshCamGrid(); });
+  });
+  feed.querySelectorAll('.cam-chip[data-tag]').forEach(ch => {
+    ch.classList.toggle('active', !ch.getAttribute('data-tag'));
+    ch.addEventListener('click', () => { camsFilter.tag = ch.getAttribute('data-tag') || ''; refreshCamGrid(); });
+  });
+  feed.querySelectorAll('.cam-chip[data-cat]').forEach(ch => {
+    ch.classList.toggle('active', !ch.getAttribute('data-cat'));
+    ch.addEventListener('click', () => { camsFilter.category = ch.getAttribute('data-cat') || ''; refreshCamGrid(); });
+  });
+  feed.querySelectorAll('.cam-chip[data-genre]').forEach(ch => {
+    ch.classList.toggle('active', !ch.getAttribute('data-genre'));
+    ch.addEventListener('click', () => { camsFilter.genre = ch.getAttribute('data-genre') || ''; refreshCamGrid(); });
   });
   // a cam opens in the same player panel as a video: thumbnail, details, play = open the live stream
   feed.querySelector('.cams-grid').addEventListener('click', (e) => {
@@ -5344,21 +5378,25 @@ async function openLiveCams(force = false, opts = {}) {
   setStatus('Loading live cams…', true);
   showSectionLoading('live cams');
   try {
-    const res = await fetch('/api/livecams', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ force: !!force }),
-    });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok || json.error || !(json.items || []).length) {
-      const e = new Error(json.error || json.detail || (res.ok ? 'No live cams were found.' : `HTTP ${res.status}`));
-      e.diagnostics = json.diagnostics;
+    const [camsRes, filtersRes] = await Promise.all([
+      fetch('/api/livecams', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: !!force }) }),
+      fetch('/api/livecams-filters', { method: 'POST', headers: { 'Content-Type': 'application/json' } }),
+    ]);
+    const camsJson = await camsRes.json().catch(() => ({}));
+    const filtersJson = await filtersRes.json().catch(() => ({}));
+    
+    if (!camsRes.ok || camsJson.error || !(camsJson.items || []).length) {
+      const e = new Error(camsJson.error || camsJson.detail || (camsRes.ok ? 'No live cams were found.' : `HTTP ${camsRes.status}`));
+      e.diagnostics = camsJson.diagnostics;
       throw e;
     }
-    liveCamsData = json;
+    liveCamsData = camsJson;
+    liveCamsFilters = { tags: filtersJson.tags || [], categories: filtersJson.categories || [], genres: filtersJson.genres || [] };
     renderLiveCams();
     if (!opts.skipPush) pushNav({ view: 'livecams' });
   } catch (err) {
     liveCamsData = null;
+    liveCamsFilters = null;
     showLiveCamsError(err);
     setStatus('Sex Cams load error', false);
   } finally {
