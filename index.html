@@ -5438,26 +5438,6 @@ async function openLiveCams(force = false, opts = {}) {
       bodyTypes: filtersJson.bodyTypes || [],
       countries: filtersJson.countries || []
     };
-    // Fallback: extract filters from cam data if API returned empty
-    if (!liveCamsFilters.tags.length && !liveCamsFilters.categories.length) {
-      const tagSet = new Set();
-      const catSet = new Set();
-      const hairSet = new Set();
-      const bodySet = new Set();
-      const countrySet = new Set();
-      for (const c of liveCamsData.items) {
-        (c.tags || []).forEach(t => tagSet.add(t));
-        (c.categories || []).forEach(cat => catSet.add(cat));
-        if (c.hair_color) hairSet.add(c.hair_color);
-        if (c.body_type) bodySet.add(c.body_type);
-        if (c.country) countrySet.add(c.country);
-      }
-      liveCamsFilters.tags = Array.from(tagSet).sort();
-      liveCamsFilters.categories = Array.from(catSet).sort();
-      liveCamsFilters.hairColors = Array.from(hairSet).sort();
-      liveCamsFilters.bodyTypes = Array.from(bodySet).sort();
-      liveCamsFilters.countries = Array.from(countrySet).sort();
-    }
     renderLiveCams();
     if (!opts.skipPush) pushNav({ view: 'livecams' });
   } catch (err) {
