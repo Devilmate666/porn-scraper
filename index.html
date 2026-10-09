@@ -5061,9 +5061,9 @@ async function openCatalog(kind, opts = {}) {
 -------------------------------------------------------------- */
 const CAMS_BATCH = 24;                 // cards added to the page per step: only what is shown gets fetched
 let liveCamsData = null;               // { items, count, providers, source, fetched_at }
-let liveCamsFilters = null;            // { tags, categories, genres, hairColors, bodyTypes }
+let liveCamsFilters = null;            // { tags, categories, genres, hairColors, bodyTypes, countries }
 let liveCamsShown = 0;
-let camsFilter = { provider: '', tag: '', category: '', genre: '', hairColor: '', bodyType: '', q: '' };
+let camsFilter = { provider: '', tag: '', category: '', genre: '', hairColor: '', bodyType: '', country: '', q: '' };
 
 /** Turn a scraped cam into a "video item" so the normal player panel (thumbnail + play + details) can show it. */
 const CAM_PROXY_FIRST = new Set(['stripchat', 'cam4']);      // their image CDNs block hot-linking from other sites
@@ -5134,6 +5134,7 @@ function visibleCams() {
     if (camsFilter.genre && !(c.tags || []).map(t => t.toLowerCase()).includes(camsFilter.genre.toLowerCase())) return false;
     if (camsFilter.hairColor && (c.hair_color || '').toLowerCase() !== camsFilter.hairColor.toLowerCase()) return false;
     if (camsFilter.bodyType && (c.body_type || '').toLowerCase() !== camsFilter.bodyType.toLowerCase()) return false;
+    if (camsFilter.country && (c.country || '').toLowerCase() !== camsFilter.country.toLowerCase()) return false;
     if (!words.length) return true;
     const hay = [c.username, c.provider_name, c.provider, c.country, c.gender, c.room_title,
                  ...(c.categories || []), ...(c.tags || []), ...(c.languages || [])].join(' ');
@@ -5283,12 +5284,13 @@ function renderLiveCams() {
   const n = liveCamsData.items.length;
   const provs = Object.entries(liveCamsData.providers || {}).sort((a, b) => b[1] - a[1]);
   
-  // Build filter chips for tags, categories, genres, hair colors, body types from lemoncams
+  // Build filter chips for tags, categories, genres, hair colors, body types, countries from lemoncams
   const tags = liveCamsFilters?.tags || [];
   const categories = liveCamsFilters?.categories || [];
   const genres = liveCamsFilters?.genres || [];
   const hairColors = liveCamsFilters?.hairColors || [];
   const bodyTypes = liveCamsFilters?.bodyTypes || [];
+  const countries = liveCamsFilters?.countries || [];
   
   const tagChips = tags.length
     ? `<div class="cams-chips" data-filter="tag"><span class="cam-chip" data-tag="">All</span>${tags.map(t => `<span class="cam-chip" data-tag="${escapeHtml(t)}">${escapeHtml(t)}</span>`).join('')}</div>`
@@ -5305,6 +5307,9 @@ function renderLiveCams() {
   const bodyChips = bodyTypes.length
     ? `<div class="cams-chips" data-filter="bodyType"><span class="cam-chip" data-body="">All</span>${bodyTypes.map(b => `<span class="cam-chip" data-body="${escapeHtml(b)}">${escapeHtml(b)}</span>`).join('')}</div>`
     : '';
+  const countryChips = countries.length
+    ? `<div class="cams-chips" data-filter="country"><span class="cam-chip" data-country="">All</span>${countries.map(c => `<span class="cam-chip" data-country="${escapeHtml(c)}">${escapeHtml(c)}</span>`).join('')}</div>`
+    : '';
   
   const provChips = provs.length > 1
     ? `<div class="cams-chips"><span class="cam-chip" data-prov="">All<small>${n}</small></span>${provs.map(([p, k]) =>
@@ -5320,13 +5325,13 @@ function renderLiveCams() {
         </div>
         <div class="badges"><span class="count-badge">🎥 ${n} live</span><span id="camsRefresh" class="chip-btn" title="Load a fresh list">🔄 Refresh</span></div>
       </div>
-      ${tagChips}${catChips}${genreChips}${hairChips}${bodyChips}${provChips}
+      ${tagChips}${catChips}${genreChips}${hairChips}${bodyChips}${countryChips}${provChips}
       <div class="cams-grid"></div>
       <div class="cams-more"></div>
     </div>`;
   const feed = results.querySelector('.feed');
   liveCamsShown = 0;
-  camsFilter = { provider: '', tag: '', category: '', genre: '', hairColor: '', bodyType: '', q: '' };
+  camsFilter = { provider: '', tag: '', category: '', genre: '', hairColor: '', bodyType: '', country: '', q: '' };
   if (searchInput) searchInput.value = '';
   renderCamBatch(feed);
   // Bind all filter chips
@@ -5353,6 +5358,10 @@ function renderLiveCams() {
   feed.querySelectorAll('.cam-chip[data-body]').forEach(ch => {
     ch.classList.toggle('active', !ch.getAttribute('data-body'));
     ch.addEventListener('click', () => { camsFilter.bodyType = ch.getAttribute('data-body') || ''; refreshCamGrid(); });
+  });
+  feed.querySelectorAll('.cam-chip[data-country]').forEach(ch => {
+    ch.classList.toggle('active', !ch.getAttribute('data-country'));
+    ch.addEventListener('click', () => { camsFilter.country = ch.getAttribute('data-country') || ''; refreshCamGrid(); });
   });
   // a cam opens in the same player panel as a video: thumbnail, details, play = open the live stream
   feed.querySelector('.cams-grid').addEventListener('click', (e) => {
@@ -5415,7 +5424,8 @@ async function openLiveCams(force = false, opts = {}) {
       categories: filtersJson.categories || [], 
       genres: filtersJson.genres || [],
       hairColors: filtersJson.hairColors || [],
-      bodyTypes: filtersJson.bodyTypes || []
+      bodyTypes: filtersJson.bodyTypes || [],
+      countries: filtersJson.countries || []
     };
     // Fallback: extract filters from cam data if API returned empty
     if (!liveCamsFilters.tags.length && !liveCamsFilters.categories.length) {
@@ -5423,16 +5433,19 @@ async function openLiveCams(force = false, opts = {}) {
       const catSet = new Set();
       const hairSet = new Set();
       const bodySet = new Set();
+      const countrySet = new Set();
       for (const c of liveCamsData.items) {
         (c.tags || []).forEach(t => tagSet.add(t));
         (c.categories || []).forEach(cat => catSet.add(cat));
         if (c.hair_color) hairSet.add(c.hair_color);
         if (c.body_type) bodySet.add(c.body_type);
+        if (c.country) countrySet.add(c.country);
       }
       liveCamsFilters.tags = Array.from(tagSet).sort();
       liveCamsFilters.categories = Array.from(catSet).sort();
       liveCamsFilters.hairColors = Array.from(hairSet).sort();
       liveCamsFilters.bodyTypes = Array.from(bodySet).sort();
+      liveCamsFilters.countries = Array.from(countrySet).sort();
     }
     renderLiveCams();
     if (!opts.skipPush) pushNav({ view: 'livecams' });

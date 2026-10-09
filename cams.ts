@@ -226,19 +226,22 @@ async function fetchLemoncams(proxy: string = ""): Promise<{ cams: any[]; notes:
   return { cams: allCams, notes };
 }
 
-async function fetchLemoncamsTags(proxy: string = ""): Promise<{ tags: string[]; categories: string[]; genres: string[]; hairColors: string[]; bodyTypes: string[]; notes: string[] }> {
+async function fetchLemoncamsTags(proxy: string = ""): Promise<{ tags: string[]; categories: string[]; genres: string[]; hairColors: string[]; bodyTypes: string[]; countries: string[]; notes: string[] }> {
   const notes: string[] = [];
   const tags = new Set<string>();
   const categories = new Set<string>();
   const genres = new Set<string>();
   const hairColors = new Set<string>();
   const bodyTypes = new Set<string>();
+  const countries = new Set<string>();
 
   const headers = { "User-Agent": UA, Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "Accept-Language": "en-US,en;q=0.9", Referer: LEMONCAMS_URL };
 
   // Scrape tags/categories from main pages
   const pages = [
     "https://www.lemoncams.com/",
+    "https://www.lemoncams.com/cams",
+    "https://www.lemoncams.com/world-map-of-sex-cams",
     "https://www.lemoncams.com/tags",
     "https://www.lemoncams.com/categories",
     "https://www.lemoncams.com/pornstars",
@@ -261,6 +264,14 @@ async function fetchLemoncamsTags(proxy: string = ""): Promise<{ tags: string[];
       // Extract genres (if separate) from sidebar
       const genreMatches = [...html.matchAll(/href="\/genres\/([^"]+)"/gi)];
       for (const m of genreMatches) genres.add(m[1].replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase()));
+
+      // Extract countries from world map (href="/country/..." or data-country)
+      const countryMatches = [...html.matchAll(/href="\/country\/([^"]+)"/gi)];
+      for (const m of countryMatches) countries.add(m[1].replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase()));
+      
+      // Also from data-country attribute
+      const dataCountryMatches = [...html.matchAll(/data-country=["']([^"']+)["']/gi)];
+      for (const m of dataCountryMatches) countries.add(m[1].trim());
 
       // Also extract from data attributes in cam cards (data-tags, data-categories, data-haircolor, data-body)
       const dataTagMatches = [...html.matchAll(/data-tags=["']([^"']+)["']/gi)];
@@ -286,6 +297,7 @@ async function fetchLemoncamsTags(proxy: string = ""): Promise<{ tags: string[];
     genres: Array.from(genres).sort(),
     hairColors: Array.from(hairColors).sort(),
     bodyTypes: Array.from(bodyTypes).sort(),
+    countries: Array.from(countries).sort(),
     notes,
   };
 }
@@ -414,6 +426,6 @@ export async function fetchLiveCams(opts: { wm?: string; providers?: string; pro
 }
 
 /** Fetch tags, categories, and genres from Lemoncams for filter UI. */
-export async function fetchLemoncamsFilters(proxy: string = ""): Promise<{ tags: string[]; categories: string[]; genres: string[]; hairColors: string[]; bodyTypes: string[]; notes: string[] }> {
+export async function fetchLemoncamsFilters(proxy: string = ""): Promise<{ tags: string[]; categories: string[]; genres: string[]; hairColors: string[]; bodyTypes: string[]; countries: string[]; notes: string[] }> {
   return fetchLemoncamsTags(proxy);
 }

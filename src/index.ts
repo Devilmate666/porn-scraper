@@ -640,11 +640,11 @@ export default {
           // Fetch fresh from lemoncams
           const fresh = await fetchLemoncamsFilters(env.LEMONCAMS_PROXY);
           if (fresh.tags.length || fresh.categories.length || fresh.genres.length) {
-            const payload = { tags: fresh.tags, categories: fresh.categories, genres: fresh.genres, hairColors: fresh.hairColors, bodyTypes: fresh.bodyTypes, _ts: nowSec() };
+            const payload = { tags: fresh.tags, categories: fresh.categories, genres: fresh.genres, hairColors: fresh.hairColors, bodyTypes: fresh.bodyTypes, countries: fresh.countries, _ts: nowSec() };
             ctx.waitUntil(env.SCRAPE_DATA.put(key, JSON.stringify(payload), { expirationTtl: 86400 }));
             return json(payload, 200, headers);
           }
-          return json({ tags: [], categories: [], genres: [], hairColors: [], bodyTypes: [], error: "No filters available" }, 200, headers);
+          return json({ tags: [], categories: [], genres: [], hairColors: [], bodyTypes: [], countries: [], error: "No filters available" }, 200, headers);
         }
 
         // ---------------------------------------------------------------- live TV channels (bundle, stale-forever)
