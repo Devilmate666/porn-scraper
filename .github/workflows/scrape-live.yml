@@ -29,7 +29,7 @@ jobs:
   scrape:
     name: Scrape live data
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 22
     steps:
       - uses: actions/checkout@v4
 
@@ -47,11 +47,24 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           pip install requests httpx beautifulsoup4 lxml
 
+      - name: Cache the headless browser
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-v1
+
+      - name: Install the headless browser (lemoncams.com is JavaScript-only)
+        run: |
+          pip install playwright
+          playwright install --with-deps chromium
+
       - name: Run scraper
         env:
           CACHE_KV_NAMESPACE_ID: ${{ steps.ns.outputs.cache_ns_id }}
           SCRAPE_DATA_KV_NAMESPACE_ID: ${{ steps.ns.outputs.scrape_ns_id }}
-          SCRAPE_BUDGET_SECONDS: '600'
+          SCRAPE_BUDGET_SECONDS: '1000'
+          CAMS_CRAWL_SECONDS: '240'         # category / country pages read per live run (rotating)
+          CAMS_CRAWL_PAGES: '40'
           MAX_KV_WRITES: '40'
           ONLY: ${{ github.event.inputs.only || 'live' }}      # via env, never pasted into the shell line (script injection)
         run: |

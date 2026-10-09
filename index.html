@@ -5354,7 +5354,11 @@ function camRenderFilters() {
   const box = document.querySelector('.cams-filters');
   if (!box || !liveCamsFilters) return;
   const keep = [...box.querySelectorAll('.cams-chips')].map(e => e.scrollTop);       // do not jump while counts update
-  box.innerHTML = camFilterRowHtml('categories', 'Categories') + camFilterRowHtml('countries', 'Countries');
+  const miss = ['categories', 'countries'].filter(k => !liveCamsFilters.real[k]);
+  const why = miss.length && liveCamsFilters.diag !== undefined
+    ? `<div class="cams-note">⚠️ Lemoncams ${miss.join(' and ')} could not be read from the server${miss.length === 2 || miss[0] === 'categories' ? ' (nothing to show for categories)' : ''}.`
+      + `${liveCamsFilters.diag ? ` <details style="display:inline"><summary style="display:inline;cursor:pointer">why</summary>${escapeHtml(liveCamsFilters.diag)}</details>` : ''}</div>` : '';
+  box.innerHTML = camFilterRowHtml('categories', 'Categories') + camFilterRowHtml('countries', 'Countries') + why;
   box.querySelectorAll('.cams-chips').forEach((e, k) => { e.scrollTop = keep[k] || 0; });
 }
 
@@ -5394,13 +5398,15 @@ async function camLoadFilterPage(kind, row) {
   } catch { camSetNote(''); }
 }
 
-async function camLoadFilters(force) {
+async function camLoadFilters(force, attempt = 0) {
   try {
     const res = await camPost('/api/livecams-filters', { force: !!force });
     const j = await res.json().catch(() => ({}));
     if (!liveCamsData) return;
+    if (liveCamsFilters) liveCamsFilters.diag = (j.diagnostics || []).slice(-4).join(' · ') || j.error || '';
     camFillMissingFilters({ categories: normFilterList(j.categories), countries: normFilterList(j.countries) });
     camRenderFilters();
+    if (j.loading && attempt < 10) setTimeout(() => { if (activeTab === LIVECAMS_TAB && liveCamsData) camLoadFilters(false, attempt + 1); }, 12000);
   } catch { /* the derived rows stay */ }
 }
 
@@ -5469,7 +5475,7 @@ function renderLiveCams() {
     const row = i === '' ? null : liveCamsFilters[kind][+i];
     if (kind === 'categories') camsFilter.category = row; else camsFilter.country = row;
     refreshCamGrid();
-    if (row && row.url) camLoadFilterPage(kind, row);
+    if (row && row.url && liveCamsData.crawl) camLoadFilterPage(kind, row);     // only the Flask backend can read a Lemoncams page on demand
   });
   // a cam opens in the same player panel as a video: thumbnail, details, play = open the live stream
   feed.querySelector('.cams-grid').addEventListener('click', (e) => {

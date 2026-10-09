@@ -614,7 +614,7 @@ _LOAD_MORE_JS = r"""() => {
   if (b) { b.click(); return true; } return false; }"""
 
 
-def _render_page(url, selector, diag, scroll=False, budget=60.0):
+def _render_page(url, selector, diag, scroll=False, budget=60.0, settle=False):
     """Open `url` in a headless browser, wait for `selector`, optionally scroll / press 'load more' until the number of
     matches stops growing (infinite scroll = ALL the cams of the page).  -> html | None."""
     try:
@@ -629,6 +629,18 @@ def _render_page(url, selector, diag, scroll=False, budget=60.0):
                 page = browser.new_page(user_agent=UA)
                 page.goto(url, wait_until="domcontentloaded", timeout=25000)
                 page.wait_for_selector(selector, timeout=15000)
+                if settle:
+                    # the menu links exist at once, the page's own content comes later: wait until the DOM stops growing
+                    try:
+                        page.wait_for_load_state("networkidle", timeout=12000)
+                    except Exception:
+                        pass
+                    last, stable, t0 = -1, 0, time.time()
+                    while stable < 3 and time.time() - t0 < 15:
+                        n = page.evaluate("() => document.querySelectorAll('a, [routerlink], img').length")
+                        stable = stable + 1 if n == last else 0
+                        last = n
+                        page.wait_for_timeout(600)
                 if scroll:
                     t0, last, still = time.time(), -1, 0
                     while time.time() - t0 < budget and still < 3:
@@ -919,12 +931,12 @@ def parse_filter_links(html, base, kind):
     soup = BeautifulSoup(html, "lxml")
     for t in soup(["script", "style", "noscript"]):
         t.decompose()
-    for t in soup.select("app-navigation, app-footer, footer, header, nav, #header-mobile, .posts__item--card"):
-        t.decompose()
+    for t in soup.select("app-navigation, app-footer, footer#footer, footer.footer, header.header, #header-mobile"):
+        t.decompose()                                   # (category tiles may reuse the cam-card classes: never drop those)
     root = soup.find("app-root") or soup.body or soup
     rows, seen = [], set()
     for a in root.find_all("a"):
-        full = _abs(base, a.get("href") or a.get("xlink:href"))
+        full = _abs(base, a.get("href") or a.get("xlink:href") or a.get("routerlink") or a.get("ng-reflect-router-link"))
         if not full or not _allowed(full) or full in seen:
             continue
         path = urlparse(full).path.rstrip("/")
@@ -937,6 +949,9 @@ def parse_filter_links(html, base, kind):
             fm = re.search(r"/([A-Za-z]{2})\.(?:svg|png|webp|jpg|gif)", flag_img.get("src") or flag_img.get("data-src") or "")
             code = fm.group(1).upper() if fm else None
         name, count = _name_count(a)
+        if not name:
+            img = a.find("img")
+            name = ((img.get("alt") or img.get("title") or "") if img is not None else "").strip()
         if not (2 <= len(name) <= 40):
             continue
         looks_country = bool(code) or _is_country_name(name) or any("countr" in x.lower() for x in segs[:-1])
@@ -946,7 +961,40 @@ def parse_filter_links(html, base, kind):
             code = _NAME2CODE.get(name.lower())
         seen.add(full)
         rows.append({"name": name, "slug": segs[-1], "url": full, "count": count, "code": code})
+    if not rows and kind == "categories":
+        rows = _lenient_categories(root, base)
     return rows
+
+
+_JUNK_TEXT = re.compile(r"^(home|login|log in|sign ?up|register|join|blog|faq|help|contact|terms|privacy|dmca|about|"
+                        r"menu|search|more|new|popular|live|top|all|categories|countries|language|english|18\+?)$", re.I)
+
+
+def _lenient_categories(root, base):
+    """The strict pass found nothing: take every same-site link of the page body whose text looks like a category name,
+    plus the entries of any element whose class says 'categor'."""
+    rows, seen = [], set()
+
+    def add(name, url, count=None):
+        name = re.sub(r"\s+", " ", name or "").strip()
+        k = name.lower()
+        if not (2 <= len(name) <= 30) or k in seen or _JUNK_TEXT.match(name) or _is_country_name(name):
+            return
+        seen.add(k)
+        rows.append({"name": name, "slug": urlparse(url).path.rstrip("/").rsplit("/", 1)[-1] if url else None,
+                     "url": url, "count": count, "code": None})
+
+    for a in root.find_all("a"):
+        full = _abs(base, a.get("href") or a.get("routerlink") or a.get("ng-reflect-router-link"))
+        if full and _allowed(full) and urlparse(full).path.strip("/") and not a.select_one("img.flag-image"):
+            name, count = _name_count(a)
+            add(name, full, count)
+    if len(rows) < 3:
+        for box in root.select("[class*=categor], [id*=categor]"):
+            for el in box.find_all(["li", "a", "span", "div", "h3", "h4", "p"]):
+                if not el.find(["li", "a", "div", "p"]):          # leaf elements only
+                    add(_txt(el), None)
+    return rows if len(rows) >= 3 else []
 
 
 def _filter_row(x, kind):
@@ -1099,12 +1147,15 @@ def _fetch_filter_kind(kind, url, env_name, diag):
             rows = _filters_try_api(found, kind, diag)
             if rows:
                 return rows
-    html = _render_page(url, "a[href]", diag, scroll=False)
+    html = _render_page(url, "a[href]", diag, scroll=False, settle=True)
     if html:
         rows = parse_filter_links(html, url, kind)
         diag.append(f"{kind}: {len(rows)} entries from the rendered page")
         if rows:
             return rows
+        soup = BeautifulSoup(html, "lxml")
+        links = [(_txt(a)[:25], (a.get("href") or "")[:40]) for a in soup.find_all("a", href=True)]
+        diag.append(f"{kind}: rendered page has {len(links)} links, e.g. " + "; ".join(f"{t}>{h}" for t, h in links[5:13]))
     return []
 
 
@@ -1125,10 +1176,31 @@ def _derive_filters(items):
     )
 
 
-def fetch_lemon_filters(force=False):
-    """{categories: [...], countries: [...]} from lemoncams.com/categories and lemoncams.com/world-map-of-sex-cams."""
-    if _FILTERS["out"] and not force and time.time() - _FILTERS["ts"] < _FILTERS_TTL:
+_FILTERS_POOL = ThreadPoolExecutor(max_workers=1)
+_FILTERS_JOB = {"fut": None}
+_FILTERS_LOCK = threading.Lock()
+
+
+def fetch_lemon_filters(force=False, wait=25.0):
+    """{categories, countries} from lemoncams.com/categories and /world-map-of-sex-cams.  The browser work can take a
+    while, so it runs once in the background: a call answers with the cached result, or waits `wait` seconds and then
+    returns {loading: true} (the page asks again).  A failed read is remembered for 5 minutes, not retried per request."""
+    if _FILTERS["out"] and not force and time.time() - _FILTERS["ts"] < _FILTERS.get("ttl", _FILTERS_TTL):
         return _FILTERS["out"]
+    with _FILTERS_LOCK:
+        fut = _FILTERS_JOB["fut"]
+        if fut is None or fut.done():
+            fut = _FILTERS_JOB["fut"] = _FILTERS_POOL.submit(_compute_filters)
+    try:
+        return fut.result(timeout=wait)
+    except Exception as e:
+        if type(e).__name__ not in ("TimeoutError", "CancelledError"):
+            return {"categories": [], "countries": [], "diagnostics": [f"{type(e).__name__}: {str(e)[:100]}"]}
+        return {"categories": [], "countries": [], "loading": True,
+                "diagnostics": ["still reading lemoncams.com/categories and /world-map-of-sex-cams..."]}
+
+
+def _compute_filters():
     diag, res = [], {}
     jobs = (("categories", CATEGORIES_URL, "LEMONCAMS_CATEGORIES_API"),
             ("countries", COUNTRIES_URL, "LEMONCAMS_COUNTRIES_API"))
@@ -1154,9 +1226,8 @@ def fetch_lemon_filters(force=False):
                 diag.append(f"{k}: Lemoncams' list could not be read, showing the {len(rows)} found on the loaded cams")
     out = {"categories": res.get("categories") or [], "countries": res.get("countries") or [], "source": source,
            "diagnostics": diag, "fetched_at": int(time.time())}
-    if out["categories"] or out["countries"]:
-        if all(v == "lemoncams" for v in source.values()) and len(source) == 2:
-            _FILTERS.update(ts=time.time(), out=out)          # cache only the real thing; derived lists are retried
+    complete = len(source) == 2 and all(v == "lemoncams" for v in source.values())
+    _FILTERS.update(ts=time.time(), out=out, ttl=_FILTERS_TTL if complete else 300)      # a partial read is retried in 5 min
     return out
 
 
@@ -1192,17 +1263,27 @@ def _crawl_add(cams):
                         old[k] = c[k]
 
 
-def _crawl_job(force=False):
+def _crawl_job(force=False, limit=None, rotate=False, budget=None):
+    """Read the Lemoncams category + country pages and keep their cams in _CRAWL.  Runs in a thread for the web app,
+    or is CALLED DIRECTLY (blocking) by scraper_kv.py on GitHub Actions: `limit` pages per run, `rotate` starts at a
+    different page each run so that successive runs cover them all, `budget` seconds at most."""
     t0 = time.time()
+    budget = _CRAWL_BUDGET if budget is None else budget
+    _CRAWL.update(running=True)
     try:
-        f = fetch_lemon_filters(force=force)
+        f = fetch_lemon_filters(force=force, wait=240.0)
         targets = [(k, r) for k in ("categories", "countries") for r in f.get(k, []) if r.get("url")][:_CRAWL_MAX_PAGES]
+        if rotate and targets:
+            off = (int(time.time() // 1800) * (limit or len(targets))) % len(targets)
+            targets = targets[off:] + targets[:off]
+        if limit:
+            targets = targets[:limit]
         with _CRAWL_LOCK:
             _CRAWL.update(done=0, total=len(targets), note="" if targets else "no category / country page links to read")
 
         def one(t):
             kind, row = t
-            if time.time() - t0 > _CRAWL_BUDGET:
+            if time.time() - t0 > budget:
                 return
             try:
                 r = _fetch_lemoncams(row["url"], force=force)
@@ -1238,7 +1319,7 @@ def _crawl_status():
 _ALL_CACHE = {"ts": 0.0, "out": None}
 
 
-def fetch_livecams(url=None, force=False, kind=None, name=None):
+def fetch_livecams(url=None, force=False, kind=None, name=None, crawl=True):
     """No url: ALL the cams (platform feeds, deep paging + Lemoncams home + every category / country page found so far).
     With a Lemoncams url (a category / country chip): that one page, its cams labelled with `kind` / `name`."""
     if url:
@@ -1251,7 +1332,8 @@ def fetch_livecams(url=None, force=False, kind=None, name=None):
         _register_thumbs(r["items"])
         return r
     if _ALL_CACHE["out"] and not force and time.time() - _ALL_CACHE["ts"] < _CACHE_TTL:
-        _ensure_crawl()
+        if crawl:
+            _ensure_crawl()
         out = dict(_ALL_CACHE["out"])
         out["crawl"] = _crawl_status()
         return out
@@ -1280,7 +1362,8 @@ def fetch_livecams(url=None, force=False, kind=None, name=None):
         groups["lemoncams"] = list(lem) + crawled
     if lem_note:
         diag.append(lem_note)
-    _ensure_crawl(force)
+    if crawl:
+        _ensure_crawl(force)
 
     items = _merge(groups)
     if not items:

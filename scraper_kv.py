@@ -43,6 +43,10 @@ try:
 except Exception:
     fetch_livecams = None
 try:
+    from livecams import fetch_lemon_filters, _crawl_job as lemon_crawl, _derive_filters as lemon_derive
+except Exception:
+    fetch_lemon_filters = lemon_crawl = lemon_derive = None
+try:
     from channels import fetch_channels
 except Exception:
     fetch_channels = None
@@ -562,7 +566,7 @@ def _carry_cams(old: dict | None, new: dict) -> dict:
     cutoff = time.time() - 3 * 3600
     extra = [c for c in old["items"] if c.get("provider") and c["provider"] not in got and (c.get("_seen") or 0) >= cutoff]
     if extra:
-        new = {**new, "items": (new.get("items", []) + extra)[:500], "carried_over": sorted({c.get("provider_name") or c["provider"] for c in extra})}
+        new = {**new, "items": (new.get("items", []) + extra)[:3000], "carried_over": sorted({c.get("provider_name") or c["provider"] for c in extra})}
         new["count"] = len(new["items"])
     return new
 
@@ -578,7 +582,7 @@ def scrape_livecams_and_cache(url: str | None = None, force: bool = False):
         return old
     try:
         # platforms sometimes refuse a GitHub IP for a minute: retry before giving up
-        data = retry_until(lambda: fetch_livecams(url, force=True), ok=lambda r: bool((r or {}).get("items")),
+        data = retry_until(lambda: fetch_livecams(url, force=True, crawl=False), ok=lambda r: bool((r or {}).get("items")),
                            tries=3, delay=6, what="livecams")
         for note in (data or {}).get("diagnostics", [])[:12]:
             print(f"    cams: {note}")
@@ -594,6 +598,60 @@ def scrape_livecams_and_cache(url: str | None = None, force: bool = False):
         error_data = {"items": [], "count": 0, "error": str(e)}
         kv_put_scrape(key, error_data)
         return error_data
+
+
+FILTERS_KEY = "livecams:filters2"            # the Worker's /api/livecams-filters reads this key: ONLY categories + countries
+
+
+def scrape_lemon_filters_and_cache(cams: dict | None = None, force: bool = False):
+    """Lemoncams' category list (lemoncams.com/categories) and country list (/world-map-of-sex-cams) -> ONE KV key.
+    Re-read every FILTERS_MIN_AGE seconds (default 6 h): the lists hardly ever change, so this is ~4 writes/day."""
+    if not fetch_lemon_filters:
+        return None
+    old, age = _kv_doc(FILTERS_KEY)
+    if not force and old and old.get("categories") and age is not None and age < int(os.environ.get("FILTERS_MIN_AGE", str(6 * 3600))):
+        print(f"  filters: stored copy is {int(age)}s old - skipped")
+        try:                                                   # the crawl reuses these lists instead of rendering both pages again
+            import livecams as _lc
+            _lc._FILTERS.update(ts=time.time(), ttl=3600, out={"categories": old["categories"], "countries": old.get("countries") or [],
+                                                               "source": old.get("source") or {}, "diagnostics": [], "fetched_at": int(time.time())})
+        except Exception:
+            pass
+        return old
+    try:
+        data = fetch_lemon_filters(force=True, wait=240.0) or {}
+        for note in (data.get("diagnostics") or [])[-12:]:
+            print(f"    filters: {note}")
+        cats, ctry = data.get("categories") or [], data.get("countries") or []
+        if not ctry and cams and lemon_derive:
+            ctry = lemon_derive(cams.get("items") or [])[1]          # countries of the cams we hold: real values
+        real_cats = (data.get("source") or {}).get("categories") == "lemoncams"
+        if not (cats and real_cats):
+            print("  filters: Lemoncams' category list could not be read: keeping the stored one (see the notes above)")
+            return old
+        payload = {"categories": cats, "countries": ctry, "source": data.get("source")}
+        kv_put_scrape(FILTERS_KEY, payload)
+        print(f"  Cached filters: {len(cats)} categories, {len(ctry)} countries")
+        return payload
+    except Exception as e:
+        print(f"  filters failed: {type(e).__name__}: {e}")
+        return old
+
+
+def scrape_lemon_crawl():
+    """Read some Lemoncams category / country pages so their cams carry real categories + countries (needs Playwright)."""
+    if not lemon_crawl:
+        return
+    secs = min(float(os.environ.get("CAMS_CRAWL_SECONDS", "240")), max(0.0, time_left() - 150))
+    if secs < 30:
+        print("  crawl: not enough time left - skipped")
+        return
+    try:
+        lemon_crawl(force=False, limit=int(os.environ.get("CAMS_CRAWL_PAGES", "40")), rotate=True, budget=secs)
+        from livecams import _crawl_status
+        print(f"  crawl: {_crawl_status()}")
+    except Exception as e:
+        print(f"  crawl failed: {type(e).__name__}: {e}")
 
 
 def scrape_channels_and_cache(category: str | None = None, page: int = 1, force: bool = False):
@@ -793,7 +851,17 @@ def job_search_queries():
 def job_livecams_channels(with_categories: bool = False):
     """Live cams + ALL live-TV channel pages in one bundle key. 3 KV writes per run (livecams, thumb origins, channels).
     Category chips are refreshed on full runs."""
+    try:
+        scrape_lemon_filters_and_cache()                       # names first: the crawl below needs the pages' links
+        scrape_lemon_crawl()                                   # cams of the Lemoncams category / country pages -> _CRAWL
+    except Exception as e:
+        print(f"  lemoncams filters/crawl failed: {e}")
     cams = scrape_livecams_and_cache() or {}
+    if cams.get("items"):
+        try:
+            scrape_lemon_filters_and_cache(cams)               # (no-op when fresh) fills the countries from the cams when needed
+        except Exception:
+            pass
     JOB_STATUS["livecams"] = {"ok": bool(cams.get("items")), "count": len(cams.get("items") or []), "error": cams.get("error")}
     bundle = scrape_channels_bundle(None) or {}
     pages = bundle.get("pages") or {}

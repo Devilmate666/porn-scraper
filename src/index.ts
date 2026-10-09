@@ -45,11 +45,11 @@ const NEG_TTL = 45;
 
 const LIVE_TTL: Record<string, number> = {
   "/api/scrape": 600, "/api/search": 300, "/api/resolve": 300, "/api/resolve-full": 300,
-  "/api/metadata": 3600, "/api/livecams": 60, "/api/channels": 120, "/api/scrape-categories": 900,
+  "/api/metadata": 3600, "/api/livecams": 60, "/api/channels": 120, "/api/scrape-categories": 900, "/api/livecams-filters": 60,
 };
 const LIVE_TIMEOUT: Record<string, number> = {
   "/api/scrape": 28000, "/api/search": 28000, "/api/resolve": 20000, "/api/resolve-full": 25000,
-  "/api/metadata": 15000, "/api/livecams": 20000, "/api/channels": 20000, "/api/scrape-categories": 25000,
+  "/api/metadata": 15000, "/api/livecams": 20000, "/api/channels": 20000, "/api/scrape-categories": 25000, "/api/livecams-filters": 30000,
 };
 // the ONLY sites the Worker will scrape: the 4 video sites, the cam site and live TV (more only via ALLOWED_HOSTS)
 const BUILTIN_HOSTS = ["superporn.com", "pornvideobb.com", "freesexvideos.xxx", "bdsmhole.com", "lemoncams.com", "xlivetv.com"];
@@ -161,11 +161,23 @@ async function refreshCams(env: Env, force = false): Promise<any | null> {
     // CAMS_CARRY seconds (each cam has its own `_seen`, which a carry-over does not renew), so a platform that stays
     // down fades out after 3 h instead of being served forever.
     if (cur?.items?.length) {
+      // the GitHub scraper reads the Lemoncams category / country pages; this refresh must not throw that away:
+      // copy each cam's categories + country over, and keep recently-seen cams that this fetch did not return
+      const key = (c: any) => `${String(c.provider || "").toLowerCase()}|${String(c.username || "").toLowerCase()}`;
+      const old = new Map<string, any>(cur.items.map((c: any) => [key(c), c] as [string, any]));
+      for (const c of fresh.items) {
+        const o = old.get(key(c));
+        if (!o) continue;
+        if ((o.categories || []).length) c.categories = [...new Set([...(c.categories || []), ...o.categories])];
+        if (!c.country && o.country) { c.country = o.country; c.country_code = o.country_code ?? c.country_code; c.flag_emoji = o.flag_emoji ?? c.flag_emoji; }
+      }
+      const have = new Set(fresh.items.map(key));
       const got = new Set(fresh.items.map((c: any) => c.provider));
       const cutoff = nowSec() - CAMS_CARRY;
-      const extra = cur.items.filter((c: any) => c.provider && !got.has(c.provider) && typeof c._seen === "number" && c._seen >= cutoff);
+      const extra = cur.items.filter((c: any) => c.provider && typeof c._seen === "number" && c._seen >= cutoff
+        && (!got.has(c.provider) || ((c.categories || []).length && !have.has(key(c)))));
       if (extra.length) {
-        fresh.items = fresh.items.concat(extra).slice(0, 500);
+        fresh.items = fresh.items.concat(extra).slice(0, 3000);
         fresh.count = fresh.items.length;
         fresh.carried_over = [...new Set(extra.map((c: any) => c.provider_name || c.provider))];
       }
@@ -628,6 +640,8 @@ export default {
         // ---------------------------------------------------------------- live cams filters: ONLY Lemoncams categories + countries
         case "/api/livecams-filters": {
           if (!isPost) break;
+          const live = await tryLive();                          // the Flask backend renders Lemoncams (the Worker cannot run a browser)
+          if (live) return live;
           const key = "livecams:filters2";                       // new key: the old "livecams:filters" held fake tags / genres / hair / body
           const text = await kvText(env.SCRAPE_DATA, key, 3600);
           if (text) {
@@ -648,6 +662,7 @@ export default {
             return out;
           };
           const fresh: any = await fetchLemoncamsFilters(env.LEMONCAMS_PROXY).catch(() => null);
+          ctx.waitUntil(dispatchGithub(env, "filters-missing").then(() => undefined).catch(() => undefined));   // the GitHub scraper stores the real lists
           let categories = norm(fresh?.categories);
           let countries = norm(fresh?.countries);
           let derived = false;

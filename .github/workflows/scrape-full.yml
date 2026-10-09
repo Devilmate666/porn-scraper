@@ -39,10 +39,23 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           pip install requests httpx beautifulsoup4 lxml
 
+      - name: Cache the headless browser
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-v1
+
+      - name: Install the headless browser (lemoncams.com is JavaScript-only)
+        run: |
+          pip install playwright
+          playwright install --with-deps chromium
+
       - name: Run scraper
         env:
           CACHE_KV_NAMESPACE_ID: ${{ steps.ns.outputs.cache_ns_id }}
           SCRAPE_DATA_KV_NAMESPACE_ID: ${{ steps.ns.outputs.scrape_ns_id }}
+          CAMS_CRAWL_SECONDS: '300'
+          CAMS_CRAWL_PAGES: '80'
           SCRAPE_BUDGET_SECONDS: '2000'     # stop starting new work at ~33 min so the run ends cleanly before the 40 min limit
           MAX_KV_WRITES: '180'              # per-run budget of CHANGED pages (unchanged ones are skipped for free; live data + the index are exempt). 2 runs x 180 = 360 of the free tier's 1,000 writes/day
         run: python scraper_kv.py
