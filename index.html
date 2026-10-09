@@ -906,6 +906,98 @@
   @keyframes smUp { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
   @keyframes smFade { from { opacity: 0; } to { opacity: 1; } }
   @media (prefers-reduced-motion: reduce) { #sectionMenu .sm-sheet, #sectionMenu .sm-backdrop { animation: none; } .site-actions .action { transition: none; } }
+/* ===================== Favorites ===================== */
+.app { padding-bottom: 5.5rem; }
+
+/* heart on cards */
+.fav-btn { position: absolute; top: .45rem; right: .45rem; z-index: 6; width: 2rem; height: 2rem; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; cursor: pointer; user-select: none;
+  background: rgba(8,11,18,.68); border: 1px solid rgba(255,255,255,.18); backdrop-filter: blur(4px);
+  transition: transform .12s ease, background .12s ease; -webkit-tap-highlight-color: transparent; }
+.fav-btn svg { width: 1.05rem; height: 1.05rem; fill: none; stroke: #fff; stroke-width: 2; stroke-linejoin: round; pointer-events: none; }
+.fav-btn:hover { transform: scale(1.12); background: rgba(8,11,18,.9); }
+.fav-btn.is-fav { border-color: #ff4d6d88; }
+.fav-btn.is-fav svg { fill: #ff4d6d; stroke: #ff4d6d; }
+.fav-btn:focus-visible { outline: 2px solid #7c8af8; outline-offset: 2px; }
+.fav-btn.fav-inline { position: static; flex: 0 0 auto; width: 1.6rem; height: 1.6rem; margin-left: .45rem; display: inline-flex; vertical-align: middle; }
+.fav-btn.fav-chip { position: static; display: inline-flex; width: 1.3rem; height: 1.3rem; margin-left: .35rem; vertical-align: middle;
+  background: transparent; border: 0; backdrop-filter: none; }
+.fav-btn.fav-chip svg { width: .9rem; height: .9rem; }
+
+/* player heart (next to Close) */
+.main-player-close.fav-player { display: inline-flex; align-items: center; gap: .4rem; }
+.main-player-close.fav-player svg { width: .95rem; height: .95rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; }
+.main-player-close.fav-player.is-fav { color: #ffd6de; border-color: #ff4d6d88; }
+.main-player-close.fav-player.is-fav svg { fill: #ff4d6d; stroke: #ff4d6d; }
+
+/* sticky bottom bar */
+#favBar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 350; display: flex; justify-content: center; pointer-events: none;
+  padding: 1.4rem .8rem max(.7rem, env(safe-area-inset-bottom));
+  background: linear-gradient(to top, rgba(10,12,16,.9), rgba(10,12,16,0)); }
+#favBar button { pointer-events: auto; display: flex; align-items: center; gap: .55rem; padding: .65rem 1.3rem; border-radius: 999px;
+  border: 1px solid #3a4468; background: linear-gradient(135deg, #2a2f5a, #1b2a4d); color: #fff; font: 600 .9rem system-ui, sans-serif;
+  cursor: pointer; box-shadow: 0 10px 28px -8px rgba(0,0,0,.85); }
+#favBar button:hover { filter: brightness(1.15); }
+#favBar svg { width: 1.05rem; height: 1.05rem; fill: #ff4d6d; stroke: #ff4d6d; stroke-width: 2; stroke-linejoin: round; }
+#favBar .fav-count { min-width: 1.5rem; padding: .05rem .45rem; border-radius: 999px; background: #ff4d6d; font-size: .75rem; text-align: center; }
+body.player-open #favBar, body.fav-open #favBar { display: none; }
+body.fav-open { overflow: hidden; }
+
+/* panel */
+#favPanel { position: fixed; inset: 0; z-index: 420; display: none; align-items: flex-end; justify-content: center; }
+#favPanel.open { display: flex; }
+#favPanel .fp-backdrop { position: absolute; inset: 0; background: rgba(4,8,16,.72); }
+#favPanel .fp-sheet { position: relative; width: min(1100px, 100%); height: min(88vh, 900px); display: flex; flex-direction: column;
+  background: #0d121c; border: 1px solid #252e3f; border-bottom: 0; border-radius: 18px 18px 0 0; overflow: hidden;
+  box-shadow: 0 -20px 50px -20px rgba(0,0,0,.85); }
+#favPanel .fp-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .9rem 1.1rem .6rem; }
+#favPanel .fp-title { font-size: 1.05rem; font-weight: 700; display: flex; align-items: center; gap: .5rem; }
+#favPanel .fp-title svg { width: 1.1rem; height: 1.1rem; fill: #ff4d6d; stroke: #ff4d6d; stroke-width: 2; }
+#favPanel .fp-title small { color: #8b9ab8; font-weight: 500; }
+#favPanel .fp-x { border: 1px solid #2e3749; background: #1e2432; color: #cbd5e1; border-radius: 20px; padding: .35rem .8rem; cursor: pointer; font: inherit; font-size: .8rem; }
+#favPanel .fp-tabs { display: flex; gap: .45rem; overflow-x: auto; padding: .2rem 1.1rem .6rem; scrollbar-width: none; flex: 0 0 auto; }
+#favPanel .fp-tabs::-webkit-scrollbar { display: none; }
+#favPanel .fp-tab { flex: 0 0 auto; cursor: pointer; font: inherit; font-size: .78rem; color: #b6c3dc; background: #171d28; border: 1px solid #2b3344;
+  border-radius: 999px; padding: .35rem .8rem; white-space: nowrap; }
+#favPanel .fp-tab small { opacity: .65; margin-left: .3rem; }
+#favPanel .fp-tab.active { background: #2b3556; color: #fff; border-color: #7c8af8; }
+#favPanel .fp-tools { display: flex; gap: .5rem; padding: 0 1.1rem .7rem; flex: 0 0 auto; }
+#favPanel .fp-tools input, #favPanel .fp-tools select { background: #0c0f15; border: 1px solid #232b3b; color: #e2e8f0; border-radius: 30px;
+  padding: .5rem .9rem; font: inherit; font-size: .82rem; outline: none; }
+#favPanel .fp-tools input { flex: 1; min-width: 0; }
+#favPanel .fp-tools input:focus, #favPanel .fp-tools select:focus { border-color: #4f46e5; }
+#favPanel .fp-list { flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; padding: .2rem 1.1rem 1rem; -webkit-overflow-scrolling: touch; }
+#favPanel .fp-group-h { display: flex; align-items: center; gap: .5rem; margin: 1rem 0 .55rem; font-size: .85rem; font-weight: 700; color: #cbd5e1; }
+#favPanel .fp-group-h:first-child { margin-top: .2rem; }
+#favPanel .fp-group-h small { color: #8b9ab8; font-weight: 500; }
+#favPanel .fp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: .8rem; }
+#favPanel .fp-empty { text-align: center; color: #8b9ab8; padding: 3rem 1rem; font-size: .9rem; line-height: 1.6; }
+#favPanel .fp-foot { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: flex-end; padding: .6rem 1.1rem max(.7rem, env(safe-area-inset-bottom));
+  border-top: 1px solid #1e2532; flex: 0 0 auto; }
+#favPanel .fp-foot button { cursor: pointer; font: inherit; font-size: .78rem; color: #b6c3dc; background: #171d28; border: 1px solid #2b3344; border-radius: 999px; padding: .4rem .9rem; }
+#favPanel .fp-foot button:hover { filter: brightness(1.2); }
+#favPanel .fp-foot .danger { color: #ffb4c0; border-color: #5a2b38; }
+
+.fav-tile { position: relative; display: flex; flex-direction: column; background: #171d28; border: 1px solid #232b3b; border-radius: .8rem;
+  overflow: hidden; cursor: pointer; }
+.fav-tile:hover { border-color: #46526b; }
+.fav-tile .fav-thumb { position: relative; aspect-ratio: 16/9; background: #0b0e14; overflow: hidden; }
+.fav-tile.t-star .fav-thumb { aspect-ratio: 3/4; }
+.fav-tile.t-cam .fav-thumb, .fav-tile.t-channel .fav-thumb, .fav-tile.t-category .fav-thumb { aspect-ratio: 4/3; }
+.fav-tile .fav-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.fav-tile .fav-ph { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 2rem;
+  background: linear-gradient(135deg, #1b2340, #12182a); }
+.fav-tile .fav-dur { position: absolute; right: .4rem; bottom: .4rem; background: rgba(0,0,0,.78); color: #fff; font-size: .68rem; font-weight: 600; padding: .1rem .4rem; border-radius: .3rem; }
+.fav-tile .fav-info { padding: .5rem .6rem .6rem; min-width: 0; }
+.fav-tile .fav-name { font-size: .8rem; font-weight: 600; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.fav-tile .fav-sub { margin-top: .2rem; font-size: .68rem; color: #8b9ab8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+#favToast { position: fixed; left: 50%; bottom: 5.2rem; transform: translate(-50%, 10px); z-index: 430; max-width: 90vw; padding: .55rem 1rem;
+  border-radius: 999px; background: #1e2432; border: 1px solid #3a4468; color: #fff; font-size: .8rem; opacity: 0; pointer-events: none;
+  transition: opacity .18s ease, transform .18s ease; box-shadow: 0 10px 28px -8px rgba(0,0,0,.85); }
+#favToast.show { opacity: 1; transform: translate(-50%, 0); }
+body.fav-open #favToast { bottom: 1.5rem; }
+
 </style>
 <base target="_blank">
 <base target="_blank">
@@ -7344,6 +7436,496 @@ document.addEventListener('keydown', (e) => {
   } else {
     scrapeAll();
   }
+})();
+</script>
+<script>
+/* ===================== Favorites (hearts + sticky bar + categorized panel) =====================
+   Self-contained: decorates cards as they are rendered (MutationObserver), so no card builder had to change.
+   Stored on this device in localStorage ('pa_favorites_v1'); Export / Import in the panel moves them between devices. */
+(function () {
+  'use strict';
+  const KEY = 'pa_favorites_v1';
+  const TYPES = {
+    video:    { icon: '🎬', label: 'Videos' },
+    cam:      { icon: '📹', label: 'Cams' },
+    camnet:   { icon: '📡', label: 'Cam networks' },
+    channel:  { icon: '📺', label: 'Live channels' },
+    star:     { icon: '⭐', label: 'Stars' },
+    category: { icon: '🏷️', label: 'Categories' },
+    series:   { icon: '🎞️', label: 'Series & studios' },
+    network:  { icon: '🌐', label: 'Networks' },
+  };
+  const ORDER = Object.keys(TYPES);
+  const HEART = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>';
+
+  // ---- app globals (declared by the main script); guarded so this file can never break the page
+  const gTab = () => (typeof activeTab !== 'undefined' ? activeTab : null);
+  const gItems = () => (typeof cardItemByLink !== 'undefined' ? cardItemByLink : new Map());
+  const gInfo = () => (typeof mainPlayerInfo !== 'undefined' ? mainPlayerInfo : null);
+  const tabIs = (which) => {
+    const t = gTab();
+    if (!t) return false;
+    try {
+      if (which === 'networks') return t === NETWORKS_TAB;
+      if (which === 'series') return t === PORN_SITES_TAB;
+      if (which === 'stars') return t === PORNSTARS_TAB;
+    } catch (e) {}
+    return false;
+  };
+
+  // ---- store
+  let db = { items: {} };
+  function load() {
+    try {
+      const o = JSON.parse(localStorage.getItem(KEY) || 'null');
+      db = o && o.items && typeof o.items === 'object' ? o : { items: {} };
+    } catch (e) { db = { items: {} }; }
+  }
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(db)); return true; }
+    catch (e) { toast('Could not save favorites (browser storage is full or blocked)'); return false; }
+  }
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const normLink = (u) => {
+    try { const x = new URL(u); x.hash = ''; return x.origin + x.pathname.replace(/\/+$/, '') + x.search; }
+    catch (e) { return String(u || '').split('#')[0].replace(/\/+$/, ''); }
+  };
+  const idOf = (type, key) => type + '|' + key;
+  const has = (id) => !!db.items[id];
+  const count = () => Object.keys(db.items).length;
+
+  function toggle(rec) {
+    const id = idOf(rec.type, rec.key);
+    let added;
+    if (db.items[id]) { delete db.items[id]; added = false; }
+    else { db.items[id] = { ...rec, id, ts: Date.now() }; added = true; }
+    save();
+    changed();
+    return added;
+  }
+  function changed() { refreshHearts(); }
+
+  // ---- describe: turn a rendered element into a favorite record
+  const posterOf = (root) => {
+    const im = root && root.querySelector('img');
+    if (!im) return null;
+    const v = im.getAttribute('data-poster') || im.getAttribute('src') || '';
+    return v && !/^data:/i.test(v) ? v : null;
+  };
+  const siteLabel = (el) => ((el.querySelector('.site-label') || {}).textContent || '').trim();
+  const slim = (o) => { try { return JSON.parse(JSON.stringify(o)); } catch (e) { return null; } };
+  const chipName = (el) => {
+    const n = el.firstChild;
+    return ((n && n.nodeType === 3 ? n.data : el.textContent) || '').trim();
+  };
+  const studioType = () => (tabIs('networks') ? 'network' : 'series');
+
+  function describe(el) {
+    if (!el || !el.matches) return null;
+    // live cam / live TV channel cards
+    if (el.matches('a.cam-card')) {
+      const link = el.getAttribute('data-cam-link');
+      if (!link || link === '#') return null;
+      const chan = el.classList.contains('chan-card');
+      const img = el.querySelector('img.cam-img');
+      let thumbs = [];
+      try { thumbs = JSON.parse((img && img.dataset.thumbs) || '[]'); } catch (e) {}
+      const item = gItems().get(link);
+      return { type: chan ? 'channel' : 'cam', key: normLink(link), link, name: el.getAttribute('data-title') || 'Live',
+        sub: chan ? ((el.querySelector('.cam-sub') || {}).textContent || '').trim()
+                  : ((item && item._camProvider) || (el.querySelector('.cam-provider') || {}).title || ''),
+        thumbs: thumbs.slice(0, 4), item: item ? slim(item) : null };
+    }
+    // videos
+    if (el.matches('a.card[data-detail]')) {
+      const link = el.getAttribute('data-detail');
+      if (!link) return null;
+      const it = gItems().get(link) || {};
+      return { type: 'video', key: normLink(link), link, name: el.getAttribute('data-title') || 'Video',
+        sub: siteLabel(el) || el.getAttribute('data-host') || '', thumbs: [posterOf(el)].filter(Boolean),
+        extra: { duration: it.duration || ((el.querySelector('.dur-badge') || {}).textContent || '') || null, views: it.views || null, rating: it.rating || null } };
+    }
+    // category / pornstar / studio tiles
+    if (el.matches('a.category-card[data-link]')) {
+      const link = el.getAttribute('data-link');
+      const star = el.classList.contains('portrait') || tabIs('stars');
+      const type = star ? 'star' : tabIs('networks') ? 'network' : tabIs('series') ? 'series' : 'category';
+      return { type, key: normLink(link), link, name: el.getAttribute('data-name') || 'Untitled', sub: siteLabel(el), thumbs: [posterOf(el)].filter(Boolean) };
+    }
+    // standalone series card (image + title + "See all")
+    if (el.matches('a.series-card[data-link]')) {
+      const link = el.getAttribute('data-link');
+      return { type: studioType(), key: normLink(link), link, name: el.getAttribute('data-name') || 'Untitled', sub: el.getAttribute('data-group') || '', thumbs: [posterOf(el)].filter(Boolean) };
+    }
+    // studio row header (name + "See all videos")
+    if (el.matches('.studio-section-head')) {
+      const more = el.querySelector('.studio-more[data-link]');
+      const link = more && more.getAttribute('data-link');
+      if (!link) return null;
+      const sec = el.closest('.studio-section');
+      return { type: studioType(), key: normLink(link), link, name: more.getAttribute('data-name') || 'Untitled',
+        sub: (sec && sec.getAttribute('data-group')) || '', thumbs: [posterOf(sec && sec.querySelector('.studio-row'))].filter(Boolean) };
+    }
+    // cam platforms (Chaturbate, Stripchat ...) = cam networks; live-TV categories
+    if (el.matches('.cam-chip[data-prov]')) {
+      const name = el.getAttribute('data-prov');
+      return name ? { type: 'camnet', key: name.toLowerCase(), link: '', name, sub: 'Cam network', thumbs: [] } : null;
+    }
+    if (el.matches('.cam-chip[data-cat]')) {
+      const slug = el.getAttribute('data-cat');
+      return slug ? { type: 'category', key: 'chan-cat:' + slug, link: 'chan-cat:' + slug, name: chipName(el), sub: 'Live TV', thumbs: [] } : null;
+    }
+    // chips under the player: stars, genres, series, uploaders, tags, cam platform
+    if (el.matches('.tag-chip')) {
+      const link = el.getAttribute('data-meta-link');
+      if (link) {
+        const type = el.classList.contains('tag-pornstar') ? 'star'
+          : (el.classList.contains('tag-series') || el.classList.contains('tag-uploader')) ? 'series' : 'category';
+        return { type, key: normLink(link), link, name: el.getAttribute('data-meta-name') || chipName(el), sub: '', thumbs: [] };
+      }
+      const cur = gInfo() && gItems().get(gInfo().detail);
+      if (el.classList.contains('tag-studio') && cur && cur._cam) {
+        const name = chipName(el);
+        return name ? { type: 'camnet', key: name.toLowerCase(), link: '', name, sub: 'Cam network', thumbs: [] } : null;
+      }
+    }
+    return null;
+  }
+
+  // ---- hearts on the page
+  const SEL = 'a.card[data-detail], a.category-card[data-link], a.series-card[data-link], .studio-section-head, a.cam-card, .cams-chips .cam-chip, #mainPlayerMeta .tag-chip';
+  function mountOf(el) {
+    if (el.matches('a.cam-card')) return { host: el.querySelector('.cam-thumb'), cls: '' };
+    if (el.matches('a.series-card')) return { host: el.querySelector('.series-thumb'), cls: '' };
+    if (el.matches('a.card, a.category-card')) return { host: el.querySelector('.thumb'), cls: '' };
+    if (el.matches('.studio-section-head')) return { host: el, cls: 'fav-inline', after: el.querySelector('.studio-name') };
+    return { host: el, cls: 'fav-chip' };            // chips: the heart sits inside the chip
+  }
+  function decorate(el) {
+    const m = mountOf(el);
+    if (!m.host) return;
+    if (m.host.querySelector(':scope > .fav-btn, :scope > .fav-btn-wrap')) return;
+    if (m.cls === 'fav-chip' && el.querySelector(':scope > .fav-btn')) return;
+    const rec = describe(el);
+    if (!rec) return;
+    const b = document.createElement('span');
+    b.className = 'fav-btn' + (m.cls ? ' ' + m.cls : '');
+    b.setAttribute('role', 'button');
+    b.tabIndex = 0;
+    b.setAttribute('data-fav', '1');
+    b.dataset.favId = idOf(rec.type, rec.key);
+    b._host = el;
+    b.innerHTML = HEART;
+    if (m.after && m.after.parentNode === m.host) m.after.after(b); else m.host.appendChild(b);
+    paint(b);
+  }
+  function paint(b) {
+    const on = has(b.dataset.favId);
+    b.classList.toggle('is-fav', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    b.title = on ? 'Remove from favorites' : 'Add to favorites';
+  }
+  function refreshHearts() {
+    document.querySelectorAll('.fav-btn[data-fav]').forEach(paint);
+    syncPlayerBtn();
+    updateBar();
+    if (panelOpen) renderPanel();
+  }
+  function scan(root) {
+    if (!root || root.nodeType !== 1) return;
+    if (root.closest && root.closest('#favPanel, #favBar')) return;
+    if (root.matches(SEL)) decorate(root);
+    root.querySelectorAll(SEL).forEach(decorate);
+  }
+
+  // one handler for every heart (capture phase: runs before the cards' own click handlers)
+  function onHeart(e) {
+    const b = e.target.closest && e.target.closest('.fav-btn[data-fav]');
+    if (!b) return false;
+    e.preventDefault();
+    e.stopPropagation();
+    const rec = b._host && describe(b._host);
+    if (!rec) return true;
+    const added = toggle(rec);
+    toast(added ? `♥ Added to ${TYPES[rec.type].label}` : `Removed from ${TYPES[rec.type].label}`);
+    return true;
+  }
+  document.addEventListener('click', onHeart, true);
+  document.addEventListener('keydown', (e) => {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.closest && e.target.closest('.fav-btn[data-fav]')) onHeart(e);
+  }, true);
+
+  // ---- heart in the player header (the video / cam / channel being watched)
+  const actions = document.querySelector('.main-player-actions');
+  let playerBtn = null;
+  if (actions) {
+    playerBtn = document.createElement('button');
+    playerBtn.type = 'button';
+    playerBtn.id = 'favPlayerBtn';
+    playerBtn.className = 'main-player-close fav-player';
+    playerBtn.innerHTML = HEART + '<span>Favorite</span>';
+    actions.insertBefore(playerBtn, actions.firstChild);
+    playerBtn.addEventListener('click', () => {
+      const rec = playerRec();
+      if (!rec) return;
+      const added = toggle(rec);
+      toast(added ? `♥ Added to ${TYPES[rec.type].label}` : `Removed from ${TYPES[rec.type].label}`);
+    });
+  }
+  function playerRec() {
+    const info = gInfo();
+    if (!info || !info.detail) return null;
+    const it = gItems().get(info.detail) || {};
+    const type = it._cam ? 'cam' : it._chan ? 'channel' : 'video';
+    let thumbs = (it._thumbs || []).slice(0, 4);
+    if (!thumbs.length && it.thumbnail) thumbs = [it.thumbnail];
+    if (!thumbs.length) { const s = document.getElementById('stillImg'); if (s && s.src && !/^data:/i.test(s.src)) thumbs = [s.src]; }
+    return { type, key: normLink(info.detail), link: info.detail, name: info.title || it.title || 'Video',
+      sub: it._camProvider || '', thumbs, item: type === 'video' ? null : slim(it),
+      extra: type === 'video' ? { duration: it.duration || null, views: it.views || null, rating: it.rating || null } : undefined };
+  }
+  function syncPlayerBtn() {
+    if (!playerBtn) return;
+    const rec = playerRec();
+    const on = !!rec && has(idOf(rec.type, rec.key));
+    const label = on ? 'Favorited' : 'Favorite';
+    const span = playerBtn.querySelector('span');
+    // only touch the DOM when something changed: this button lives inside the node the observer below watches
+    if (playerBtn.classList.contains('is-fav') !== on) playerBtn.classList.toggle('is-fav', on);
+    if (span.textContent !== label) span.textContent = label;
+    if (playerBtn.disabled !== !rec) playerBtn.disabled = !rec;
+  }
+
+  // ---- toast
+  const toastEl = document.createElement('div');
+  toastEl.id = 'favToast';
+  toastEl.setAttribute('role', 'status');
+  document.body.appendChild(toastEl);
+  let toastTimer = 0;
+  function toast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove('show'), 1800);
+  }
+
+  // ---- sticky bottom bar
+  const bar = document.createElement('div');
+  bar.id = 'favBar';
+  bar.innerHTML = `<button type="button" aria-haspopup="dialog" title="Open your favorites">${HEART}<span>Favorites</span><span class="fav-count">0</span></button>`;
+  document.body.appendChild(bar);
+  bar.querySelector('button').addEventListener('click', openPanel);
+  function updateBar() { bar.querySelector('.fav-count').textContent = String(count()); }
+
+  // ---- panel
+  const panel = document.createElement('div');
+  panel.id = 'favPanel';
+  panel.setAttribute('role', 'dialog');
+  panel.setAttribute('aria-modal', 'true');
+  panel.setAttribute('aria-label', 'Favorites');
+  panel.innerHTML = `<div class="fp-backdrop"></div>
+    <div class="fp-sheet">
+      <div class="fp-head"><div class="fp-title">${HEART}<span>Favorites</span><small id="fpTotal"></small></div>
+        <button type="button" class="fp-x" id="fpClose">Close</button></div>
+      <div class="fp-tabs" id="fpTabs"></div>
+      <div class="fp-tools"><input id="fpSearch" type="search" placeholder="Search your favorites…" autocomplete="off" aria-label="Search favorites">
+        <select id="fpSort" aria-label="Sort"><option value="recent">Recently added</option><option value="name">A – Z</option></select></div>
+      <div class="fp-list" id="fpList"></div>
+      <div class="fp-foot"><button type="button" id="fpExport">⬇ Export</button><button type="button" id="fpImport">⬆ Import</button>
+        <button type="button" class="danger" id="fpClear">🗑 Clear</button>
+        <input type="file" id="fpFile" accept="application/json,.json" hidden></div>
+    </div>`;
+  document.body.appendChild(panel);
+  const $ = (id) => panel.querySelector('#' + id);
+  const ui = { tab: 'all', q: '', sort: 'recent' };
+  let panelOpen = false;
+
+  function groupsNow() {
+    const q = ui.q.trim().toLowerCase();
+    const all = Object.values(db.items);
+    const visible = all.filter((r) => !q || (r.name + ' ' + (r.sub || '')).toLowerCase().includes(q));
+    const by = {};
+    visible.forEach((r) => { (by[r.type] = by[r.type] || []).push(r); });
+    const cmp = ui.sort === 'name' ? (a, b) => a.name.localeCompare(b.name) : (a, b) => (b.ts || 0) - (a.ts || 0);
+    Object.values(by).forEach((l) => l.sort(cmp));
+    const totals = {};
+    all.forEach((r) => { totals[r.type] = (totals[r.type] || 0) + 1; });
+    return { by, totals, shown: visible.length, all: all.length };
+  }
+  function tileHtml(r) {
+    const t = TYPES[r.type] || TYPES.video;
+    const th = (r.thumbs || []).filter(Boolean);
+    const thumb = th.length
+      ? `<img src="${esc(th[0])}" data-alts="${esc(JSON.stringify(th.slice(1)))}" referrerpolicy="no-referrer" loading="lazy" alt="">`
+      : `<div class="fav-ph">${t.icon}</div>`;
+    const dur = r.extra && r.extra.duration ? `<span class="fav-dur">${esc(r.extra.duration)}</span>` : '';
+    return `<div class="fav-tile t-${r.type}" data-open="${esc(r.id)}" role="button" tabindex="0" title="${esc(r.name)}">
+      <div class="fav-thumb">${thumb}${dur}<span class="fav-btn is-fav fav-rm" role="button" tabindex="0" data-rm="${esc(r.id)}" title="Remove from favorites">${HEART}</span></div>
+      <div class="fav-info"><div class="fav-name">${esc(r.name)}</div>${r.sub ? `<div class="fav-sub">${esc(r.sub)}</div>` : ''}</div></div>`;
+  }
+  function renderPanel() {
+    const g = groupsNow();
+    $('fpTotal').textContent = g.all ? `· ${g.all}` : '';
+    const present = ORDER.filter((k) => g.totals[k]);
+    if (ui.tab !== 'all' && !g.totals[ui.tab]) ui.tab = 'all';
+    $('fpTabs').innerHTML = `<button type="button" class="fp-tab${ui.tab === 'all' ? ' active' : ''}" data-tab="all">All<small>${g.all}</small></button>` +
+      present.map((k) => `<button type="button" class="fp-tab${ui.tab === k ? ' active' : ''}" data-tab="${k}">${TYPES[k].icon} ${TYPES[k].label}<small>${g.totals[k]}</small></button>`).join('');
+    const keys = (ui.tab === 'all' ? ORDER : [ui.tab]).filter((k) => g.by[k] && g.by[k].length);
+    let html = '';
+    if (!g.all) {
+      html = `<div class="fp-empty">♥<br>Nothing here yet.<br>Tap the heart on any video, cam, live channel, category, star, series, network or cam network<br>and it shows up here, sorted by type.</div>`;
+    } else if (!keys.length) {
+      html = `<div class="fp-empty">No favorites match “${esc(ui.q)}”.</div>`;
+    } else {
+      html = keys.map((k) => (ui.tab === 'all' ? `<div class="fp-group-h">${TYPES[k].icon} ${TYPES[k].label} <small>${g.by[k].length}</small></div>` : '') +
+        `<div class="fp-grid">${g.by[k].map(tileHtml).join('')}</div>`).join('');
+    }
+    const list = $('fpList');
+    const y = list.scrollTop;
+    list.innerHTML = html;
+    list.scrollTop = y;
+    $('fpClear').textContent = ui.tab === 'all' ? '🗑 Clear all' : `🗑 Clear ${TYPES[ui.tab].label.toLowerCase()}`;
+    $('fpClear').hidden = !g.all;
+    $('fpExport').hidden = !g.all;
+  }
+  let lastFocus = null;
+  function openPanel() {
+    lastFocus = document.activeElement;
+    panelOpen = true;
+    panel.classList.add('open');
+    document.body.classList.add('fav-open');
+    renderPanel();
+    setTimeout(() => { try { $('fpClose').focus(); } catch (e) {} }, 0);
+  }
+  function closePanel() {
+    if (!panelOpen) return;
+    panelOpen = false;
+    panel.classList.remove('open');
+    document.body.classList.remove('fav-open');
+    try { (lastFocus && lastFocus.focus ? lastFocus : bar.querySelector('button')).focus({ preventScroll: true }); } catch (e) {}
+  }
+  $('fpClose').addEventListener('click', closePanel);
+  panel.querySelector('.fp-backdrop').addEventListener('click', closePanel);
+  window.addEventListener('popstate', closePanel);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && panelOpen) { e.stopPropagation(); closePanel(); } }, true);
+  $('fpSearch').addEventListener('input', (e) => { ui.q = e.target.value; renderPanel(); });
+  $('fpSort').addEventListener('change', (e) => { ui.sort = e.target.value; renderPanel(); });
+  $('fpTabs').addEventListener('click', (e) => { const t = e.target.closest('.fp-tab'); if (t) { ui.tab = t.dataset.tab; renderPanel(); } });
+  panel.addEventListener('error', (e) => {                 // thumbnail fallbacks: try the next known URL, then an icon
+    const im = e.target;
+    if (!im || im.tagName !== 'IMG') return;
+    let alts = []; try { alts = JSON.parse(im.dataset.alts || '[]'); } catch (x) {}
+    if (alts.length) { im.src = alts.shift(); im.dataset.alts = JSON.stringify(alts); return; }
+    const tile = im.closest('.fav-tile');
+    const rec = tile && db.items[tile.dataset.open];
+    const ph = document.createElement('div');
+    ph.className = 'fav-ph';
+    ph.textContent = (TYPES[(rec && rec.type) || 'video'] || TYPES.video).icon;
+    im.replaceWith(ph);
+  }, true);
+  $('fpList').addEventListener('click', (e) => {
+    const rm = e.target.closest('[data-rm]');
+    if (rm) { e.stopPropagation(); delete db.items[rm.dataset.rm]; save(); changed(); return; }
+    const tile = e.target.closest('[data-open]');
+    if (tile) openFav(db.items[tile.dataset.open]);
+  });
+  $('fpList').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const rm = e.target.closest('[data-rm]');
+    if (rm) { e.preventDefault(); delete db.items[rm.dataset.rm]; save(); changed(); return; }
+    const tile = e.target.closest('[data-open]');
+    if (tile) { e.preventDefault(); openFav(db.items[tile.dataset.open]); }
+  });
+
+  // ---- open a favorite
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  async function openCamNetwork(name) {
+    if (/^xlivetv$/i.test(name)) { const b = document.getElementById('chansBtn'); if (b) b.click(); return; }
+    const btn = document.getElementById('camsBtn');
+    if (btn) btn.click();
+    for (let i = 0; i < 50; i++) {                          // the cams list loads asynchronously: wait for the platform chip
+      await sleep(150);
+      const chip = document.querySelector('.cams-chips .cam-chip[data-prov="' + (window.CSS && CSS.escape ? CSS.escape(name) : name) + '"]');
+      if (chip) { chip.click(); return; }
+    }
+  }
+  function openFav(rec) {
+    if (!rec) return;
+    closePanel();
+    const items = gItems();
+    const playerOpen = !!document.getElementById('mainPlayer').classList.contains('active');
+    setTimeout(() => {
+      try {
+        if (rec.type === 'video') {
+          if (!items.has(rec.link)) items.set(rec.link, { link: rec.link, title: rec.name, thumbnail: (rec.thumbs || [])[0] || null, ...(rec.extra || {}) });
+          playInMainPlayer(rec.link, rec.name);
+        } else if (rec.type === 'cam' || rec.type === 'channel') {
+          if (rec.item) items.set(rec.link, rec.item);
+          playInMainPlayer(rec.link, rec.name);
+        } else if (rec.type === 'camnet') {
+          openCamNetwork(rec.name);
+        } else if (playerOpen && typeof closePlayerAndOpen === 'function') {
+          closePlayerAndOpen(rec.link, rec.name);
+        } else {
+          openMetaLink(rec.link, rec.name);               // categories, stars, series, networks, live-TV categories
+        }
+      } catch (err) { toast('Could not open that favorite'); console.error('[favorites]', err); }
+    }, 60);
+  }
+
+  // ---- export / import / clear
+  $('fpExport').addEventListener('click', () => {
+    const blob = new Blob([JSON.stringify({ app: 'porn-archives', version: 1, exported: new Date().toISOString(), items: Object.values(db.items) }, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'favorites-' + new Date().toISOString().slice(0, 10) + '.json';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+  });
+  $('fpImport').addEventListener('click', () => $('fpFile').click());
+  $('fpFile').addEventListener('change', async (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    try {
+      const data = JSON.parse(await f.text());
+      const list = Array.isArray(data) ? data : data.items;
+      let n = 0;
+      (list || []).forEach((r) => {
+        if (!r || !TYPES[r.type] || !r.key || !r.name) return;
+        const id = idOf(r.type, r.key);
+        if (!db.items[id]) { db.items[id] = { ...r, id, ts: r.ts || Date.now() }; n++; }
+      });
+      save();
+      changed();
+      toast(n ? `Imported ${n} favorite${n === 1 ? '' : 's'}` : 'Nothing new to import');
+    } catch (err) { toast('That file is not a favorites export'); }
+  });
+  $('fpClear').addEventListener('click', () => {
+    const only = ui.tab !== 'all' ? ui.tab : null;
+    const n = Object.values(db.items).filter((r) => !only || r.type === only).length;
+    if (!n || !confirm(`Remove ${n} favorite${n === 1 ? '' : 's'}${only ? ' from ' + TYPES[only].label : ''}? This cannot be undone.`)) return;
+    Object.keys(db.items).forEach((id) => { if (!only || db.items[id].type === only) delete db.items[id]; });
+    save();
+    changed();
+  });
+
+  // ---- boot
+  load();
+  updateBar();
+  scan(document.body);
+  let pending = new Set(), scheduled = false;
+  new MutationObserver((muts) => {
+    for (const m of muts) m.addedNodes.forEach((n) => { if (n.nodeType === 1) pending.add(n); });
+    if (scheduled || !pending.size) return;
+    scheduled = true;
+    requestAnimationFrame(() => { const batch = pending; pending = new Set(); scheduled = false; batch.forEach(scan); });
+  }).observe(document.body, { childList: true, subtree: true });
+  const mp = document.getElementById('mainPlayer');
+  if (mp) new MutationObserver(syncPlayerBtn).observe(mp, { attributes: true, attributeFilter: ['class'], childList: true, subtree: true, characterData: true });
+  window.addEventListener('storage', (e) => { if (e.key === KEY) { load(); refreshHearts(); } });
+  window.Favorites = { open: openPanel, close: closePanel, toggle, all: () => Object.values(db.items) };
 })();
 </script>
 </body>
