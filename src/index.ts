@@ -639,12 +639,21 @@ export default {
           }
           // Fetch fresh from lemoncams
           const fresh = await fetchLemoncamsFilters(env.LEMONCAMS_PROXY);
-          if (fresh.tags.length || fresh.categories.length || fresh.genres.length) {
-            const payload = { tags: fresh.tags, categories: fresh.categories, genres: fresh.genres, hairColors: fresh.hairColors, bodyTypes: fresh.bodyTypes, countries: fresh.countries, _ts: nowSec() };
-            ctx.waitUntil(env.SCRAPE_DATA.put(key, JSON.stringify(payload), { expirationTtl: 86400 }));
-            return json(payload, 200, headers);
-          }
-          return json({ tags: [], categories: [], genres: [], hairColors: [], bodyTypes: [], countries: [], error: "No filters available" }, 200, headers);
+          // Default fallbacks (always show these if scraping returns empty)
+          const defaultGenres = ['Anal', 'Asian', 'BBW', 'BDSM', 'Big Tits', 'Big Ass', 'Blonde', 'Blowjob', 'Brunette', 'Cam2Cam', 'Couple', 'Creampie', 'Curvy', 'Deepthroat', 'Ebony', 'Feet', 'Fetish', 'Fisting', 'Gangbang', 'Hairy', 'Interracial', 'Latina', 'Lesbian', 'Lovense', 'Masturbation', 'MILF', 'Muscle', 'New', 'Petite', 'POV', 'Pregnant', 'Redhead', 'Squirt', 'Teen', 'Toys', 'Trans', 'Voyeur'];
+          const defaultTags = ['HD', 'Private', 'Recordable', 'Mobile', 'Lovense', 'Interactive Toy', 'New Model', 'Verified', 'Featured', 'Popular', 'Couple', 'Trans', 'Male', 'Female'];
+          const defaultCategories = ['Amateur', 'Anal', 'Asian', 'BBW', 'BDSM', 'Big Tits', 'Blonde', 'Brunette', 'Couple', 'Ebony', 'Fetish', 'Latina', 'Lesbian', 'Mature', 'MILF', 'Petite', 'Redhead', 'Squirt', 'Teen', 'Toys', 'Trans'];
+          const payload = { 
+            tags: fresh.tags.length ? fresh.tags : defaultTags, 
+            categories: fresh.categories.length ? fresh.categories : defaultCategories, 
+            genres: fresh.genres.length ? fresh.genres : defaultGenres, 
+            hairColors: fresh.hairColors, 
+            bodyTypes: fresh.bodyTypes, 
+            countries: fresh.countries, 
+            _ts: nowSec() 
+          };
+          ctx.waitUntil(env.SCRAPE_DATA.put(key, JSON.stringify(payload), { expirationTtl: 86400 }));
+          return json(payload, 200, headers);
         }
 
         // ---------------------------------------------------------------- live TV channels (bundle, stale-forever)

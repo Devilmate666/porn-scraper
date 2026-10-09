@@ -286,6 +286,13 @@ async function fetchLemoncamsTags(proxy: string = ""): Promise<{ tags: string[];
       const bodyMatches = [...html.matchAll(/body:\s*([^,\n]+)/gi)];
       for (const m of bodyMatches) bodyTypes.add(m[1].trim().replace(/\b\w/g, c => c.toUpperCase()));
 
+      // Extract genres from known genre-like tags/categories (fallback since lemoncams has no /genres/ page)
+      const genreKeywords = ['anal', 'asian', 'bbw', 'bdsm', 'big tits', 'big ass', 'blonde', 'blowjob', 'brunette', 'cam2cam', 'couple', 'creampie', 'curvy', 'deepthroat', 'ebony', 'feet', 'fetish', 'fisting', 'gangbang', 'hairy', 'interracial', 'latina', 'lesbian', 'lovense', 'masturbation', 'milf', 'muscle', 'new', 'petite', 'pov', 'pregnant', 'redhead', 'squirt', 'teen', 'toys', 'trans', 'voyeur'];
+      for (const kw of genreKeywords) {
+        // Check if this keyword appears in tags or categories
+        if (tags.has(kw) || categories.has(kw)) genres.add(kw);
+      }
+
     } catch (e) {
       notes.push(`lemoncams-tags: ${url} -> ${e instanceof Error ? e.message : e}`);
     }
