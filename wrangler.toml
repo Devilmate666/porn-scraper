@@ -6,6 +6,7 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 ENVIRONMENT = "production"
 CACHE_TTL = "3600"
+LEMONCAMS_PROXY = "https://r.jina.ai/http://"
 
 [[kv_namespaces]]
 binding = "CACHE"
