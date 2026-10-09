@@ -157,7 +157,11 @@
 .cams-chips .cam-chip:hover { filter: brightness(1.25); }
 .cams-chips .cam-chip.active { background: #2b3556; color: #fff; border-color: #7c8af8; }
 .cams-chips .cam-chip small { opacity: .65; margin-left: .3rem; }
-.cams-filter-row { display: flex; align-items: center; gap: .6rem; padding: .5rem 1.4rem 0; flex-wrap: wrap; }
+.cams-filter-row { display: flex; align-items: flex-start; gap: .6rem; padding: .5rem 1.4rem 0; }
+.cams-filter-row .cams-chips { padding: 0; flex: 1; min-width: 0; }
+.cams-chips.scroll { max-height: 5.4rem; overflow-y: auto; scrollbar-width: thin; padding-right: .3rem; }
+.cams-note { padding: .35rem 1.4rem 0; font-size: .72rem; color: #8ea0bd; min-height: 0; }
+.cams-note:empty { display: none; }
 .cams-filter-label { font-size: .7rem; font-weight: 600; color: #8a9cc0; text-transform: uppercase; letter-spacing: .05em; flex-shrink: 0; min-width: 70px; }
   .cam-tagline { margin-top: .22rem; font-size: .68rem; color: #6f7f9c; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .cams-empty { grid-column: 1 / -1; padding: 2rem; text-align: center; color: #7a8aaa; }
@@ -968,7 +972,7 @@
             <button class="action" id="pornSitesBtn" type="button">📺 Porn Series</button>
             <button class="action" id="networksBtn" type="button">🌐 Networks</button>
             <button class="action" id="pornstarsBtn" type="button">⭐ Pornstars</button>
-            <button class="action" id="camsBtn" type="button" title="Live cams: Chaturbate, Stripchat, Cam4, CamSoda">📹 Sex Cams</button>
+            <button class="action" id="camsBtn" type="button" title="Live cams by Lemoncams category and country">📹 Sex Cams</button>
             <button class="action" id="chansBtn" type="button" title="Live TV channels from XLiveTV">📺 Live Channels</button>
           </div>
         </div>
@@ -5063,9 +5067,10 @@ async function openCatalog(kind, opts = {}) {
 -------------------------------------------------------------- */
 const CAMS_BATCH = 24;                 // cards added to the page per step: only what is shown gets fetched
 let liveCamsData = null;               // { items, count, providers, source, fetched_at }
-let liveCamsFilters = null;            // { tags, categories, genres, hairColors, bodyTypes, countries }
+let liveCamsFilters = null;            // { categories: [{name,url,code,count}], countries: [...] }  (Lemoncams only: no tags)
 let liveCamsShown = 0;
-let camsFilter = { provider: '', tag: '', category: '', genre: '', hairColor: '', bodyType: '', country: '', q: '' };
+let camsFilter = { category: null, country: null, q: '' };      // category / country = the chosen filter row (or null = All)
+const camPageLoaded = new Set();       // Lemoncams category / country pages already read this session
 
 /** Turn a scraped cam into a "video item" so the normal player panel (thumbnail + play + details) can show it. */
 const CAM_PROXY_FIRST = new Set(['stripchat', 'cam4']);      // their image CDNs block hot-linking from other sites
@@ -5086,7 +5091,6 @@ function camToItem(c) {
   add('country', c.country ? [`${c.flag_emoji ? c.flag_emoji + ' ' : ''}${c.country}`] : []);
   add('languages', c.languages);
   add('categories', c.categories);
-  add('tags', c.tags);
   const bits = [c.gender, c.hd ? 'HD' : '', c.is_new ? 'New' : ''].filter(Boolean).join(' · ');
   return {
     link: c.link, title: c.username + (c.age ? ` · ${c.age}` : ''), thumbnail: c.thumbnail,
@@ -5116,7 +5120,7 @@ function camCardHtml(c, idx) {
   const provider = c.provider_logo
     ? `<span class="cam-provider" title="${escapeHtml(c.provider_name || c.provider || '')}"><img src="${escapeHtml(c.provider_logo)}" alt="${escapeHtml(c.provider || '')}" loading="lazy" referrerpolicy="no-referrer"></span>`
     : ((c.provider_name || c.provider) ? `<span class="cam-provider">${escapeHtml(c.provider_name || c.provider)}</span>` : '');
-  const cats = (c.categories && c.categories.length ? c.categories : c.tags || []).slice(0, 3).join(' · ');
+  const cats = (c.categories || []).slice(0, 3).join(' · ');
   const sub = c.country
     ? `${c.flag_emoji ? `<span style="flex:0 0 auto">${c.flag_emoji}</span>` : (c.flag ? `<img src="${escapeHtml(c.flag)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : '')}<span>${escapeHtml(c.country)}</span>`
     : (c.room_title ? `<span>${escapeHtml(c.room_title)}</span>` : '');
@@ -5127,19 +5131,22 @@ function camCardHtml(c, idx) {
   </a>`;
 }
 
+const camKey = (v) => String(v || '').trim().toLowerCase();
+const camFlagEmoji = (code) => /^[A-Za-z]{2}$/.test(code || '')
+  ? String.fromCodePoint(...[...code.toUpperCase()].map(ch => 0x1F1E6 + ch.charCodeAt(0) - 65)) : '';
+const camHasCategory = (c, name) => (c.categories || []).some(x => camKey(x) === camKey(name));
+const camInCountry = (c, f) => (!!f.code && (c.country_code || '').toUpperCase() === f.code.toUpperCase()) || camKey(c.country) === camKey(f.name);
+const camUnion = (a, b) => { const out = [...(a || [])]; for (const x of b || []) if (!out.some(y => camKey(y) === camKey(x))) out.push(x); return out; };
+
 function visibleCams() {
   const words = queryWords(camsFilter.q);
+  const { category, country } = camsFilter;
   return liveCamsData.items.filter(c => {
-    if (camsFilter.provider && (c.provider_name || c.provider) !== camsFilter.provider) return false;
-    if (camsFilter.tag && !(c.tags || []).map(t => t.toLowerCase()).includes(camsFilter.tag.toLowerCase())) return false;
-    if (camsFilter.category && !(c.categories || []).map(t => t.toLowerCase()).includes(camsFilter.category.toLowerCase())) return false;
-    if (camsFilter.genre && !(c.tags || []).map(t => t.toLowerCase()).includes(camsFilter.genre.toLowerCase())) return false;
-    if (camsFilter.hairColor && (c.hair_color || '').toLowerCase() !== camsFilter.hairColor.toLowerCase()) return false;
-    if (camsFilter.bodyType && (c.body_type || '').toLowerCase() !== camsFilter.bodyType.toLowerCase()) return false;
-    if (camsFilter.country && (c.country || '').toLowerCase() !== camsFilter.country.toLowerCase()) return false;
+    if (category && !camHasCategory(c, category.name)) return false;
+    if (country && !camInCountry(c, country)) return false;
     if (!words.length) return true;
     const hay = [c.username, c.provider_name, c.provider, c.country, c.gender, c.room_title,
-                 ...(c.categories || []), ...(c.tags || []), ...(c.languages || [])].join(' ');
+                 ...(c.categories || []), ...(c.languages || [])].join(' ');
     return searchWordsMatch(hay, words);
   });
 }
@@ -5260,23 +5267,169 @@ function renderCamBatch(feed) {
 }
 
 /** Re-draw the grid from the first card (after a platform chip or the search box changed). */
+function camFeed() { return results.querySelector('.feed[data-site="' + LIVECAMS_TAB + '"]'); }
+function camSetNote(text) { const n = document.getElementById('camsNote'); if (n) n.textContent = text || ''; }
+
+function camRefreshCount() {
+  const feed = camFeed();
+  const badge = feed && feed.querySelector('.count-badge');
+  if (badge && liveCamsData) badge.textContent = `🎥 ${visibleCams().length} live`;
+}
+
 function refreshCamGrid() {
-  const feed = results.querySelector('.feed[data-site="' + LIVECAMS_TAB + '"]');
+  const feed = camFeed();
   if (!feed || !liveCamsData) return;
   const grid = feed.querySelector('.cams-grid');
   grid.innerHTML = '';
   liveCamsShown = 0;
   renderCamBatch(feed);
-  if (!grid.children.length) grid.innerHTML = '<div class="cams-empty">No live cams match — try another word or platform.</div>';
-  const n = visibleCams().length;
-  const badge = feed.querySelector('.count-badge');
-  if (badge) badge.textContent = `🎥 ${n} live`;
-  feed.querySelectorAll('.cam-chip').forEach(ch => ch.classList.toggle('active', (ch.getAttribute('data-prov') || '') === camsFilter.provider));
+  if (!grid.children.length) grid.innerHTML = '<div class="cams-empty">No live cams match — try another category, country or word.</div>';
+  camRefreshCount();
+  camRenderFilters();
 }
 
 function applyCamFilter() {
   camsFilter.q = (searchInput.value || '').trim();
   refreshCamGrid();
+}
+
+/* ---- the only filters: Lemoncams categories + countries ---- */
+function normFilterList(list) {
+  const out = [], seen = new Set();
+  for (const x of Array.isArray(list) ? list : []) {
+    const r = typeof x === 'string' ? { name: x } : (x && typeof x.name === 'string' ? x : null);
+    const name = r && r.name.trim();
+    if (!name || seen.has(camKey(name))) continue;
+    seen.add(camKey(name));
+    out.push({ name, url: r.url || null, code: r.code || null, count: typeof r.count === 'number' ? r.count : null });
+  }
+  return out;
+}
+
+/** Real categories / countries of the cams that are loaded: used only for a row Lemoncams' own list did not provide. */
+function camDerivedFilters(kind) {
+  const m = new Map();
+  for (const c of liveCamsData.items) {
+    if (kind === 'categories') for (const n of c.categories || []) { const e = m.get(camKey(n)) || { name: n, n: 0 }; e.n++; m.set(camKey(n), e); }
+    else if (c.country) { const e = m.get(camKey(c.country)) || { name: c.country, code: c.country_code || null, n: 0 }; e.n++; m.set(camKey(c.country), e); }
+  }
+  return [...m.values()].sort((a, b) => b.n - a.n).map(e => ({ name: e.name, url: null, code: e.code || null, count: e.n }));
+}
+
+function camFillMissingFilters(real) {
+  if (!liveCamsFilters) liveCamsFilters = { categories: [], countries: [], real: { categories: false, countries: false } };
+  for (const kind of ['categories', 'countries']) {
+    if (real && real[kind] && real[kind].length) { liveCamsFilters[kind] = real[kind]; liveCamsFilters.real[kind] = true; }
+    else if (!liveCamsFilters.real[kind]) liveCamsFilters[kind] = camDerivedFilters(kind);
+  }
+}
+
+function camFilterCounts(kind) {
+  const byName = new Map(), byCode = new Map();
+  for (const c of liveCamsData.items) {
+    if (kind === 'categories') { for (const n of c.categories || []) byName.set(camKey(n), (byName.get(camKey(n)) || 0) + 1); }
+    else if (c.country) {
+      byName.set(camKey(c.country), (byName.get(camKey(c.country)) || 0) + 1);
+      if (c.country_code) byCode.set(c.country_code.toUpperCase(), (byCode.get(c.country_code.toUpperCase()) || 0) + 1);
+    }
+  }
+  return (r) => (r.code && byCode.get(r.code.toUpperCase())) || byName.get(camKey(r.name)) || 0;
+}
+
+function camFilterRowHtml(kind, label) {
+  const rows = (liveCamsFilters && liveCamsFilters[kind]) || [];
+  if (!rows.length) return '';
+  const sel = kind === 'categories' ? camsFilter.category : camsFilter.country;
+  const count = camFilterCounts(kind);
+  const chips = rows.map((r, i) => {
+    const n = count(r) || r.count || 0;
+    const flag = kind === 'countries' ? camFlagEmoji(r.code) : '';
+    return `<span class="cam-chip${sel && camKey(sel.name) === camKey(r.name) ? ' active' : ''}" data-kind="${kind}" data-i="${i}">${flag ? flag + ' ' : ''}${escapeHtml(r.name)}${n ? `<small>${n}</small>` : ''}</span>`;
+  }).join('');
+  return `<div class="cams-filter-row"><span class="cams-filter-label">${label}</span><div class="cams-chips scroll">`
+    + `<span class="cam-chip${sel ? '' : ' active'}" data-kind="${kind}" data-i="">All</span>${chips}</div></div>`;
+}
+
+function camRenderFilters() {
+  const box = document.querySelector('.cams-filters');
+  if (!box || !liveCamsFilters) return;
+  const keep = [...box.querySelectorAll('.cams-chips')].map(e => e.scrollTop);       // do not jump while counts update
+  box.innerHTML = camFilterRowHtml('categories', 'Categories') + camFilterRowHtml('countries', 'Countries');
+  box.querySelectorAll('.cams-chips').forEach((e, k) => { e.scrollTop = keep[k] || 0; });
+}
+
+/** Add cams to the loaded list (never duplicates: the same cam keeps every category it was seen in). */
+function camMerge(items, kind, row) {
+  const idx = new Map(liveCamsData.items.map(c => [camKey(c.provider) + '|' + camKey(c.username), c]));
+  let added = 0;
+  for (const c of items || []) {
+    if (kind === 'categories' && row) c.categories = camUnion(c.categories, [row.name]);
+    if (kind === 'countries' && row && !c.country) { c.country = row.name; c.country_code = row.code || c.country_code || null; c.flag_emoji = camFlagEmoji(c.country_code) || null; }
+    const k = camKey(c.provider) + '|' + camKey(c.username);
+    const old = idx.get(k);
+    if (!old) { liveCamsData.items.push(c); idx.set(k, c); added++; continue; }
+    old.categories = camUnion(old.categories, c.categories);
+    if (!old.country && c.country) { old.country = c.country; old.country_code = c.country_code || null; old.flag_emoji = c.flag_emoji || null; }
+  }
+  return added;
+}
+
+const camPost = (url, body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+
+/** A chip that has a Lemoncams page: read that page too, so the cams of that category / country are all there. */
+async function camLoadFilterPage(kind, row) {
+  const key = kind + '|' + row.url;
+  if (camPageLoaded.has(key)) return;
+  camPageLoaded.add(key);
+  camSetNote(`Loading every ${row.name} cam from Lemoncams…`);
+  try {
+    const res = await camPost('/api/livecams', { url: row.url, kind, name: row.name, code: row.code });
+    const j = await res.json().catch(() => ({}));
+    if (!liveCamsData) return;
+    const items = res.ok && !j.error ? (j.items || []) : [];
+    const added = camMerge(items, kind, row);
+    const still = (kind === 'categories' ? camsFilter.category : camsFilter.country);
+    camSetNote(items.length ? '' : `Lemoncams' ${row.name} page gave no extra cams (showing the matches among the loaded ones).`);
+    if (added || items.length) { if (still && camKey(still.name) === camKey(row.name)) refreshCamGrid(); else camRenderFilters(); }
+  } catch { camSetNote(''); }
+}
+
+async function camLoadFilters(force) {
+  try {
+    const res = await camPost('/api/livecams-filters', { force: !!force });
+    const j = await res.json().catch(() => ({}));
+    if (!liveCamsData) return;
+    camFillMissingFilters({ categories: normFilterList(j.categories), countries: normFilterList(j.countries) });
+    camRenderFilters();
+  } catch { /* the derived rows stay */ }
+}
+
+let camPollTimer = null;
+/** The server keeps reading Lemoncams category / country pages in the background: pick up what it found. */
+function camStartPoll() {
+  clearTimeout(camPollTimer);
+  let n = 0;
+  const tick = async () => {
+    if (activeTab !== LIVECAMS_TAB || !liveCamsData) return;
+    const cr = liveCamsData.crawl;
+    if (!cr || !cr.running || ++n > 30) { camSetNote(''); return; }
+    camSetNote(`Reading every Lemoncams category and country… ${cr.done || 0}/${cr.total || '?'} pages`);
+    try {
+      const res = await camPost('/api/livecams', {});
+      const j = await res.json().catch(() => ({}));
+      if (res.ok && Array.isArray(j.items) && liveCamsData) {
+        const added = camMerge(j.items);
+        liveCamsData.crawl = j.crawl;
+        const f = camFeed();
+        camFillMissingFilters(null);
+        camRenderFilters();
+        camRefreshCount();
+        if (added && f && !f.querySelector('.cams-sentinel')) renderCamBatch(f);
+      }
+    } catch { /* try again next tick */ }
+    camPollTimer = setTimeout(tick, 20000);
+  };
+  camPollTimer = setTimeout(tick, 4000);
 }
 
 function renderLiveCams() {
@@ -5285,42 +5438,9 @@ function renderLiveCams() {
   setTimeout(updateNetworkBarActive, 0);
   const n = liveCamsData.items.length;
   const provs = Object.entries(liveCamsData.providers || {}).sort((a, b) => b[1] - a[1]);
-  
-  // Build filter chips for tags, categories, genres, hair colors, body types, countries from lemoncams
-  const tags = liveCamsFilters?.tags || [];
-  const categories = liveCamsFilters?.categories || [];
-  const genres = liveCamsFilters?.genres || [];
-  const hairColors = liveCamsFilters?.hairColors || [];
-  const bodyTypes = liveCamsFilters?.bodyTypes || [];
-  const countries = liveCamsFilters?.countries || [];
-  
-  // Helper to create filter row with label
-  const filterRow = (label, chipsHtml) => chipsHtml ? `<div class="cams-filter-row"><span class="cams-filter-label">${label}</span>${chipsHtml}</div>` : '';
-  
-  const tagChips = tags.length
-    ? `<div class="cams-chips" data-filter="tag"><span class="cam-chip" data-tag="">All</span>${tags.map(t => `<span class="cam-chip" data-tag="${escapeHtml(t)}">${escapeHtml(t)}</span>`).join('')}</div>`
-    : '';
-  const catChips = categories.length
-    ? `<div class="cams-chips" data-filter="category"><span class="cam-chip" data-cat="">All</span>${categories.map(c => `<span class="cam-chip" data-cat="${escapeHtml(c)}">${escapeHtml(c)}</span>`).join('')}</div>`
-    : '';
-  const genreChips = genres.length
-    ? `<div class="cams-chips" data-filter="genre"><span class="cam-chip" data-genre="">All</span>${genres.map(g => `<span class="cam-chip" data-genre="${escapeHtml(g)}">${escapeHtml(g)}</span>`).join('')}</div>`
-    : '';
-  const hairChips = hairColors.length
-    ? `<div class="cams-chips" data-filter="hairColor"><span class="cam-chip" data-hair="">All</span>${hairColors.map(h => `<span class="cam-chip" data-hair="${escapeHtml(h)}">${escapeHtml(h)}</span>`).join('')}</div>`
-    : '';
-  const bodyChips = bodyTypes.length
-    ? `<div class="cams-chips" data-filter="bodyType"><span class="cam-chip" data-body="">All</span>${bodyTypes.map(b => `<span class="cam-chip" data-body="${escapeHtml(b)}">${escapeHtml(b)}</span>`).join('')}</div>`
-    : '';
-  const countryChips = countries.length
-    ? `<div class="cams-chips" data-filter="country"><span class="cam-chip" data-country="">All</span>${countries.map(c => `<span class="cam-chip" data-country="${escapeHtml(c)}">${escapeHtml(c)}</span>`).join('')}</div>`
-    : '';
-  
-  const provChips = provs.length > 1
-    ? `<div class="cams-chips"><span class="cam-chip" data-prov="">All<small>${n}</small></span>${provs.map(([p, k]) =>
-        `<span class="cam-chip" data-prov="${escapeHtml(p)}">${escapeHtml(p)}<small>${k}</small></span>`).join('')}</div>` : '';
-  
   const sub = provs.length ? provs.map(([p]) => p).join(' · ') : 'live now';
+  camsFilter = { category: null, country: null, q: '' };
+  camFillMissingFilters(null);
   rescueSearchBar(); results.innerHTML = `
     <div class="feed" data-site="${LIVECAMS_TAB}">
       <div class="feed-header sticky-top section-intro">
@@ -5330,49 +5450,26 @@ function renderLiveCams() {
         </div>
         <div class="badges"><span class="count-badge">🎥 ${n} live</span><span id="camsRefresh" class="chip-btn" title="Load a fresh list">🔄 Refresh</span></div>
       </div>
-      ${filterRow('Tags', tagChips)}
-      ${filterRow('Categories', catChips)}
-      ${filterRow('Genres', genreChips)}
-      ${filterRow('Hair Color', hairChips)}
-      ${filterRow('Body Type', bodyChips)}
-      ${filterRow('Countries', countryChips)}
-      ${filterRow('Platforms', provChips)}
+      <div class="cams-filters"></div>
+      <div class="cams-note" id="camsNote"></div>
       <div class="cams-grid"></div>
       <div class="cams-more"></div>
     </div>`;
   const feed = results.querySelector('.feed');
   liveCamsShown = 0;
-  camsFilter = { provider: '', tag: '', category: '', genre: '', hairColor: '', bodyType: '', country: '', q: '' };
   if (searchInput) searchInput.value = '';
+  camRenderFilters();
   renderCamBatch(feed);
-  // Bind all filter chips
-  feed.querySelectorAll('.cam-chip[data-prov]').forEach(ch => {
-    ch.classList.toggle('active', !ch.getAttribute('data-prov'));
-    ch.addEventListener('click', () => { camsFilter.provider = ch.getAttribute('data-prov') || ''; refreshCamGrid(); });
-  });
-  feed.querySelectorAll('.cam-chip[data-tag]').forEach(ch => {
-    ch.classList.toggle('active', !ch.getAttribute('data-tag'));
-    ch.addEventListener('click', () => { camsFilter.tag = ch.getAttribute('data-tag') || ''; refreshCamGrid(); });
-  });
-  feed.querySelectorAll('.cam-chip[data-cat]').forEach(ch => {
-    ch.classList.toggle('active', !ch.getAttribute('data-cat'));
-    ch.addEventListener('click', () => { camsFilter.category = ch.getAttribute('data-cat') || ''; refreshCamGrid(); });
-  });
-  feed.querySelectorAll('.cam-chip[data-genre]').forEach(ch => {
-    ch.classList.toggle('active', !ch.getAttribute('data-genre'));
-    ch.addEventListener('click', () => { camsFilter.genre = ch.getAttribute('data-genre') || ''; refreshCamGrid(); });
-  });
-  feed.querySelectorAll('.cam-chip[data-hair]').forEach(ch => {
-    ch.classList.toggle('active', !ch.getAttribute('data-hair'));
-    ch.addEventListener('click', () => { camsFilter.hairColor = ch.getAttribute('data-hair') || ''; refreshCamGrid(); });
-  });
-  feed.querySelectorAll('.cam-chip[data-body]').forEach(ch => {
-    ch.classList.toggle('active', !ch.getAttribute('data-body'));
-    ch.addEventListener('click', () => { camsFilter.bodyType = ch.getAttribute('data-body') || ''; refreshCamGrid(); });
-  });
-  feed.querySelectorAll('.cam-chip[data-country]').forEach(ch => {
-    ch.classList.toggle('active', !ch.getAttribute('data-country'));
-    ch.addEventListener('click', () => { camsFilter.country = ch.getAttribute('data-country') || ''; refreshCamGrid(); });
+  // Categories / Countries chips (one delegated handler: the rows are re-drawn when counts change)
+  feed.querySelector('.cams-filters').addEventListener('click', (e) => {
+    const ch = e.target.closest('.cam-chip');
+    if (!ch || !liveCamsFilters) return;
+    const kind = ch.getAttribute('data-kind');
+    const i = ch.getAttribute('data-i');
+    const row = i === '' ? null : liveCamsFilters[kind][+i];
+    if (kind === 'categories') camsFilter.category = row; else camsFilter.country = row;
+    refreshCamGrid();
+    if (row && row.url) camLoadFilterPage(kind, row);
   });
   // a cam opens in the same player panel as a video: thumbnail, details, play = open the live stream
   feed.querySelector('.cams-grid').addEventListener('click', (e) => {
@@ -5406,6 +5503,7 @@ function showLiveCamsError(err) {
 async function openLiveCams(force = false, opts = {}) {
   if (!force && liveCamsData && liveCamsData.items.length) {
     renderLiveCams();
+    camStartPoll();
     if (!opts.skipPush) pushNav({ view: 'livecams' });
     return;
   }
@@ -5416,29 +5514,19 @@ async function openLiveCams(force = false, opts = {}) {
   setStatus('Loading live cams…', true);
   showSectionLoading('live cams');
   try {
-    const [camsRes, filtersRes] = await Promise.all([
-      fetch('/api/livecams', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: !!force }) }),
-      fetch('/api/livecams-filters', { method: 'POST', headers: { 'Content-Type': 'application/json' } }),
-    ]);
+    if (force) { camPageLoaded.clear(); liveCamsFilters = null; }
+    const camsRes = await camPost('/api/livecams', { force: !!force });
     const camsJson = await camsRes.json().catch(() => ({}));
-    const filtersJson = await filtersRes.json().catch(() => ({}));
-    console.log('[LiveCams] Filters API response:', filtersJson);
-    
     if (!camsRes.ok || camsJson.error || !(camsJson.items || []).length) {
       const e = new Error(camsJson.error || camsJson.detail || (camsRes.ok ? 'No live cams were found.' : `HTTP ${camsRes.status}`));
       e.diagnostics = camsJson.diagnostics;
       throw e;
     }
     liveCamsData = camsJson;
-    liveCamsFilters = { 
-      tags: filtersJson.tags || [], 
-      categories: filtersJson.categories || [], 
-      genres: filtersJson.genres || [],
-      hairColors: filtersJson.hairColors || [],
-      bodyTypes: filtersJson.bodyTypes || [],
-      countries: filtersJson.countries || []
-    };
-    renderLiveCams();
+    if (!liveCamsFilters) liveCamsFilters = { categories: [], countries: [], real: { categories: false, countries: false } };
+    renderLiveCams();                       // the cams show at once; the Lemoncams category / country lists fill in when they arrive
+    camLoadFilters(force);
+    camStartPoll();
     if (!opts.skipPush) pushNav({ view: 'livecams' });
   } catch (err) {
     liveCamsData = null;

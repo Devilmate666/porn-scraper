@@ -36,11 +36,14 @@ except Exception as _e:          # metadata is a bonus: never take the whole app
     def fetch_metadata(html, url):
         return {"url": url, "groups": [], "error": "metadata module unavailable"}
 try:
-    from livecams import fetch_livecams, fetch_thumb
+    from livecams import fetch_livecams, fetch_thumb, fetch_lemon_filters
 except Exception as _e:          # the cams tab is a bonus: never take the whole app down
     print(f"[livecams] disabled: {_e}", flush=True)
-    def fetch_livecams(url=None, force=False, _why=str(_e)):      # `_e` is deleted when the except block ends: capture it now
+    def fetch_livecams(url=None, force=False, kind=None, name=None, _why=str(_e)):      # `_e` is deleted when the except block ends: capture it now
         return {"items": [], "count": 0, "error": "livecams module unavailable", "diagnostics": [_why]}
+
+    def fetch_lemon_filters(force=False, _why=str(_e)):
+        return {"categories": [], "countries": [], "error": "livecams module unavailable", "diagnostics": [_why]}
 
     def fetch_thumb(url):
         raise RuntimeError("livecams module unavailable")
@@ -315,12 +318,23 @@ def api_metadata():
 
 @app.post("/api/livecams")
 def api_livecams():
-    """Live-stream cards from lemoncams.com (header, footer and sidebar are never read)."""
+    """ALL the live cams (platform feeds + every Lemoncams category / country page).  With {url, kind, name}: just that
+    Lemoncams category / country page, its cams labelled with that category / country."""
     d = _body()
     try:
-        return jsonify(fetch_livecams(d.get("url"), force=bool(d.get("force"))))
+        return jsonify(fetch_livecams(d.get("url"), force=bool(d.get("force")), kind=d.get("kind"), name=d.get("name")))
     except Exception as e:
         return _err("Live cams failed", 500, detail=str(e))
+
+
+@app.route("/api/livecams-filters", methods=["GET", "POST"])
+def api_livecams_filters():
+    """The only cam filters: categories (lemoncams.com/categories) and countries (lemoncams.com/world-map-of-sex-cams)."""
+    d = _body()
+    try:
+        return jsonify(fetch_lemon_filters(force=bool(d.get("force"))))
+    except Exception as e:
+        return _err("Cam filters failed", 500, detail=str(e))
 
 
 @app.post("/api/channels")

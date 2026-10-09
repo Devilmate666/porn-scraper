@@ -625,11 +625,11 @@ export default {
           return json(errBody, 200, headers);
         }
 
-        // ---------------------------------------------------------------- live cams filters (tags, categories, genres from Lemoncams)
+        // ---------------------------------------------------------------- live cams filters: ONLY Lemoncams categories + countries
         case "/api/livecams-filters": {
           if (!isPost) break;
-          const key = "livecams:filters";
-          const text = await kvText(env.SCRAPE_DATA, key, 86400); // 24h TTL
+          const key = "livecams:filters2";                       // new key: the old "livecams:filters" held fake tags / genres / hair / body
+          const text = await kvText(env.SCRAPE_DATA, key, 3600);
           if (text) {
             const age = (() => { const t = tsOfText(text); return t === null ? null : Math.max(0, nowSec() - t); })();
             const o = new Response(text, { status: 200, headers: { ...headers, "Content-Type": "application/json" } });
@@ -637,18 +637,33 @@ export default {
             if (age !== null) o.headers.set("X-Cache-Age", String(age));
             return o;
           }
-          // Fetch fresh from lemoncams
-          const fresh = await fetchLemoncamsFilters(env.LEMONCAMS_PROXY);
-          const payload = { 
-            tags: fresh.tags || [], 
-            categories: fresh.categories || [], 
-            genres: fresh.genres || [], 
-            hairColors: fresh.hairColors || [], 
-            bodyTypes: fresh.bodyTypes || [], 
-            countries: fresh.countries || [], 
-            _ts: nowSec() 
+          type Row = { name: string; slug?: string | null; url?: string | null; count?: number | null; code?: string | null };
+          const norm = (list: any): Row[] => {
+            const out: Row[] = []; const seen = new Set<string>();
+            for (const x of Array.isArray(list) ? list : []) {
+              const r: Row | null = typeof x === "string" ? { name: x.trim() }
+                : x && typeof x.name === "string" ? { name: x.name.trim(), slug: x.slug ?? null, url: x.url ?? null, count: typeof x.count === "number" ? x.count : null, code: x.code ?? null } : null;
+              if (r && r.name && !seen.has(r.name.toLowerCase())) { seen.add(r.name.toLowerCase()); out.push(r); }
+            }
+            return out;
           };
-          ctx.waitUntil(env.SCRAPE_DATA.put(key, JSON.stringify(payload), { expirationTtl: 86400 }));
+          const fresh: any = await fetchLemoncamsFilters(env.LEMONCAMS_PROXY).catch(() => null);
+          let categories = norm(fresh?.categories);
+          let countries = norm(fresh?.countries);
+          let derived = false;
+          if (!categories.length || !countries.length) {
+            // Lemoncams' own lists could not be read: fall back to the real values on the cams we already hold
+            const cams: any = await kvGet<any>(env.SCRAPE_DATA, CAMS_KEY, LIVE_EDGE_TTL).catch(() => null);
+            const cat = new Map<string, number>(); const ctry = new Map<string, { n: number; code: string | null }>();
+            for (const c of cams?.items || []) {
+              for (const n of c.categories || []) cat.set(n, (cat.get(n) || 0) + 1);
+              if (c.country) { const e = ctry.get(c.country) || { n: 0, code: c.country_code || null }; e.n++; ctry.set(c.country, e); }
+            }
+            if (!categories.length) { categories = [...cat].sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, count })); derived = derived || categories.length > 0; }
+            if (!countries.length) { countries = [...ctry].sort((a, b) => b[1].n - a[1].n).map(([name, v]) => ({ name, count: v.n, code: v.code })); derived = derived || countries.length > 0; }
+          }
+          const payload = { categories, countries, derived, _ts: nowSec() };     // no tags / genres / hair colors / body types
+          if (categories.length && countries.length && !derived) ctx.waitUntil(env.SCRAPE_DATA.put(key, JSON.stringify(payload), { expirationTtl: 86400 }).catch(() => undefined));
           return json(payload, 200, headers);
         }
 

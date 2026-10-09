@@ -10,12 +10,14 @@ Cards come from two kinds of sources, merged and de-duplicated by (platform, use
      LEMONCAMS_API_URL / headless browser, see _fetch_lemoncams) and merged in whenever it succeeds.
 
 Card fields: username, age, provider, provider_name, link, thumbnail, viewers, country, country_code,
-flag_emoji, gender, languages, room_title, categories, tags, hd, is_new, id.
+flag_emoji, gender, languages, room_title, categories, hd, is_new, id.   (No tags: the only filters are the
+Lemoncams CATEGORIES and COUNTRIES, see fetch_lemon_filters.)
 
 Environment variables (all optional):
     CAM_PROVIDERS        comma list of direct platforms to use, default "chaturbate,stripchat,cam4,camsoda"
     CHATURBATE_WM        Chaturbate affiliate campaign slug (only used by the fallback endpoint)
-    LEMONCAMS_API_URL    JSON URL(s) copied from the browser's Network tab on lemoncams.com
+    LEMONCAMS_API_URL    JSON URL(s) copied from the browser's Network tab on lemoncams.com (the cams)
+    LEMONCAMS_CATEGORIES_API / LEMONCAMS_COUNTRIES_API   same, for the category / country lists (optional)
 Every step reports what happened in `diagnostics`, so a failure is explained instead of showing an empty page.
 """
 import html as _html
@@ -149,7 +151,7 @@ def parse_cam(card, base):
         "username": raw_name, "age": age, "provider": provider, "provider_logo": logo, "link": link,
         "thumbnail": thumb, "viewers": viewers, "country": country, "flag": flag_src if country else None,
         "room_title": (meta.get("title") or "").strip() or None,
-        "categories": categories, "tags": _csv(meta.get("tags")), "id": (meta.get("id") or "").strip() or None,
+        "categories": categories, "tags": [], "id": (meta.get("id") or "").strip() or None,
         "online": card.select_one(".status-span-online") is not None or None,
     }
 
@@ -196,7 +198,34 @@ _COUNTRIES = {
     "NZ": "New Zealand", "JP": "Japan", "KR": "South Korea", "CN": "China", "TH": "Thailand", "PH": "Philippines",
     "ID": "Indonesia", "VN": "Vietnam", "IN": "India", "ZA": "South Africa", "KZ": "Kazakhstan",
 }
+_MORE_COUNTRIES = (
+    "AF:Afghanistan|AL:Albania|DZ:Algeria|AD:Andorra|AO:Angola|AM:Armenia|AZ:Azerbaijan|BS:Bahamas|BH:Bahrain|"
+    "BD:Bangladesh|BB:Barbados|BZ:Belize|BJ:Benin|BT:Bhutan|BO:Bolivia|BA:Bosnia and Herzegovina|BW:Botswana|"
+    "BN:Brunei|BF:Burkina Faso|BI:Burundi|KH:Cambodia|CM:Cameroon|CV:Cape Verde|CF:Central African Republic|"
+    "TD:Chad|CR:Costa Rica|CI:Ivory Coast|CY:Cyprus|CD:DR Congo|CG:Congo|DJ:Djibouti|EG:Egypt|SV:El Salvador|"
+    "ER:Eritrea|ET:Ethiopia|FJ:Fiji|GA:Gabon|GM:Gambia|GE:Georgia|GH:Ghana|GT:Guatemala|GN:Guinea|GY:Guyana|"
+    "HT:Haiti|HN:Honduras|HK:Hong Kong|IS:Iceland|IR:Iran|IQ:Iraq|IL:Israel|JM:Jamaica|JO:Jordan|KE:Kenya|"
+    "KW:Kuwait|KG:Kyrgyzstan|LA:Laos|LB:Lebanon|LS:Lesotho|LR:Liberia|LY:Libya|LI:Liechtenstein|LU:Luxembourg|"
+    "MO:Macao|MK:North Macedonia|MG:Madagascar|MW:Malawi|MY:Malaysia|MV:Maldives|ML:Mali|MT:Malta|MR:Mauritania|"
+    "MU:Mauritius|MC:Monaco|MN:Mongolia|ME:Montenegro|MA:Morocco|MZ:Mozambique|MM:Myanmar|NA:Namibia|NP:Nepal|"
+    "NI:Nicaragua|NE:Niger|NG:Nigeria|OM:Oman|PK:Pakistan|PS:Palestine|PA:Panama|PG:Papua New Guinea|PY:Paraguay|"
+    "PR:Puerto Rico|QA:Qatar|RW:Rwanda|SA:Saudi Arabia|SN:Senegal|SG:Singapore|SI:Slovenia|SO:Somalia|"
+    "LK:Sri Lanka|SD:Sudan|SR:Suriname|SZ:Eswatini|SY:Syria|TW:Taiwan|TJ:Tajikistan|TZ:Tanzania|TG:Togo|"
+    "TT:Trinidad and Tobago|TN:Tunisia|TM:Turkmenistan|UG:Uganda|AE:United Arab Emirates|UZ:Uzbekistan|"
+    "VA:Vatican City|YE:Yemen|ZM:Zambia|ZW:Zimbabwe|XK:Kosovo|AW:Aruba|CW:Curacao|GU:Guam|KY:Cayman Islands|"
+    "BM:Bermuda|GI:Gibraltar|JE:Jersey|IM:Isle of Man|RE:Reunion|MQ:Martinique|GP:Guadeloupe|PF:French Polynesia|"
+    "NC:New Caledonia|AG:Antigua and Barbuda|DM:Dominica|GD:Grenada|LC:Saint Lucia|KN:Saint Kitts and Nevis|"
+    "VC:Saint Vincent and the Grenadines|SC:Seychelles|SL:Sierra Leone|SS:South Sudan|ST:Sao Tome and Principe|"
+    "TL:East Timor|TO:Tonga|WS:Samoa|VU:Vanuatu|SB:Solomon Islands|KI:Kiribati|NR:Nauru|PW:Palau|MH:Marshall Islands|"
+    "FM:Micronesia|TV:Tuvalu|GQ:Equatorial Guinea|GW:Guinea-Bissau|KM:Comoros|BY:Belarus|SM:San Marino|FO:Faroe Islands|"
+    "GL:Greenland|AX:Aland Islands|MD:Moldova|AN:Netherlands Antilles|VI:US Virgin Islands|VG:British Virgin Islands")
+for _pair in _MORE_COUNTRIES.split("|"):
+    _c, _n = _pair.split(":", 1)
+    _COUNTRIES.setdefault(_c, _n)
 _NAME2CODE = {v.lower(): k for k, v in _COUNTRIES.items() if k != "UK"}
+_NAME2CODE.update({"usa": "US", "united states of america": "US", "uk": "GB", "great britain": "GB", "england": "GB",
+                   "czech republic": "CZ", "korea": "KR", "russian federation": "RU", "vietnam": "VN",
+                   "turkiye": "TR", "holland": "NL", "burma": "MM", "macedonia": "MK", "cote d'ivoire": "CI"})
 
 _K_NAME = ("username", "user_name", "userName", "nickname", "nick", "displayName", "display_name", "model",
            "modelName", "name", "slug")
@@ -341,7 +370,6 @@ def _cam_from_dict(d, base, provider=None, need_thumb=True):
     age = d.get("display_age") or d.get("age")
     age = _to_int(age)
     cats = _names(d.get("categories") or d.get("category") or [])
-    tags = _names(d.get("tags") or d.get("tag_list") or [])
     langs = d.get("spoken_languages") or d.get("languages") or d.get("language")
     gender = str(d.get("gender") or d.get("broadcastGender") or "").strip().lower() or None
     title = _clean(_first(d, _K_TITLE), 160) or None
@@ -352,7 +380,7 @@ def _cam_from_dict(d, base, provider=None, need_thumb=True):
         "country": country, "country_code": code, "flag": None, "flag_emoji": _flag(code),
         "location": loc or None, "gender": {"f": "female", "m": "male", "t": "trans", "c": "couple"}.get(gender, gender),
         "languages": _names(langs, 6) if langs else [],
-        "room_title": title, "categories": cats, "tags": tags,
+        "room_title": title, "categories": cats, "tags": [],
         "hd": bool(d.get("is_hd") or d.get("isHd") or d.get("hd")) or None,
         "is_new": bool(d.get("is_new") or d.get("isNew")) or None,
         "id": str(d["id"]) if d.get("id") is not None else None, "online": True,
@@ -512,14 +540,15 @@ def _script_urls(shell_html, base):
     return list(dict.fromkeys(urls))[:30]
 
 
-def _candidate_paths(js_text):
+def _candidate_paths(js_text, words=None):
+    words = words or _RANK_WORDS
     paths = set(_PATH_QUOTED.findall(js_text)) | set(_PATH_TAIL.findall(js_text))
     out = []
     for p in paths:
         low = p.lower()
         if low.startswith(_SKIP_PREFIX) or "." in p or not (3 <= len(p) <= 60):
             continue
-        out.append((sum(w in low for w in _RANK_WORDS), p))
+        out.append((sum(w in low for w in words), p))
     out.sort(key=lambda t: (-t[0], len(t[1]), t[1]))
     ranked = [p for score, p in out if score > 0][:40]
     return ranked if len(ranked) >= 12 else ranked + [p for score, p in out if score == 0][:16 - len(ranked)]
@@ -580,7 +609,14 @@ def _discover_api(shell_html, base, diag):
     return urls
 
 
-def _try_render(url, diag):
+_LOAD_MORE_JS = r"""() => {
+  const b = [...document.querySelectorAll('button, a, .btn')].find(e => /^\s*(load|show|see|view)\s+more\b/i.test(e.textContent || '') && e.offsetParent);
+  if (b) { b.click(); return true; } return false; }"""
+
+
+def _render_page(url, selector, diag, scroll=False, budget=60.0):
+    """Open `url` in a headless browser, wait for `selector`, optionally scroll / press 'load more' until the number of
+    matches stops growing (infinite scroll = ALL the cams of the page).  -> html | None."""
     try:
         from playwright.sync_api import sync_playwright
     except Exception:
@@ -591,17 +627,35 @@ def _try_render(url, diag):
             browser = p.chromium.launch(args=["--no-sandbox"])
             try:
                 page = browser.new_page(user_agent=UA)
-                page.goto(url, wait_until="domcontentloaded", timeout=20000)
-                page.wait_for_selector(".posts__item--card", timeout=15000)
-                html = page.content()
+                page.goto(url, wait_until="domcontentloaded", timeout=25000)
+                page.wait_for_selector(selector, timeout=15000)
+                if scroll:
+                    t0, last, still = time.time(), -1, 0
+                    while time.time() - t0 < budget and still < 3:
+                        n = len(page.query_selector_all(selector))
+                        still = still + 1 if n == last else 0
+                        last = n
+                        page.mouse.wheel(0, 30000)
+                        try:
+                            page.evaluate(_LOAD_MORE_JS)
+                        except Exception:
+                            pass
+                        page.wait_for_timeout(900)
+                return page.content()
             finally:
                 browser.close()
-        res = parse_home(html, url)
-        diag.append(f"browser: {len(res['items'])} cams")
-        return res if res["items"] else None
     except Exception as e:
         diag.append(f"browser: {type(e).__name__}: {str(e)[:120]}")
         return None
+
+
+def _try_render(url, diag, scroll=False):
+    html = _render_page(url, ".posts__item--card", diag, scroll=scroll)
+    if html is None:
+        return None
+    res = parse_home(html, url)
+    diag.append(f"browser: {len(res['items'])} cams" + (" (scrolled to the end)" if scroll else ""))
+    return res if res["items"] else None
 
 
 def _allowed(url):
@@ -619,18 +673,19 @@ def _fetch_lemoncams(url=None, force=False):
 
     diag, result, source, shell = [], None, None, None
     configured = [u.strip() for u in os.environ.get("LEMONCAMS_API_URL", "").split(",") if u.strip()]
-    known = configured or (_DISCOVERED["urls"] if time.time() - _DISCOVERED["ts"] < _DISCOVER_TTL else [])
+    is_home = url.rstrip("/") == HOME_URL.rstrip("/")
+    known = (configured or (_DISCOVERED["urls"] if time.time() - _DISCOVERED["ts"] < _DISCOVER_TTL else [])) if is_home else []
     if known:
         result, source = _try_api(known, url, diag), "api"
     if not result:
         result, shell = _try_html(url, diag)
         source = "html"
-    if not result and shell is not None:
+    if not result and shell is not None and is_home:
         found = _discover_api(shell, url, diag)
         if found:
             result, source = _try_api(found, url, diag), "api"
     if not result:
-        result, source = _try_render(url, diag), "browser"
+        result, source = _try_render(url, diag, scroll=not is_home), "browser"
 
     if not result:
         return {"page": url, "items": [], "count": 0, "diagnostics": diag,
@@ -645,28 +700,34 @@ def _fetch_lemoncams(url=None, force=False):
 
 
 # ----------------------------------------------------------------------------- direct platform feeds
+def _pages(tmpl, values):
+    return [tmpl.format(n=v) for v in values]
+
+
+_CB_WM = os.environ.get("CHATURBATE_WM", "dvafl")
 _DIRECT = {
-    # each platform: base, and a list of CANDIDATES; a candidate is a list of paged URLs; the first candidate
-    # that yields cams wins (the others are fallbacks for when an endpoint changes or is blocked)
-    "chaturbate": {"base": "https://chaturbate.com", "candidates": [
-        [f"https://chaturbate.com/api/ts/roomlist/room-list/?enable_recommendations=false&limit=90&offset={o}"
-         for o in (0, 90, 180)],
-        [f"https://chaturbate.com/api/public/affiliates/onlinerooms/?wm={os.environ.get('CHATURBATE_WM', 'dvafl')}"
-         f"&format=json&limit=100&offset={o}" for o in (0, 100)],
-    ]},
-    "stripchat": {"base": "https://stripchat.com", "candidates": [
-        [f"https://stripchat.com/api/front/v2/models?limit=60&offset={o}&primaryTag=girls&sortBy=stripRanking"
-         for o in (0, 60, 120)],
-        [f"https://stripchat.com/api/front/models?limit=60&offset={o}&primaryTag=girls&sortBy=stripRanking"
-         for o in (0, 60)],
-    ]},
-    "cam4": {"base": "https://www.cam4.com", "candidates": [
-        [f"https://www.cam4.com/directoryCams?directoryJson=true&online=true&url=true&page={p}"
-         f"&resultsPerPage=60&gender=female" for p in (1, 2)],
-    ]},
-    "camsoda": {"base": "https://www.camsoda.com", "candidates": [
-        [f"https://www.camsoda.com/api/v1/browse/react?p={p}&perPage=60" for p in (1, 2)],
-    ]},
+    # each platform: base + GROUPS.  Every group is fetched and merged (e.g. girls / men / trans / couples); inside a
+    # group the first CANDIDATE (a list of paged URLs) that yields cams wins, the others are fallbacks for when an
+    # endpoint changes or is blocked.  Paging goes deep: that is how "all the cams that can be scraped" are reached.
+    "chaturbate": {"base": "https://chaturbate.com", "groups": [[
+        _pages("https://chaturbate.com/api/ts/roomlist/room-list/?enable_recommendations=false&limit=90&offset={n}",
+               range(0, 90 * 12, 90)),
+        _pages("https://chaturbate.com/api/public/affiliates/onlinerooms/?wm=" + _CB_WM + "&format=json&limit=100&offset={n}",
+               range(0, 100 * 10, 100)),
+    ]]},
+    "stripchat": {"base": "https://stripchat.com", "groups": [
+        [_pages("https://stripchat.com/api/front/v2/models?limit=60&offset={n}&primaryTag=" + tag + "&sortBy=stripRanking",
+                range(0, 60 * 10, 60)),
+         _pages("https://stripchat.com/api/front/models?limit=60&offset={n}&primaryTag=" + tag + "&sortBy=stripRanking",
+                range(0, 60 * 6, 60))]
+        for tag in ("girls", "men", "trans", "couples")]},
+    "cam4": {"base": "https://www.cam4.com", "groups": [
+        [_pages("https://www.cam4.com/directoryCams?directoryJson=true&online=true&url=true&page={n}"
+                "&resultsPerPage=60&gender=" + g, range(1, 8))]
+        for g in ("female", "male", "shemale", "couple")]},
+    "camsoda": {"base": "https://www.camsoda.com", "groups": [[
+        _pages("https://www.camsoda.com/api/v1/browse/react?p={n}&perPage=60", range(1, 9)),
+    ]]},
 }
 
 
@@ -676,13 +737,13 @@ def _enabled_providers():
 
 
 def _fetch_direct(name):
-    """-> (cams, notes) for one platform. Never raises. Every page of a candidate is requested in parallel; the first
-    candidate that yields cams wins (the others are fallbacks for when an endpoint changes or is blocked)."""
+    """-> (cams, notes) for one platform. Never raises. All pages of a candidate are requested in parallel; the groups
+    of a platform are fetched one after the other and merged."""
     spec = _DIRECT[name]
     base = spec["base"]
     headers = {"User-Agent": UA, "Accept": "application/json, text/plain, */*", "Accept-Language": "en-US,en;q=0.9",
                "Referer": base + "/", "Origin": base, "X-Requested-With": "XMLHttpRequest"}
-    notes = []
+    notes, cams, seen = [], [], set()
 
     def one(u):
         try:
@@ -691,28 +752,32 @@ def _fetch_direct(name):
         except Exception as e:
             return u, None, e
 
-    for cand in spec["candidates"]:
-        with ThreadPoolExecutor(max_workers=len(cand)) as pool:
-            fetched = list(pool.map(one, cand))              # keeps page order
-        cams, seen = [], set()
-        for u, data, exc in fetched:
-            where = u.split("?")[0]
-            if exc is not None:
-                notes.append(f"{name}: {where} -> {type(exc).__name__}: {str(exc)[:80]}")
-                continue
-            new = 0
-            for d in _room_list(data):
-                cam = _cam_from_dict(d, base, name, need_thumb=False)
-                if cam and cam["username"].lower() not in seen:
-                    seen.add(cam["username"].lower())
-                    cams.append(cam)
-                    new += 1
-            if not new:
-                notes.append(f"{name}: {where} returned no usable rooms")
-        if cams:
-            notes.append(f"{name}: {len(cams)} cams")
-            return cams, notes
-    return [], notes
+    for group in spec["groups"]:
+        got = 0
+        for cand in group:
+            with ThreadPoolExecutor(max_workers=min(12, len(cand))) as pool:
+                fetched = list(pool.map(one, cand))              # keeps page order
+            for idx, (u, data, exc) in enumerate(fetched):
+                where = u.split("?")[0]
+                if exc is not None:
+                    if idx == 0:
+                        notes.append(f"{name}: {where} -> {type(exc).__name__}: {str(exc)[:80]}")
+                    continue
+                new = 0
+                for d in _room_list(data):
+                    cam = _cam_from_dict(d, base, name, need_thumb=False)
+                    if cam and cam["username"].lower() not in seen:
+                        seen.add(cam["username"].lower())
+                        cams.append(cam)
+                        new += 1
+                        got += 1
+                if not new and idx == 0:
+                    notes.append(f"{name}: {where} returned no usable rooms")
+            if got:
+                break                                              # this group is served: skip its fallbacks
+    if cams:
+        notes.append(f"{name}: {len(cams)} cams")
+    return cams, notes
 
 
 # ----------------------------------------------------------------------------- lemoncams, in the background
@@ -764,7 +829,8 @@ def _finish(cam):
     cam["thumbnails"] = thumbs[:5]
     cam["thumbnail"] = thumbs[0] if thumbs else None
     cam.setdefault("_seen", int(time.time()))
-    for k in ("categories", "tags", "languages"):
+    cam["tags"] = []                                   # tags are gone: only Lemoncams categories + countries filter the cams
+    for k in ("categories", "languages"):
         cam[k] = cam.get(k) or []
     for k in ("country_code", "flag_emoji", "gender", "location", "hd", "is_new"):
         cam.setdefault(k, None)
@@ -774,22 +840,37 @@ def _finish(cam):
     return cam
 
 
+_MAX_CAMS = 6000
+
+
 def _merge(groups):
-    """groups: {source: [cams]} -> one list: each platform sorted by viewers, then interleaved round-robin."""
-    seen, per = set(), {}
+    """groups: {source: [cams]} -> one list: each platform sorted by viewers, then interleaved round-robin.
+    A cam that appears twice (a platform feed + a Lemoncams page) is ONE card that keeps every category."""
+    by_key, per = {}, {}
     for src, cams in groups.items():
         for cam in cams:
             cam = _finish(cam)
             prov = cam.get("provider") or src
             key = (prov, (cam.get("username") or "").lower())
-            if not cam.get("link") or key in seen:
+            if not cam.get("link"):
                 continue
-            seen.add(key)
+            old = by_key.get(key)
+            if old is not None:
+                for c in cam.get("categories") or []:
+                    if c.lower() not in {x.lower() for x in old["categories"]}:
+                        old["categories"].append(c)
+                for k in ("country", "country_code", "flag_emoji", "gender", "age", "room_title"):
+                    if not old.get(k) and cam.get(k):
+                        old[k] = cam[k]
+                if cam.get("lemoncams_link") and not old.get("lemoncams_link"):
+                    old["lemoncams_link"] = cam["lemoncams_link"]
+                continue
+            by_key[key] = cam
             per.setdefault(prov, []).append(cam)
     for lst in per.values():
         lst.sort(key=lambda c: -(c.get("viewers") or 0))
     out, i = [], 0
-    while any(i < len(v) for v in per.values()) and len(out) < 500:
+    while any(i < len(v) for v in per.values()) and len(out) < _MAX_CAMS:
         for v in per.values():
             if i < len(v):
                 out.append(v[i])
@@ -797,25 +878,390 @@ def _merge(groups):
     return out
 
 
+# ----------------------------------------------------------------------------- the ONLY filters: categories + countries
+CATEGORIES_URL = "https://www.lemoncams.com/categories"
+COUNTRIES_URL = "https://www.lemoncams.com/world-map-of-sex-cams"
+_FILTERS = {"ts": 0.0, "out": None}
+_FILTERS_TTL = 6 * 3600
+_NAV_FIRST = {"blog", "login", "signup", "register", "privacy", "terms", "dmca", "contact", "about", "legal", "cookie",
+              "cookies", "faq", "help", "support", "assets", "static", "favicon", "sitemap", "2257", "tos", "advertise",
+              "webmasters", "cam-reviews", "reviews"}
+_NAV_PATHS = {"/categories", "/world-map-of-sex-cams", "/home", "/new", "/popular", "/live"}
+_COUNTRY_NAMES = {v.lower() for k, v in _COUNTRIES.items()} | set(_NAME2CODE)
+_FILTER_WORDS = {"categories": ("categor", "genre", "niche", "section", "type"),
+                 "countries": ("countr", "nation", "world", "map", "location", "region", "flag")}
+_DISCOVERED_F = {}                 # kind -> (timestamp, [json urls])
+
+
+def _is_country_name(name):
+    return (name or "").strip().lower() in _COUNTRY_NAMES
+
+
+def _name_count(a):
+    """Anchor -> (clean name, count|None).  A separate numeric child is the count; otherwise a trailing number is."""
+    count = None
+    for ch in a.find_all(["span", "small", "em", "b", "i", "div"]):
+        t = _txt(ch)
+        if re.fullmatch(r"\(?\d[\d.,]*\)?", t or ""):
+            count = _int(t)
+            ch.extract()
+    text = _txt(a) or (a.get("title") or a.get("aria-label") or "").strip()
+    if count is None:
+        m = re.match(r"^(.*[A-Za-z\u00C0-\u024F].*?)\s+\(?(\d[\d.,]*)\)?$", text)
+        if m:
+            text, count = m.group(1), _int(m.group(2))
+    return re.sub(r"\s+", " ", text).strip(), count
+
+
+def parse_filter_links(html, base, kind):
+    """Rendered Lemoncams /categories or /world-map-of-sex-cams page -> [{name, slug, url, count, code?}].
+    Only links inside the page body count: header, footer and menus are dropped."""
+    soup = BeautifulSoup(html, "lxml")
+    for t in soup(["script", "style", "noscript"]):
+        t.decompose()
+    for t in soup.select("app-navigation, app-footer, footer, header, nav, #header-mobile, .posts__item--card"):
+        t.decompose()
+    root = soup.find("app-root") or soup.body or soup
+    rows, seen = [], set()
+    for a in root.find_all("a"):
+        full = _abs(base, a.get("href") or a.get("xlink:href"))
+        if not full or not _allowed(full) or full in seen:
+            continue
+        path = urlparse(full).path.rstrip("/")
+        segs = [x for x in path.split("/") if x]
+        if not segs or len(segs) > 3 or path.lower() in _NAV_PATHS or segs[0].lower() in _NAV_FIRST:
+            continue
+        flag_img = a.select_one("img[src*='flag'], img.flag-image")
+        code = None
+        if flag_img is not None:
+            fm = re.search(r"/([A-Za-z]{2})\.(?:svg|png|webp|jpg|gif)", flag_img.get("src") or flag_img.get("data-src") or "")
+            code = fm.group(1).upper() if fm else None
+        name, count = _name_count(a)
+        if not (2 <= len(name) <= 40):
+            continue
+        looks_country = bool(code) or _is_country_name(name) or any("countr" in x.lower() for x in segs[:-1])
+        if (kind == "countries") != looks_country:
+            continue
+        if kind == "countries" and not code:
+            code = _NAME2CODE.get(name.lower())
+        seen.add(full)
+        rows.append({"name": name, "slug": segs[-1], "url": full, "count": count, "code": code})
+    return rows
+
+
+def _filter_row(x, kind):
+    """One JSON object of a category / country list -> row | None."""
+    if _first(x, _STRONG_NAME[:7]) or _first(x, ("viewers", "viewersCount", "num_users", "viewerCount")) is not None:
+        return None                                     # that is a cam, not a filter entry
+    name = _first(x, ("name", "title", "label", "displayName", "display_name", "countryName", "country", "text"))
+    if isinstance(name, dict):
+        name = _first(name, ("en", "name", "default"))
+    if not isinstance(name, str) or not (2 <= len(name.strip()) <= 40):
+        return None
+    name = name.strip()
+    raw_code = _first(x, ("code", "countryCode", "country_code", "iso", "iso2", "alpha2", "cc"))
+    code = raw_code.upper() if isinstance(raw_code, str) and re.fullmatch(r"[A-Za-z]{2}", raw_code) else None
+    is_country = bool(code) or _is_country_name(name)
+    if (kind == "countries") != is_country:
+        return None
+    if kind == "countries":
+        code = code or _NAME2CODE.get(name.lower())
+        if code and name.upper() == code:
+            name = _COUNTRIES.get(code, name)
+    slug = _first(x, ("slug", "seo", "seoName", "alias", "code", "id"))
+    link = _as_url(_first(x, ("url", "link", "href", "permalink")), HOME_URL)
+    cnt = _first(x, ("count", "total", "modelsCount", "models_count", "cams", "camsCount", "online", "onlineCount", "num"))
+    return {"name": name, "slug": str(slug) if slug is not None else None, "url": link if link and _allowed(link) else None,
+            "count": _to_int(cnt), "code": code}
+
+
+def _filters_from_json(data, kind):
+    """The longest list of filter-like objects anywhere in a JSON document."""
+    best = []
+
+    def walk(n, depth=0):
+        nonlocal best
+        if depth > 7:
+            return
+        if isinstance(n, dict):
+            for v in n.values():
+                walk(v, depth + 1)
+            if n and all(isinstance(v, (str, int)) for v in n.values()) and kind == "countries" and len(n) >= 5:
+                rows = [{"name": str(v), "slug": str(k), "url": None, "count": None,
+                         "code": str(k).upper() if re.fullmatch(r"[A-Za-z]{2}", str(k)) else None}
+                        for k, v in n.items() if isinstance(v, str) and _is_country_name(v)]
+                if len(rows) >= 5 and len(rows) > len(best):
+                    best = rows                       # {"US": "United States", ...}
+        elif isinstance(n, list):
+            dicts = [x for x in n if isinstance(x, dict)]
+            if len(dicts) >= 3 and len(dicts) >= len(n) * 0.7:
+                rows = [r for r in (_filter_row(x, kind) for x in dicts) if r]
+                if len(rows) >= 3 and len(rows) >= len(dicts) * 0.6 and len(rows) > len(best):
+                    best = rows
+            for v in n[:6]:
+                walk(v, depth + 1)
+
+    walk(data)
+    out, seen = [], set()
+    for r in best:
+        k = (r["code"] or r["name"]).lower()
+        if k not in seen:
+            seen.add(k)
+            out.append(r)
+    return out
+
+
+def _filters_try_api(urls, kind, diag):
+    with httpx.Client(timeout=20.0, follow_redirects=True, headers=_API_HEADERS) as c:
+        for u in urls:
+            try:
+                rows = _filters_from_json(_get_json(c, u), kind)
+                diag.append(f"{kind} api {u}: {len(rows)} entries")
+                if rows:
+                    return rows
+            except Exception as e:
+                diag.append(f"{kind} api {u}: {type(e).__name__}: {str(e)[:100]}")
+    return None
+
+
+def _discover_filter_api(shell_html, base, kind, diag):
+    """Same idea as _discover_api, but the probe looks for a LIST OF CATEGORIES / COUNTRIES."""
+    hit = _DISCOVERED_F.get(kind)
+    if hit and time.time() - hit[0] < _DISCOVER_TTL:
+        return hit[1]
+    js_urls = _script_urls(shell_html, base)
+    if not js_urls:
+        diag.append(f"discover {kind}: the page lists no script files")
+        return []
+    texts = []
+    with httpx.Client(timeout=20.0, follow_redirects=True, headers={"User-Agent": UA}) as c:
+        for u in js_urls:
+            try:
+                r = c.get(u)
+                if r.status_code == 200:
+                    texts.append(r.text[:6_000_000])
+            except Exception:
+                pass
+    blob = "\n".join(texts)
+    hosts = _API_HOST_RX.findall(shell_html) + _API_HOST_RX.findall(blob)
+    api = max(set(hosts), key=hosts.count) if hosts else "https://api-v2-prod.lemoncams.com"
+    cands = _candidate_paths(blob, _FILTER_WORDS[kind])
+    diag.append(f"discover {kind}: {len(js_urls)} scripts, API host {api}, {len(cands)} candidate paths")
+
+    def probe(path):
+        with httpx.Client(timeout=12.0, follow_redirects=True, headers=_API_HEADERS) as c:
+            try:
+                n = len(_filters_from_json(_get_json(c, api + path), kind))
+                return (api + path, n) if n >= 3 else None
+            except Exception:
+                return None
+
+    hits = []
+    try:
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            for f in as_completed([ex.submit(probe, p) for p in cands], timeout=40):
+                if f.result():
+                    hits.append(f.result())
+    except Exception as e:
+        diag.append(f"discover {kind}: stopped early ({type(e).__name__})")
+    hits.sort(key=lambda t: -t[1])
+    urls = [u for u, _ in hits[:3]]
+    if urls:
+        _DISCOVERED_F[kind] = (time.time(), urls)
+        diag.append(f"discover {kind}: found " + ", ".join(f"{u} ({n})" for u, n in hits[:3]))
+    else:
+        diag.append(f"discover {kind}: no candidate path returned a list")
+    return urls
+
+
+def _fetch_filter_kind(kind, url, env_name, diag):
+    """-> rows for ONE filter row (categories | countries): configured API -> page HTML -> discovered API -> browser."""
+    configured = [u.strip() for u in os.environ.get(env_name, "").split(",") if u.strip()]
+    if configured:
+        rows = _filters_try_api(configured, kind, diag)
+        if rows:
+            return rows
+    shell = None
+    try:
+        from scraper import fetch_html
+        html, final = fetch_html(url, timeout=25.0, referer=HOME_URL)
+        rows = parse_filter_links(html, final, kind)
+        if rows:
+            diag.append(f"{kind}: {len(rows)} entries from the page HTML")
+            return rows
+        shell = html
+        diag.append(f"{kind}: no entries in the page HTML (JavaScript shell)")
+    except Exception as e:
+        diag.append(f"{kind} html: {type(e).__name__}: {str(e)[:100]}")
+    if shell is not None:
+        found = _discover_filter_api(shell, url, kind, diag)
+        if found:
+            rows = _filters_try_api(found, kind, diag)
+            if rows:
+                return rows
+    html = _render_page(url, "a[href]", diag, scroll=False)
+    if html:
+        rows = parse_filter_links(html, url, kind)
+        diag.append(f"{kind}: {len(rows)} entries from the rendered page")
+        if rows:
+            return rows
+    return []
+
+
+def _derive_filters(items):
+    """Last resort when Lemoncams' own lists cannot be read: the real categories / countries of the cams we DO have."""
+    cats, ctry = {}, {}
+    for c in items:
+        for n in c.get("categories") or []:
+            cats[n.lower()] = (n, cats.get(n.lower(), (n, 0))[1] + 1)
+        if c.get("country"):
+            k = c["country"].lower()
+            ctry[k] = (c["country"], c.get("country_code"), ctry.get(k, (0, 0, 0))[2] + 1)
+    return (
+        [{"name": n, "slug": None, "url": None, "count": k, "code": None}
+         for n, k in sorted(cats.values(), key=lambda t: -t[1])],
+        [{"name": n, "slug": None, "url": None, "count": k, "code": code}
+         for n, code, k in sorted(ctry.values(), key=lambda t: -t[2])],
+    )
+
+
+def fetch_lemon_filters(force=False):
+    """{categories: [...], countries: [...]} from lemoncams.com/categories and lemoncams.com/world-map-of-sex-cams."""
+    if _FILTERS["out"] and not force and time.time() - _FILTERS["ts"] < _FILTERS_TTL:
+        return _FILTERS["out"]
+    diag, res = [], {}
+    jobs = (("categories", CATEGORIES_URL, "LEMONCAMS_CATEGORIES_API"),
+            ("countries", COUNTRIES_URL, "LEMONCAMS_COUNTRIES_API"))
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        futs = {}
+        for k, u, e in jobs:
+            d = []
+            futs[k] = (ex.submit(_fetch_filter_kind, k, u, e, d), d)
+        for k, (f, d) in futs.items():
+            try:
+                res[k] = f.result(timeout=150)
+            except Exception as e:
+                res[k] = []
+                d.append(f"{k}: {type(e).__name__}: {str(e)[:100]}")
+            diag.extend(d)
+    source = {k: "lemoncams" for k in res if res[k]}
+    if not res.get("categories") or not res.get("countries"):
+        cached = (_ALL_CACHE.get("out") or {}).get("items") or []
+        dc, dn = _derive_filters(cached)
+        for k, rows in (("categories", dc), ("countries", dn)):
+            if not res.get(k) and rows:
+                res[k], source[k] = rows, "derived from the loaded cams"
+                diag.append(f"{k}: Lemoncams' list could not be read, showing the {len(rows)} found on the loaded cams")
+    out = {"categories": res.get("categories") or [], "countries": res.get("countries") or [], "source": source,
+           "diagnostics": diag, "fetched_at": int(time.time())}
+    if out["categories"] or out["countries"]:
+        if all(v == "lemoncams" for v in source.values()) and len(source) == 2:
+            _FILTERS.update(ts=time.time(), out=out)          # cache only the real thing; derived lists are retried
+    return out
+
+
+# ----------------------------------------------------------------------------- crawl: every category + country page
+# Each Lemoncams category / country page is read once in the background and merged into the big list, so cams are
+# found with their real categories and countries.  The request never waits for it: it returns what is known so far.
+_CRAWL = {"ts": 0.0, "running": False, "cams": {}, "done": 0, "total": 0, "note": ""}
+_CRAWL_LOCK = threading.Lock()
+_CRAWL_TTL, _CRAWL_BUDGET, _CRAWL_MAX_PAGES = 15 * 60, 420.0, 400
+
+
+def _annotate(cams, kind, name, code=None):
+    for c in cams:
+        c = dict(c)
+        if kind == "categories":
+            c["categories"] = list(dict.fromkeys((c.get("categories") or []) + [name]))
+        elif kind == "countries" and not c.get("country"):
+            c["country"], c["country_code"] = name, code or _country(name)[1]
+        yield c
+
+
+def _crawl_add(cams):
+    with _CRAWL_LOCK:
+        for c in cams:
+            key = ((c.get("provider") or "").lower(), (c.get("username") or "").lower())
+            old = _CRAWL["cams"].get(key)
+            if old is None:
+                _CRAWL["cams"][key] = c
+            else:
+                old["categories"] = list(dict.fromkeys((old.get("categories") or []) + (c.get("categories") or [])))
+                for k in ("country", "country_code"):
+                    if not old.get(k) and c.get(k):
+                        old[k] = c[k]
+
+
+def _crawl_job(force=False):
+    t0 = time.time()
+    try:
+        f = fetch_lemon_filters(force=force)
+        targets = [(k, r) for k in ("categories", "countries") for r in f.get(k, []) if r.get("url")][:_CRAWL_MAX_PAGES]
+        with _CRAWL_LOCK:
+            _CRAWL.update(done=0, total=len(targets), note="" if targets else "no category / country page links to read")
+
+        def one(t):
+            kind, row = t
+            if time.time() - t0 > _CRAWL_BUDGET:
+                return
+            try:
+                r = _fetch_lemoncams(row["url"], force=force)
+                _crawl_add(_annotate(r.get("items") or [], kind, row["name"], row.get("code")))
+            except Exception:
+                pass
+            finally:
+                with _CRAWL_LOCK:
+                    _CRAWL["done"] += 1
+
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            list(ex.map(one, targets))
+    except Exception as e:
+        _CRAWL["note"] = f"{type(e).__name__}: {str(e)[:100]}"
+    finally:
+        _CRAWL.update(running=False, ts=time.time())
+
+
+def _ensure_crawl(force=False):
+    with _CRAWL_LOCK:
+        if _CRAWL["running"] or (not force and time.time() - _CRAWL["ts"] < _CRAWL_TTL):
+            return
+        _CRAWL["running"] = True
+    threading.Thread(target=_crawl_job, args=(force,), daemon=True).start()
+
+
+def _crawl_status():
+    return {"running": _CRAWL["running"], "done": _CRAWL["done"], "total": _CRAWL["total"],
+            "cams": len(_CRAWL["cams"]), "note": _CRAWL["note"]}
+
+
+# ----------------------------------------------------------------------------- public entry point
 _ALL_CACHE = {"ts": 0.0, "out": None}
 
 
-def fetch_livecams(url=None, force=False):
-    # an explicit lemoncams URL keeps the old behaviour: that page only
+def fetch_livecams(url=None, force=False, kind=None, name=None):
+    """No url: ALL the cams (platform feeds, deep paging + Lemoncams home + every category / country page found so far).
+    With a Lemoncams url (a category / country chip): that one page, its cams labelled with `kind` / `name`."""
     if url:
         r = _fetch_lemoncams(url, force)
-        r["items"] = [_finish(c) for c in r.get("items", [])]
+        items = list(r.get("items", []))
+        if kind in ("categories", "countries") and name:
+            items = list(_annotate(items, kind, name))
+        r["items"] = [_finish(c) for c in items]
+        r["count"] = len(r["items"])
         _register_thumbs(r["items"])
         return r
     if _ALL_CACHE["out"] and not force and time.time() - _ALL_CACHE["ts"] < _CACHE_TTL:
-        return _ALL_CACHE["out"]
+        _ensure_crawl()
+        out = dict(_ALL_CACHE["out"])
+        out["crawl"] = _crawl_status()
+        return out
 
     providers = _enabled_providers()
     diag, groups = [], {}
     ex = ThreadPoolExecutor(max_workers=max(1, len(providers)))
     futs = {ex.submit(_fetch_direct, p): p for p in providers}
     try:
-        for f in as_completed(futs, timeout=30):
+        for f in as_completed(futs, timeout=60):
             plat = futs[f]
             try:
                 cams, notes = f.result()
@@ -823,31 +1269,37 @@ def fetch_livecams(url=None, force=False):
                 cams, notes = [], [f"{plat}: {type(e).__name__}: {str(e)[:100]}"]
             groups[plat] = cams
             diag.extend(notes)
-    except Exception as e:
+    except Exception:
         diag.append(f"timeout: {', '.join(p for p in providers if p not in groups)} did not answer in time")
     ex.shutdown(wait=False, cancel_futures=True)
 
     lem, lem_note = _lemon_items(wait=0.5 if any(groups.values()) else 8.0)
-    if lem:
-        groups["lemoncams"] = lem
+    with _CRAWL_LOCK:
+        crawled = list(_CRAWL["cams"].values())
+    if lem or crawled:
+        groups["lemoncams"] = list(lem) + crawled
     if lem_note:
         diag.append(lem_note)
+    _ensure_crawl(force)
 
     items = _merge(groups)
     if not items:
-        return {"page": HOME_URL, "items": [], "count": 0, "diagnostics": diag,
+        return {"page": HOME_URL, "items": [], "count": 0, "diagnostics": diag, "crawl": _crawl_status(),
                 "error": ("No live cams could be loaded: none of the cam platforms answered this server. "
                           "Their servers may be blocking this host's IP address; see the diagnostics below. "
                           "Set LEMONCAMS_API_URL or CAM_PROVIDERS, or run the app from a residential/other host.")}
     by = {}
     for c in items:
-        by[c.get("provider_name") or c.get("provider") or "?"] = by.get(c.get("provider_name") or c.get("provider") or "?", 0) + 1
+        label = c.get("provider_name") or c.get("provider") or "?"
+        by[label] = by.get(label, 0) + 1
     out = {"page": HOME_URL, "items": items, "count": len(items), "providers": by, "source": "direct",
            "platform_status": {p: {"ok": bool(groups.get(p)), "count": len(groups.get(p) or [])} for p in providers},
            "diagnostics": diag, "fetched_at": int(time.time())}
     _register_thumbs(items)
     _ALL_CACHE.update(ts=time.time(), out=out)
-    return out
+    res = dict(out)
+    res["crawl"] = _crawl_status()
+    return res
 
 
 # ----------------------------------------------------------------------------- thumbnail proxy
