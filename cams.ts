@@ -218,11 +218,13 @@ async function fetchLemoncams(): Promise<{ cams: any[]; notes: string[] }> {
   return { cams: allCams, notes };
 }
 
-async function fetchLemoncamsTags(): Promise<{ tags: string[]; categories: string[]; genres: string[]; notes: string[] }> {
+async function fetchLemoncamsTags(): Promise<{ tags: string[]; categories: string[]; genres: string[]; hairColors: string[]; bodyTypes: string[]; notes: string[] }> {
   const notes: string[] = [];
   const tags = new Set<string>();
   const categories = new Set<string>();
   const genres = new Set<string>();
+  const hairColors = new Set<string>();
+  const bodyTypes = new Set<string>();
 
   const headers = { "User-Agent": UA, Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "Accept-Language": "en-US,en;q=0.9", Referer: LEMONCAMS_URL };
 
@@ -240,24 +242,30 @@ async function fetchLemoncamsTags(): Promise<{ tags: string[]; categories: strin
       if (!r.ok) { notes.push(`lemoncams-tags: ${url} -> HTTP ${r.status}`); continue; }
       const html = await r.text();
 
-      // Extract tags from tag cloud / sidebar
+      // Extract tags from tag cloud / sidebar (href="/tags/...")
       const tagMatches = [...html.matchAll(/href="\/tags\/([^"]+)"/gi)];
       for (const m of tagMatches) tags.add(m[1].replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase()));
 
-      // Extract categories
+      // Extract categories from sidebar (href="/categories/...")
       const catMatches = [...html.matchAll(/href="\/categories\/([^"]+)"/gi)];
       for (const m of catMatches) categories.add(m[1].replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase()));
 
-      // Extract genres (if separate)
+      // Extract genres (if separate) from sidebar
       const genreMatches = [...html.matchAll(/href="\/genres\/([^"]+)"/gi)];
       for (const m of genreMatches) genres.add(m[1].replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase()));
 
-      // Also look for data attributes in cam cards
+      // Also extract from data attributes in cam cards (data-tags, data-categories, data-haircolor, data-body)
       const dataTagMatches = [...html.matchAll(/data-tags=["']([^"']+)["']/gi)];
       for (const m of dataTagMatches) m[1].split(",").forEach(t => tags.add(t.trim()));
 
       const dataCatMatches = [...html.matchAll(/data-categories=["']([^"']+)["']/gi)];
       for (const m of dataCatMatches) m[1].split(",").forEach(c => categories.add(c.trim()));
+
+      const hairColorMatches = [...html.matchAll(/haircolor:\s*([^,\n]+)/gi)];
+      for (const m of hairColorMatches) hairColors.add(m[1].trim().replace(/\b\w/g, c => c.toUpperCase()));
+
+      const bodyMatches = [...html.matchAll(/body:\s*([^,\n]+)/gi)];
+      for (const m of bodyMatches) bodyTypes.add(m[1].trim().replace(/\b\w/g, c => c.toUpperCase()));
 
     } catch (e) {
       notes.push(`lemoncams-tags: ${url} -> ${e instanceof Error ? e.message : e}`);
@@ -268,6 +276,8 @@ async function fetchLemoncamsTags(): Promise<{ tags: string[]; categories: strin
     tags: Array.from(tags).sort(),
     categories: Array.from(categories).sort(),
     genres: Array.from(genres).sort(),
+    hairColors: Array.from(hairColors).sort(),
+    bodyTypes: Array.from(bodyTypes).sort(),
     notes,
   };
 }
@@ -396,6 +406,6 @@ export async function fetchLiveCams(opts: { wm?: string; providers?: string } = 
 }
 
 /** Fetch tags, categories, and genres from Lemoncams for filter UI. */
-export async function fetchLemoncamsFilters(): Promise<{ tags: string[]; categories: string[]; genres: string[]; notes: string[] }> {
+export async function fetchLemoncamsFilters(): Promise<{ tags: string[]; categories: string[]; genres: string[]; hairColors: string[]; bodyTypes: string[]; notes: string[] }> {
   return fetchLemoncamsTags();
 }
