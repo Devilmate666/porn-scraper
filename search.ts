@@ -252,7 +252,8 @@ export function rankCombined(results: any[], q: Query, indexHits: any[] = [], ca
   const put = (it: any, site: string, trusted: boolean, via: string) => {
     const k = noQuery(it.link || "");
     if (!k) return;
-    const r = relevance(it, q, trusted);
+    const itemTrusted = trusted || it._trusted === true;  // respect _trusted flag on items
+    const r = relevance(it, q, itemTrusted);
     if (!r) return;
     const prev = seen.get(k);
     if (prev && prev._score >= r.score) { if (!prev._matches.includes(via)) prev._matches.push(via); return; }

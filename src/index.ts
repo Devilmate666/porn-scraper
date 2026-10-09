@@ -481,7 +481,7 @@ export default {
               const hits = searchIndex(scopeRecords(await loadIndex(env.SCRAPE_DATA), scope), q, 300);
               const pageItems: any[] = [];
               let next = scope.url, num = 1;
-              for (let i = 0; i < 4 && next; i++) {
+              for (let i = 0; i < 24 && next; i++) {   // search up to 24 pages of the section (matches web search limit)
                 let page: any = await kvGet<any>(env.SCRAPE_DATA, `scrape:${next}`);
                 if (!page?.items?.length && i === 0) page = await nativePage(next, null).catch(() => null);
                 if (!page?.items?.length) break;
@@ -489,7 +489,8 @@ export default {
                 num = (page.page_num || i + 1) + 1;
                 next = page.next_page || "";
               }
-              const combined = rankCombined([], q, [...hits, ...pageItems]);
+              // Listing page items are from the section itself - trust them, don't filter by relevance
+              const combined = rankCombined([], q, [...hits, ...pageItems.map(it => ({ ...it, _trusted: true }))]);
               return send({ results: [], query, combined, count: combined.length, scoped: scope.name, scope_next: next ? { url: next, num } : null }, "scope");
             } catch {
               return send({ results: [], query, combined: [], count: 0, scoped: scope.name }, "scope");
