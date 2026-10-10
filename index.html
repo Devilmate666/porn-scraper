@@ -1037,24 +1037,9 @@ body.player-open #favBar, body.player-open #favStatus, body.player-open #histPan
         </div>
       </div>
       <div class="status"><span class="dot" id="dot"></span><span id="statusText">Ready</span></div>
-      <div class="status" id="acctBtn" style="display:none"><span class="a-dot"></span><span class="a-txt">Sign in</span></div>
     </div>
 
   </header>
-
-  <div id="acctOv" hidden>
-    <div class="acct-box">
-      <button class="acct-x" id="acctX" type="button">&times;</button>
-      <h3 id="acctTitle">Sign in</h3>
-      <p id="acctSub" style="display:none"></p>
-      <input id="acctUser" type="text" autocomplete="username" placeholder="Username" />
-      <input id="acctPass" type="password" autocomplete="current-password" placeholder="Password" />
-      <p class="acct-msg" id="acctMsg"></p>
-      <button class="pri" id="acctPrimary" type="button">Sign in</button>
-      <button class="sec" id="acctToggle" type="button" style="margin-top:.5rem">Create an account</button>
-      <button class="sec" id="acctLogout" type="button" style="margin-top:.5rem;display:none">Sign out</button>
-    </div>
-  </div>
 
   <div id="navActionStaging" hidden></div>
 
@@ -8059,7 +8044,7 @@ document.addEventListener('keydown', (e) => {
     const h = { 'Content-Type': 'application/json' };
     if (withAuth && auth.token) h.Authorization = 'Bearer ' + auth.token;
     let r;
-    try { r = await fetch(path, { method: 'POST', headers: h, body: JSON.stringify(body || {}) }); }
+    try { r = await fetch(API_BASE + path, { method: 'POST', headers: h, body: JSON.stringify(body || {}) }); }
     catch (e) { return { ok: false, status: 0, data: { error: 'No connection. Try again.' } }; }
     let data = {};
     try { data = await r.json(); } catch (e) {}
