@@ -56,7 +56,10 @@ function randomToken(): string {
 // 100k + a random per-password salt is strong enough for a small community site.
 const PBKDF2_ITERS = 100_000;
 async function hashPassword(password: string, salt?: string): Promise<string> {
-  const s = salt ? hex(salt) : hex(await crypto.subtle.digest("SHA-256", enc.encode(randomToken())));
+  // salt is already a hex string (stored in the hash). Pass it through unchanged; only when
+  // creating a new password do we generate one. The old code ran hex(salt) here, which re-hexed
+  // the salt's character codes and made verification use a different salt than registration.
+  const s = salt || hex(await crypto.subtle.digest("SHA-256", enc.encode(randomToken())));
   const keyMaterial = await crypto.subtle.importKey("raw", enc.encode(password), { name: "PBKDF2" }, false, ["deriveBits"]);
   // deriveBits gives the raw bytes directly - no AES-GCM key object to wrap/extract, which avoids
   // the "non-extractable key" / "invalid usage extractable" errors that deriveKey+exportKey hit on Workers.
