@@ -71,6 +71,9 @@ jobs:
             # CREATE TABLE IF NOT EXISTS in 0001 does not modify an existing table, so this is needed when the schema changed.
             wrangler d1 execute porn-archive-db --remote --file=migrations/0002_alter_users.sql \
               || echo "::warning::D1 migration 0002 failed"
+            # 0003 clears the rate-limit counters (a schema bug can exhaust them legitimately).
+            wrangler d1 execute porn-archive-db --remote --file=migrations/0003_clear_rate.sql \
+              || echo "::warning::D1 migration 0003 failed"
           else
             # no database: remove the binding so the deploy still succeeds (login stays off)
             sed -i '/^\[\[d1_databases\]\]/,/^database_id/d' wrangler.toml
