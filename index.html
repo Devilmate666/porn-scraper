@@ -223,6 +223,11 @@
   }
   .cat-search-loading::before { width: 5rem; margin: .65rem 0; }
   .cams-loading { position: relative; }
+  /* end-of-list markers are static: no animated sweep bar, no spinner */
+  .loading-row.end-marker::before, .cat-search-loading.end-marker::before, .cams-loading.end-marker::before { display: none; }
+  .loading-row.end-marker .mini-spinner, .cat-search-loading.end-marker .mini-spinner { display: none; }
+  /* while the favorites filter is on the list ends where it is: no spinner, no slot, no jump */
+  #results .fav-filter-empty { display: flex !important; align-items: center; justify-content: center; }
   .main-player-status .player-spinner { display: none !important; }
   .main-player-status:not(.is-error)::before {
     content: ''; width: 3.5rem; height: .65rem; border-radius: 999px;
@@ -938,7 +943,14 @@
   border: 1px solid #3a4468; background: linear-gradient(135deg, #2a2f5a, #1b2a4d); color: #fff; font: 600 .9rem system-ui, sans-serif;
   cursor: pointer; box-shadow: 0 10px 28px -8px rgba(0,0,0,.85); }
 #favBar button:hover { filter: brightness(1.15); }
-#favBar svg { width: 1.05rem; height: 1.05rem; fill: #ff4d6d; stroke: #ff4d6d; stroke-width: 2; stroke-linejoin: round; }
+  #favBar button.is-fav { color: #ffd6de; border-color: #ff4d6d88; }
+  #favBar button.is-fav svg { fill: #ff4d6d; stroke: #ff4d6d; }
+  #favFilterBanner { text-align: center; padding: 2rem 1rem; color: #7a8aaa; }
+  #favFilterBanner .empty { background: #131822; border: 1px dashed #283242; }
+  /* the favorites-only filter hides any card that is not favorited (separate class so it
+     composes with the website / General / BDSM chips and the live-search filter) */
+  .fav-filtered-out { display: none; }
+  #favBar svg { width: 1.05rem; height: 1.05rem; fill: #ff4d6d; stroke: #ff4d6d; stroke-width: 2; stroke-linejoin: round; }
 #favBar .fav-count { min-width: 1.5rem; padding: .05rem .45rem; border-radius: 999px; background: #ff4d6d; font-size: .75rem; text-align: center; }
 body.player-open #favBar, body.fav-open #favBar { display: none; }
 body.fav-open { overflow: hidden; }
@@ -2578,6 +2590,9 @@ function observeCategorySentinel() {
         if (!entry.isIntersecting) return;
         const url = entry.target.getAttribute('data-site');
         if (!((isListTab(url) || url === NETWORKS_TAB) && url === activeTab)) return;
+        // Favorites filter is on: the network list ends at the last network that is already on the page —
+        // no more networks load on scroll. Each network's "See All" reveals the rest of its own videos.
+        if (url === NETWORKS_TAB && window.Favorites && window.Favorites.filterActive && window.Favorites.filterActive()) return;
         if (url === PORN_SITES_TAB || url === NETWORKS_TAB) loadNextStudioPage();
         else loadNextCategoriesPage();
       });
@@ -2667,7 +2682,8 @@ async function loadNextCategoriesPage() {
 
     if (!uniqueNew.length) {
       st.emptyCount = (st.emptyCount || 0) + 1;
-      loader.innerHTML = `<div style="opacity:.6;">No more categories</div>`;
+      loader.className = 'loading-row end-marker';
+      loader.innerHTML = `<div style="opacity:.6;">🏁 No more categories</div>`;
       setTimeout(() => loader.remove(), 1200);
       // Update next pointers
       if (st.nextBySource) {
@@ -3011,7 +3027,7 @@ function scheduleMixRecheck(tabKey) {
 function showMixEnd(grid) {
   if (grid.querySelector('.search-end')) return;
   const el = document.createElement('div');
-  el.className = 'loading-row search-end';
+  el.className = 'loading-row search-end end-marker';
   el.innerHTML = `<div style="opacity:.6;">🏁 End of results</div>`;
   grid.insertBefore(el, grid.querySelector('.loading-row-slot'));
 }
@@ -3759,7 +3775,9 @@ async function openCategories(forceRefresh = false, opts = {}) {
 }
 
 /** FullPorno networks / sites listing — always available as "Porn Series". */
-/** Each studio card: its own row of the same preview videos the sites page already shows for it. */
+/** Each studio card: its own row of the same preview videos the sites page already shows for it.
+    Every network shows the SAME fixed number of preview cards; "See All" reveals the rest. */
+const STUDIO_PREVIEW_CARDS = 4;
 function studioSectionHtml(section, si) {
   const rawName = section.name || 'Untitled';
   const name = escapeHtml(rawName);
@@ -3767,7 +3785,8 @@ function studioSectionHtml(section, si) {
   const countLabel = section.video_count
     ? `See All ${section.video_count}`
     : 'See All';
-  const videos = section.videos || [];
+  // cap the preview row so the last-added network looks exactly like the others
+  const videos = (section.videos || []).slice(0, STUDIO_PREVIEW_CARDS);
   const hasVideos = videos.length > 0;
 
   // Superporn-style series: no preview videos → standalone card (image / title / button stacked)
@@ -3920,19 +3939,18 @@ function applyStudioFilter() {
     if (!empty && list) {
       empty = document.createElement('div');
       empty.className = 'studio-filter-empty';
-      empty.style.cssText = 'padding:2rem;text-align:center;color:#7a8aaa;grid-column:1/-1;';
       const slot = list.querySelector('.loading-row-slot');
       list.insertBefore(empty, slot);
     }
     if (empty) {
-      empty.style.display = '';
+      empty.classList.add('show');
       const what = `${flt ? fLabel + ' ' : ''}sites${words.length ? ` matching “${q}”` : ''}`;
       empty.textContent = searchActive && !studioState.searchExhausted && !studioState.exhausted
         ? `Searching ${what}…`
         : `No ${what}.`;
     }
   } else if (empty) {
-    empty.style.display = 'none';
+    empty.classList.remove('show');
   }
   if (words.length) setStatus(`${shown} site match${shown !== 1 ? 'es' : ''} for “${q}”`, false);
   else setStatus(`${studioView().title} — ${shown}`, false);
@@ -4211,7 +4229,10 @@ async function loadNextStudioPage() {
       applyStudioFilter();
     } else {
       loader.remove();
-      if (!isNet) st.exhausted = true; else if (!st.exhausted) scheduleStudioRecheck();
+      if (!isNet) {
+        st.exhausted = true;
+        showStudioEnd();
+      } else if (!st.exhausted) scheduleStudioRecheck();
     }
   } catch (err) {
     st.retryCount = (st.retryCount || 0) + 1;
@@ -4220,6 +4241,7 @@ async function loadNextStudioPage() {
       loader.innerHTML = `<div style="color:#f87171;">Failed to load more sites</div>`;
       setTimeout(() => loader.remove(), 2000);
       st.exhausted = true;
+      showStudioEnd();
     } else {
       loader.remove();
       const backoff = Math.min(8000, 800 * Math.pow(2, st.retryCount - 1));
@@ -4230,6 +4252,17 @@ async function loadNextStudioPage() {
   } finally {
     st.loading = false;
   }
+}
+
+/** Static "End of list" marker for the studio/network feeds (no animated sweep bar). */
+function showStudioEnd() {
+  const list = results.querySelector('.studio-list');
+  if (!list || list.querySelector('.end-marker')) return;
+  const el = document.createElement('div');
+  el.className = 'loading-row end-marker';
+  el.innerHTML = `<div style="opacity:.6;">🏁 End of list</div>`;
+  const slot = list.querySelector('.loading-row-slot');
+  list.insertBefore(el, slot || null);
 }
 
 function scheduleStudioRecheck() {
@@ -7630,6 +7663,7 @@ document.addEventListener('keydown', (e) => {
     syncPlayerBtn();
     updateBar();
     if (panelOpen) renderPanel();
+    if (favFilterActive) applyFavFilter();
   }
   function scan(root) {
     if (!root || root.nodeType !== 1) return;
@@ -7709,13 +7743,82 @@ document.addEventListener('keydown', (e) => {
     toastTimer = setTimeout(() => toastEl.classList.remove('show'), 1800);
   }
 
-  // ---- sticky bottom bar
+  // ---- sticky bottom bar: toggles a "favorites only" filter over the current feed.
+  // The full manage-panel is still reachable via window.Favorites.open() (e.g. from the console).
   const bar = document.createElement('div');
   bar.id = 'favBar';
-  bar.innerHTML = `<button type="button" aria-haspopup="dialog" title="Open your favorites">${HEART}<span>Favorites</span><span class="fav-count">0</span></button>`;
+  bar.innerHTML = `<button type="button" title="Show only favorites">${HEART}<span>Favorites</span><span class="fav-count">0</span></button>`;
   document.body.appendChild(bar);
-  bar.querySelector('button').addEventListener('click', openPanel);
-  function updateBar() { bar.querySelector('.fav-count').textContent = String(count()); }
+  let favFilterActive = false;
+  function updateBar() {
+    const btn = bar.querySelector('button');
+    const n = count();
+    bar.querySelector('.fav-count').textContent = String(n);
+    btn.classList.toggle('is-fav', favFilterActive);
+    btn.setAttribute('aria-pressed', String(favFilterActive));
+    btn.title = favFilterActive ? 'Show everything (clear the favorites filter)' : 'Show only favorites';
+    btn.querySelector('span').textContent = favFilterActive ? 'Showing favorites' : 'Favorites';
+  }
+  bar.querySelector('button').addEventListener('click', () => {
+    favFilterActive = !favFilterActive;
+    updateBar();
+    if (!favFilterActive) {
+      // turning the filter off: unhide everything first, then re-apply the feed's own filters
+      results.querySelectorAll('.fav-filtered-out').forEach(c => c.classList.remove('fav-filtered-out'));
+      results.querySelectorAll('.loading-row, .loading-row-slot, .mini-spinner').forEach(el => { el.style.display = ''; });
+      const banner = results.querySelector('#favFilterBanner');
+      if (banner) banner.style.display = 'none';
+    }
+    applyFavFilter();
+    if (favFilterActive) window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+  function videoIsFav(link) {
+    if (!link) return false;
+    return has(idOf('video', normLink(link)));
+  }
+  /** Hide every favoriteable card in the current feed that is not favorited (when the filter is on). */
+  function applyFavFilter() {
+    // every heart the decorator attached: each one carries the host element it sits on (b._host)
+    const hosts = results.querySelectorAll('.fav-btn[data-fav]');
+    let shown = 0;
+    hosts.forEach(b => {
+      const ok = has(b.dataset.favId);
+      const el = b._host;
+      if (!el) return;
+      // hide the whole visual unit the heart belongs to (a section header's heart must hide its
+      // entire .studio-section + video row, not just the header)
+      const unit = el.closest('.studio-section, .series-card, .card, .category-card, .cam-card') || el;
+      unit.classList.toggle('fav-filtered-out', !ok);
+      if (ok) shown++;
+    });
+    // video cards whose heart is not yet decorated (no _host): fall back to data-detail
+    results.querySelectorAll('.card[data-detail]:not(.fav-filtered-out)').forEach(c => {
+      if (c.querySelector(':scope > .fav-btn[data-fav]')) return;   // handled above
+      const link = c.getAttribute('data-detail');
+      const ok = !link || videoIsFav(link);
+      c.classList.toggle('fav-filtered-out', !ok);
+      if (ok) shown++;
+    });
+    // the filter caps the list: never show the "loading more" spinner / slot while it is on
+    results.querySelectorAll('.loading-row, .loading-row-slot, .mini-spinner').forEach(el => {
+      if (el.closest('#favPanel, #favBar')) return;
+      el.style.display = 'none';
+    });
+    let banner = results.querySelector('#favFilterBanner');
+    if (favFilterActive && !shown) {
+      if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'favFilterBanner';
+        banner.className = 'fav-filter-empty';
+        banner.innerHTML = '<div class="empty">♥ Nothing added yet.<br>Tap the heart on any video, cam, channel, category, star, series or network to add it here, then it shows up filtered.</div>';
+        results.appendChild(banner);
+      } else {
+        banner.style.display = '';
+      }
+    } else if (banner) {
+      banner.style.display = 'none';
+    }
+  }
 
   // ---- panel
   const panel = document.createElement('div');
@@ -7915,17 +8018,20 @@ document.addEventListener('keydown', (e) => {
   load();
   updateBar();
   scan(document.body);
+  applyFavFilter();
   let pending = new Set(), scheduled = false;
   new MutationObserver((muts) => {
     for (const m of muts) m.addedNodes.forEach((n) => { if (n.nodeType === 1) pending.add(n); });
     if (scheduled || !pending.size) return;
     scheduled = true;
-    requestAnimationFrame(() => { const batch = pending; pending = new Set(); scheduled = false; batch.forEach(scan); });
+    requestAnimationFrame(() => { const batch = pending; pending = new Set(); scheduled = false; batch.forEach(scan); if (favFilterActive) applyFavFilter(); });
   }).observe(document.body, { childList: true, subtree: true });
+  // keep the favorites-only filter applied as cards scroll in / feeds re-render
+  new MutationObserver(() => { if (favFilterActive) applyFavFilter(); }).observe(results, { childList: true, subtree: true });
   const mp = document.getElementById('mainPlayer');
   if (mp) new MutationObserver(syncPlayerBtn).observe(mp, { attributes: true, attributeFilter: ['class'], childList: true, subtree: true, characterData: true });
   window.addEventListener('storage', (e) => { if (e.key === KEY) { load(); refreshHearts(); } });
-  window.Favorites = { open: openPanel, close: closePanel, toggle, all: () => Object.values(db.items) };
+  window.Favorites = { open: openPanel, close: closePanel, toggle, all: () => Object.values(db.items), filterActive: () => favFilterActive };
 })();
 </script>
 </body>
