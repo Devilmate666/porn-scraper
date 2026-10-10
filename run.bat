@@ -1,5 +1,6 @@
 @echo off
 setlocal enabledelayedexpansion
+cd /d "%~dp0"
 
 REM ---- edit these two lines if your GitHub repo changes ----
 set "OWNER=Devilmate666"
@@ -53,6 +54,21 @@ if errorlevel 1 (
     git remote add origin https://github.com/%OWNER%/%REPO%.git
 )
 
+echo [0/5] Checking the project files (doctor.ps1)...
+if not exist "%~dp0doctor.ps1" (
+    echo [ERROR] doctor.ps1 is missing. Put it in the same folder as run.bat.
+    pause
+    exit /b 1
+)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0doctor.ps1" -Phase pre
+if errorlevel 1 (
+    echo.
+    echo [ERROR] Fix the [FAIL] lines above, then run this script again. Nothing was pushed.
+    pause
+    exit /b 1
+)
+echo.
+
 echo [1/5] Checking for changes...
 git status --short
 echo.
@@ -67,8 +83,18 @@ echo [2/5] Adding all files...
 git add -A
 
 echo [3/5] Committing...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0doctor.ps1" -Phase tracked
+if errorlevel 1 (
+    echo.
+    echo [ERROR] Git would not upload some files. See the [FAIL] lines above. Nothing was pushed.
+    pause
+    exit /b 1
+)
 git commit -m "!COMMIT_MSG!"
-if errorlevel 1 echo [INFO] Nothing new to commit, continuing.
+if errorlevel 1 (
+    echo [INFO] Nothing new to commit - making an empty commit so the deploy runs again.
+    git commit --allow-empty -m "!COMMIT_MSG! (redeploy)"
+)
 
 echo [4/5] Syncing with GitHub...
 git ls-remote --exit-code --heads origin main >nul 2>&1
@@ -104,6 +130,11 @@ echo https://github.com/%OWNER%/%REPO%/settings/secrets/actions
 echo   Required:
 echo     CLOUDFLARE_API_TOKEN    dash.cloudflare.com/profile/api-tokens
 echo     CLOUDFLARE_ACCOUNT_ID   dash.cloudflare.com, right sidebar
+echo   Login (email sign-in) - needs ALL of these:
+echo     Cloudflare API token must also have the permission  Account - D1 - Edit
+echo     AUTH_SECRET             any random 32+ characters (secret)
+echo     RESEND_API_KEY  or  BREVO_API_KEY   (secret, your email provider key)
+echo     MAIL_FROM               a VARIABLE, e.g.  Archive ^<login@yourdomain.com^>
 echo   Optional:
 echo     GH_DISPATCH_TOKEN       lets the Worker start the GitHub scraper when data is stale
 echo                             fine-grained token, this repo only, Actions: Read and write
@@ -118,5 +149,9 @@ echo The Worker URL is printed in the deploy log, step "Deploy Worker".
 echo Frontend: https://porn-archive.pages.dev
 echo.
 start "" "https://github.com/%OWNER%/%REPO%/actions"
+echo.
+echo Now waiting for the deploy and testing the live site (up to 6 minutes)...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0doctor.ps1" -Phase post
+echo.
 echo Done.
 pause
