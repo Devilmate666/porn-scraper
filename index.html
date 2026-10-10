@@ -2304,7 +2304,7 @@ function syncStickyOffsets() {
     document.querySelectorAll('.feed-controls-sticky').forEach(el => ro.observe(el));
   };
   new MutationObserver(() => { watch(); schedule(); }).observe(results, { childList: true, subtree: true });
-  window.addEventListener('resize', schedule);
+  window.addEventListener('resize', () => schedule());
   window.addEventListener('orientationchange', schedule);
   watch(); schedule();
 })();
@@ -2472,7 +2472,7 @@ if (siteActions) {
     if (b && siteActions.contains(b)) alignNavButton(b);
   }, true);
   siteActions.addEventListener('scroll', updateNavFades, { passive: true });
-  window.addEventListener('resize', updateNavFades);
+  window.addEventListener('resize', () => updateNavFades());
   window.addEventListener('load', updateNavFades);
 }
 
@@ -4277,7 +4277,7 @@ function fitStudioRows(root = document) {
     row.style.setProperty('--n', Math.min(count, fit));
   });
 }
-window.addEventListener('resize', fitStudioRows);
+window.addEventListener('resize', () => fitStudioRows());
 
 /** Studio listing: studio name + "See All N Videos" button + its own preview videos, one page fetch each. */
 async function openStudioView(tab, forceRefresh = false, opts = {}) {
@@ -7791,7 +7791,7 @@ document.addEventListener('keydown', (e) => {
   status.hidden = true;
   document.body.appendChild(status);
   const setBarHeight = () => { const h = bar.offsetHeight; if (h > 0) document.documentElement.style.setProperty('--favbar-h', h + 'px'); };
-  window.addEventListener('resize', setBarHeight);
+  window.addEventListener('resize', () => setBarHeight());
 
   function updateBar() {
     favBtn.querySelector('.fav-count').textContent = String(count());

@@ -250,8 +250,10 @@ export default {
         return await handleAuth(env, request, url.pathname, b, (data, status = 200, extra = {}) =>
           json(data, status, { ...headers, "Cache-Control": "no-store", ...extra }));
       } catch (e) {
-        console.log("auth error", String(e).slice(0, 300));
-        return err("Server error", 500, { ...headers, "Cache-Control": "no-store" });
+        const msg = String(e).slice(0, 300);
+        console.log("auth error", msg);
+        // surface the real error to the caller instead of a generic "Server error" - it is what the Worker logs print too
+        return err(msg || "Server error", 500, { ...headers, "Cache-Control": "no-store" });
       }
     }
 
