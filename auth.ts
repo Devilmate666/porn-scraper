@@ -70,7 +70,8 @@ async function hashPassword(password: string, salt?: string): Promise<string> {
   return `pbkdf2-sha256$${PBKDF2_ITERS}$${s}$${hex(raw)}`;
 }
 async function verifyPassword(password: string, stored: string): Promise<boolean> {
-  const m = /^\$([a-z0-9]+)\$(\d+)\$([0-9a-f]+)\$([0-9a-f]+)$/.exec(stored);
+  // stored format: "pbkdf2-sha256$100000$<salt hex>$<hash hex>"
+  const m = /^([a-z0-9-]+)\$(\d+)\$([0-9a-f]+)\$([0-9a-f]+)$/.exec(stored);
   if (!m) return false;
   const salt = m[3];
   const expected = await hashPassword(password, salt);
