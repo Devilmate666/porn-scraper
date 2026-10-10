@@ -930,27 +930,32 @@
 .main-player-close.fav-player.is-fav svg { fill: #ff4d6d; stroke: #ff4d6d; }
 
 
-/* ===================== Favorites filter button ===================== */
-.app { padding-bottom: 5.5rem; }
+/* ===================== Bottom bar (mirrors the top bar) ===================== */
+:root { --favbar-h: 3.9rem; }
+.app { padding-bottom: calc(var(--favbar-h) + 1rem); }
 .fav-hidden { display: none !important; }
 body.fav-filter .sentinel { display: none !important; }       /* no endless loading while only favorites are shown */
+body.hist-open { overflow: hidden; }
 
-#favBar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 350; display: flex; justify-content: center; pointer-events: none;
-  padding: 1.4rem .8rem max(.7rem, env(safe-area-inset-bottom)); background: linear-gradient(to top, rgba(10,12,16,.9), rgba(10,12,16,0)); }
-#favBar button { pointer-events: auto; display: flex; align-items: center; gap: .55rem; padding: .65rem 1.3rem; border-radius: 999px; cursor: pointer;
-  border: 1px solid #3a4468; background: linear-gradient(135deg, #2a2f5a, #1b2a4d); color: #fff; font: 600 .9rem system-ui, sans-serif;
-  box-shadow: 0 10px 28px -8px rgba(0,0,0,.85); transition: filter .12s ease; }
-#favBar button:hover { filter: brightness(1.15); }
-#favBar svg { width: 1.05rem; height: 1.05rem; fill: none; stroke: #ff4d6d; stroke-width: 2; stroke-linejoin: round; }
-#favBar .fav-count { min-width: 1.5rem; padding: .05rem .45rem; border-radius: 999px; background: #ff4d6d; font-size: .75rem; text-align: center; }
-#favBar.on button { background: linear-gradient(135deg, #ff4d6d, #c2185b); border-color: #ff8aa0; }
-#favBar.on svg { fill: #fff; stroke: #fff; }
-#favBar.on .fav-count { background: rgba(255,255,255,.28); }
-body.player-open #favBar, body.player-open #favStatus { display: none; }
+#favBar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 350; background: #0d121c; border-top: 1px solid #252e3f;
+  box-shadow: 0 -8px 16px -8px rgba(0,0,0,.6); padding: .55rem 1rem max(.55rem, env(safe-area-inset-bottom)); }
+#favBar .fb-row { display: flex; justify-content: center; align-items: center; gap: .5rem; max-width: 1600px; margin: 0 auto; }
+#favBar button.action { display: inline-flex; align-items: center; justify-content: center; gap: .45rem; white-space: nowrap;
+  transition: transform .15s ease, background-color .2s, border-color .2s, box-shadow .2s; }
+#favBar button.action:active { transform: scale(.95); }
+#favBar button.action svg { width: .95rem; height: .95rem; fill: none; stroke: #ff6b87; stroke-width: 2; stroke-linejoin: round; }
+#favBar button.action svg.on { fill: #fff; stroke: #fff; }
+#favBar .fav-count { min-width: 1.35rem; padding: .02rem .4rem; border-radius: 999px; background: #ff4d6d; color: #fff; font-size: .68rem; font-weight: 600; text-align: center; }
+#favBar button.action.active .fav-count { background: rgba(255,255,255,.28); }
+@media (max-width: 760px) {
+  #favBar { padding-left: .65rem; padding-right: .65rem; }
+  #favBar button.action { flex: 1 1 0; max-width: 16rem; padding: .55rem .75rem; font-size: .75rem; }
+}
+body.player-open #favBar, body.player-open #favStatus, body.player-open #histPanel { display: none; }
 
-#favStatus { position: fixed; left: 50%; bottom: 5.1rem; transform: translateX(-50%); z-index: 349; max-width: min(92vw, 520px); padding: .45rem .95rem;
-  border-radius: 999px; background: rgba(23,29,42,.96); border: 1px solid #3a4468; color: #fecdd6; font-size: .78rem; text-align: center; pointer-events: none;
-  box-shadow: 0 8px 22px -8px rgba(0,0,0,.85); }
+#favStatus { position: fixed; left: 50%; bottom: calc(var(--favbar-h) + .6rem); transform: translateX(-50%); z-index: 349; max-width: min(92vw, 520px);
+  padding: .45rem .95rem; border-radius: 999px; background: rgba(23,29,42,.96); border: 1px solid #3a4468; color: #fecdd6; font-size: .78rem; text-align: center;
+  pointer-events: none; box-shadow: 0 8px 22px -8px rgba(0,0,0,.85); }
 #favStatus[hidden] { display: none; }
 
 /* account button + sign-in dialog */
@@ -980,12 +985,31 @@ body.player-open #favBar, body.player-open #favStatus { display: none; }
 .acct-msg { min-height: 1.1rem; font-size: .8rem; color: #ff8a9b; margin: -.2rem 0 .3rem; }
 .acct-msg.ok { color: #6fe3b0; }
 .acct-who { font-weight: 600; word-break: break-all; color: #fff; }
-#favStatus.empty { color: #cbd5e1; white-space: normal; }
+#favStatus.empty { color: #cbd5e1; }
 
-#favToast { position: fixed; left: 50%; bottom: 8.4rem; transform: translate(-50%, 10px); z-index: 450; max-width: 90vw; padding: .55rem 1rem;
+#favToast { position: fixed; left: 50%; bottom: calc(var(--favbar-h) + 3.4rem); transform: translate(-50%, 10px); z-index: 450; max-width: 90vw; padding: .55rem 1rem;
   border-radius: 999px; background: #1e2432; border: 1px solid #3a4468; color: #fff; font-size: .8rem; opacity: 0; pointer-events: none;
   transition: opacity .18s ease, transform .18s ease; box-shadow: 0 10px 28px -8px rgba(0,0,0,.85); }
 #favToast.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* history page: sits between the top of the screen and the bottom bar */
+#histPanel { position: fixed; left: 0; right: 0; top: 0; bottom: var(--favbar-h); z-index: 340; display: flex; flex-direction: column; background: #0a0c10; }
+#histPanel[hidden] { display: none; }
+#histPanel .hp-head { flex: none; display: flex; align-items: center; justify-content: space-between; gap: .8rem; flex-wrap: wrap;
+  padding: .75rem 1rem; background: #0d121c; border-bottom: 1px solid #252e3f; box-shadow: 0 8px 16px -8px rgba(0,0,0,.6); }
+#histPanel .hp-title { font-size: 1.05rem; font-weight: 700; }
+#histPanel .hp-title small { color: #8b9ab8; font-weight: 500; }
+#histPanel .hp-actions { display: flex; gap: .5rem; }
+#histPanel .hp-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+#histPanel .hp-scroll > div { max-width: 1600px; margin: 0 auto; padding-bottom: 1.5rem; }
+#histPanel .hp-h { padding: 1.1rem 1.4rem .1rem; font-size: .95rem; font-weight: 700; color: #cbd5e1; }
+#histPanel .hp-h small { color: #8b9ab8; font-weight: 500; margin-left: .3rem; }
+#histPanel .hp-empty { text-align: center; color: #8b9ab8; padding: 4rem 1.5rem; font-size: .9rem; line-height: 1.7; }
+#histPanel .hp-empty b { display: block; color: #e2e8f0; font-size: 1.05rem; margin-bottom: .3rem; }
+.hist-x { position: absolute; top: .45rem; left: .45rem; z-index: 6; width: 2rem; height: 2rem; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  cursor: pointer; font-size: .8rem; color: #fff; background: rgba(8,11,18,.68); border: 1px solid rgba(255,255,255,.18); backdrop-filter: blur(4px); }
+.hist-x:hover { background: #7f1d3a; border-color: #ff4d6d88; }
+.hist-x:focus-visible { outline: 2px solid #7c8af8; outline-offset: 2px; }
 
 </style>
 <base target="_blank">
@@ -7716,10 +7740,11 @@ document.addEventListener('keydown', (e) => {
 
 
   // =====================================================================================
-  //  The Favorites button: filters the whole website down to what you saved
+  //  Bottom bar (same look as the top bar): Favorites filter + Watch history
   // =====================================================================================
   let filterOn = false;
   const ITEM_SEL = 'a.card[data-detail], a.category-card[data-link], a.series-card[data-link], a.cam-card';
+  const playerActive = () => { const m = document.getElementById('mainPlayer'); return !!(m && m.classList.contains('active')); };
   const idFor = (el) => {
     let id = elId.get(el);
     if (!id) { const r = describe(el); id = r ? idOf(r.type, r.key) : null; if (id) elId.set(el, id); }
@@ -7741,7 +7766,7 @@ document.addEventListener('keydown', (e) => {
   }
   function applyFilter() {
     const items = document.querySelectorAll(ITEM_SEL);
-    items.forEach((el) => el.classList.toggle('fav-hidden', filterOn && !isFavEl(el)));
+    items.forEach((el) => el.classList.toggle('fav-hidden', filterOn && !el.closest('#histPanel') && !isFavEl(el)));
     document.querySelectorAll('.studio-section').forEach((sec) => {        // rows (header + cards): hidden when nothing in them is a favorite
       if (!headOf(sec)) return;
       const any = headIsFav(sec) || [...sec.querySelectorAll(ITEM_SEL)].some((c) => !c.classList.contains('fav-hidden'));
@@ -7750,23 +7775,32 @@ document.addEventListener('keydown', (e) => {
     updateStatus(items);
   }
 
-  // ---- sticky bottom button + status line
-  const bar = document.createElement('div');
+  // ---- the bar
+  const bar = document.createElement('nav');
   bar.id = 'favBar';
-  bar.innerHTML = `<button type="button" aria-pressed="false" title="Show only your favorites">${HEART}<span class="fb-label">Favorites</span><span class="fav-count">0</span></button>`;
+  bar.setAttribute('aria-label', 'Favorites and history');
+  bar.innerHTML = `<div class="fb-row">
+      <button type="button" class="action" id="favFilterBtn" aria-pressed="false" title="Show only your favorites">${HEART}<span class="fb-label">Favorites</span><span class="fav-count">0</span></button>
+      <button type="button" class="action" id="histBtn" aria-pressed="false" title="Videos you watched recently"><span aria-hidden="true">🕘</span><span class="fb-label">History</span></button>
+    </div>`;
   document.body.appendChild(bar);
+  const favBtn = bar.querySelector('#favFilterBtn'), histBtn = bar.querySelector('#histBtn');
   const status = document.createElement('div');
   status.id = 'favStatus';
   status.setAttribute('role', 'status');
   status.hidden = true;
   document.body.appendChild(status);
+  const setBarHeight = () => { const h = bar.offsetHeight; if (h > 0) document.documentElement.style.setProperty('--favbar-h', h + 'px'); };
+  window.addEventListener('resize', setBarHeight);
 
   function updateBar() {
-    const n = count();
-    bar.querySelector('.fav-count').textContent = String(n);
-    bar.querySelector('.fb-label').textContent = filterOn ? 'Favorites only' : 'Favorites';
-    bar.firstChild.setAttribute('aria-pressed', filterOn ? 'true' : 'false');
-    bar.classList.toggle('on', filterOn);
+    favBtn.querySelector('.fav-count').textContent = String(count());
+    favBtn.classList.toggle('active', filterOn);
+    favBtn.setAttribute('aria-pressed', filterOn ? 'true' : 'false');
+    favBtn.querySelector('.fb-label').textContent = filterOn ? 'Favorites only' : 'Favorites';
+    favBtn.querySelector('svg').classList.toggle('on', filterOn);
+    histBtn.classList.toggle('active', histOpen);
+    histBtn.setAttribute('aria-pressed', histOpen ? 'true' : 'false');
   }
   function updateStatus(items) {
     status.hidden = !filterOn;
@@ -7780,17 +7814,159 @@ document.addEventListener('keydown', (e) => {
   }
   function setFilter(on) {
     if (on && !count()) { toast('No favorites yet. Tap ♥ on anything to add it'); return; }
+    if (on && histOpen) closeHistory();
     filterOn = on;
-    document.body.classList.toggle('fav-filter', on);      // CSS also stops the endless-scroll loader while filtering
+    document.body.classList.toggle('fav-filter', on);       // CSS also stops the endless-scroll loader while filtering
     updateBar();
     applyFilter();
     if (on) window.scrollTo(0, 0);
   }
-  bar.firstChild.addEventListener('click', () => setFilter(!filterOn));
+  favBtn.addEventListener('click', () => setFilter(!filterOn));
+  histBtn.addEventListener('click', () => (histOpen ? closeHistory() : openHistory()));
+
+  // =====================================================================================
+  //  Watch history (videos only: cams and live channels are not logged)
+  // =====================================================================================
+  const HKEY = 'pa_history_v1', HMAX = 200;
+  let hist = [], histOpen = false, lastLogged = null, lastPlayerChange = 0;
+  const loadHist = () => { try { const a = JSON.parse(localStorage.getItem(HKEY) || '[]'); hist = Array.isArray(a) ? a.filter((h) => h && h.link) : []; } catch (e) { hist = []; } };
+  const saveHist = () => { try { localStorage.setItem(HKEY, JSON.stringify(hist)); } catch (e) { hist.length = Math.min(hist.length, 60); try { localStorage.setItem(HKEY, JSON.stringify(hist)); } catch (e2) {} } };
+
+  function addHistory(rec) {
+    const k = normLink(rec.link, false);
+    hist = hist.filter((h) => normLink(h.link, false) !== k);   // watching it again moves it back to the top
+    hist.unshift(rec);
+    if (hist.length > HMAX) hist.length = HMAX;
+    saveHist();
+    if (histOpen) renderHistory();
+  }
+  /** called whenever the player changes: logs the video being opened */
+  function trackWatch() {
+    if (!playerActive()) { lastLogged = null; return; }
+    const info = gInfo();
+    if (!info || !info.detail || info.detail === lastLogged) return;
+    lastLogged = info.detail;
+    const it = gItems().get(info.detail) || {};
+    if (it._cam || it._chan) return;
+    let thumb = null;
+    try { thumb = (typeof cardPosterFor === 'function' && cardPosterFor(info.detail)) || it.thumbnail || null; } catch (e) { thumb = it.thumbnail || null; }
+    if (!thumb) { const s = document.getElementById('stillImg'); if (s && s.src && !/^data:/i.test(s.src)) thumb = s.src; }
+    addHistory({ link: info.detail, title: info.title || it.title || 'Video', thumb, duration: it.duration || null, views: it.views || null, rating: it.rating || null,
+      host: hostOfLink(info.detail), ts: Date.now() });
+  }
+  const hostOfLink = (u) => { try { return new URL(u).hostname; } catch (e) { return ''; } };
+
+  const hp = document.createElement('div');
+  hp.id = 'histPanel';
+  hp.hidden = true;
+  hp.setAttribute('role', 'dialog');
+  hp.setAttribute('aria-label', 'Watch history');
+  hp.innerHTML = `<div class="hp-head"><div class="hp-title">🕘 Recently watched <small id="hpCount"></small></div>
+      <div class="hp-actions"><button type="button" class="action" id="hpClear">🗑 Clear</button><button type="button" class="action" id="hpClose">✕ Close</button></div></div>
+    <div class="hp-scroll" id="hpScroll"><div id="hpBody"></div></div>`;
+  document.body.appendChild(hp);
+
+  const dayStart = (t) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
+  function groupLabel(ts, today) {
+    const d = dayStart(ts);
+    if (d >= today) return 'Today';
+    if (d >= today - 864e5) return 'Yesterday';
+    if (d >= today - 6 * 864e5) return 'Last 7 days';
+    return 'Older';
+  }
+  function histCard(h, i) {
+    const item = { link: h.link, title: h.title, thumbnail: h.thumb, duration: h.duration, views: h.views, rating: h.rating, _host: h.host };
+    return typeof cardHtml === 'function' ? cardHtml(item, 'hist-' + i)
+      : `<a class="card" href="#" data-detail="${esc(h.link)}" data-title="${esc(h.title)}"><div class="thumb"><img src="${esc(h.thumb || '')}" alt=""></div><div class="info"><div class="title">${esc(h.title)}</div></div></a>`;
+  }
+  function renderHistory() {
+    const scroll = hp.querySelector('#hpScroll'), y = scroll.scrollTop;
+    hp.querySelector('#hpCount').textContent = hist.length ? `· ${hist.length}` : '';
+    hp.querySelector('#hpClear').hidden = !hist.length;
+    const body = hp.querySelector('#hpBody');
+    if (!hist.length) {
+      body.innerHTML = '<div class="hp-empty"><b>Nothing watched yet</b>Videos you open show up here, newest first.</div>';
+      return;
+    }
+    const today = dayStart(Date.now());
+    const groups = [];
+    hist.slice().sort((x, y) => (y.ts || 0) - (x.ts || 0)).forEach((h, i) => {     // always newest first, whatever order the entries arrived in
+      const label = groupLabel(h.ts || 0, today);
+      let g = groups.find((x) => x.label === label);
+      if (!g) groups.push((g = { label, html: [], n: 0 }));
+      g.html.push(histCard(h, i));
+      g.n++;
+    });
+    body.innerHTML = groups.map((g) => `<div class="hp-h">${g.label} <small>${g.n}</small></div><div class="videos hp-grid">${g.html.join('')}</div>`).join('');
+    body.querySelectorAll('a.card').forEach((a, i) => {          // a small ✕ on each card removes it from the history
+      const x = document.createElement('span');
+      x.className = 'hist-x';
+      x.setAttribute('role', 'button');
+      x.tabIndex = 0;
+      x.title = 'Remove from history';
+      x.setAttribute('aria-label', 'Remove from history');
+      x.textContent = '✕';
+      const th = a.querySelector('.thumb');
+      if (th) th.appendChild(x);
+    });
+    scroll.scrollTop = y;
+  }
+  function openHistory() {
+    if (filterOn) setFilter(false);
+    histOpen = true;
+    hp.hidden = false;
+    document.body.classList.add('hist-open');
+    renderHistory();
+    hp.querySelector('#hpScroll').scrollTop = 0;
+    updateBar();
+  }
+  function closeHistory() {
+    if (!histOpen) return;
+    histOpen = false;
+    hp.hidden = true;
+    document.body.classList.remove('hist-open');
+    updateBar();
+  }
+  hp.querySelector('#hpClose').addEventListener('click', closeHistory);
+  hp.querySelector('#hpClear').addEventListener('click', () => {
+    if (!hist.length || !confirm(`Clear your watch history (${hist.length} video${hist.length === 1 ? '' : 's'})?`)) return;
+    hist = [];
+    saveHist();
+    renderHistory();
+    toast('History cleared');
+  });
+  function histAct(e) {
+    const x = e.target.closest('.hist-x');
+    if (x) {
+      e.preventDefault(); e.stopPropagation();
+      const a = x.closest('a.card');
+      const k = a && normLink(a.getAttribute('data-detail'), false);
+      hist = hist.filter((h) => normLink(h.link, false) !== k);
+      saveHist();
+      renderHistory();
+      return;
+    }
+    if (e.type !== 'click') return;
+    const a = e.target.closest('a.card');                         // hearts are handled earlier (capture phase)
+    if (!a) return;
+    e.preventDefault();
+    const detail = a.getAttribute('data-detail');
+    if (detail) { try { playInMainPlayer(detail, a.getAttribute('data-title') || 'Video'); } catch (err) { console.error('[history]', err); } }
+  }
+  hp.querySelector('#hpBody').addEventListener('click', histAct);
+  hp.querySelector('#hpBody').addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target.closest('.hist-x')) histAct(e); });
+  // the player pushes / pops history entries: only a Back press with the history on screen closes it
+  window.addEventListener('popstate', () => {
+    if (!histOpen || playerActive() || Date.now() - lastPlayerChange < 900) return;
+    closeHistory();
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && histOpen && !playerActive()) { e.stopPropagation(); closeHistory(); } }, true);
 
   // ---- boot
   load();
+  loadHist();
   updateBar();
+  setBarHeight();
   scan(document.body);
   let pending = new Set(), scheduled = false;
   new MutationObserver((muts) => {
@@ -7804,9 +7980,19 @@ document.addEventListener('keydown', (e) => {
     });
   }).observe(document.body, { childList: true, subtree: true });
   const mp = document.getElementById('mainPlayer');
-  if (mp) new MutationObserver(syncPlayerBtn).observe(mp, { attributes: true, attributeFilter: ['class'], childList: true, subtree: true, characterData: true });
-  window.addEventListener('storage', (e) => { if (e.key === KEY || e.key === TKEY) { load(); refreshHearts(); } });
-
+  if (mp) {
+    let wasActive = playerActive();
+    new MutationObserver(() => {
+      const now = playerActive();
+      if (now !== wasActive) { wasActive = now; lastPlayerChange = Date.now(); }
+      syncPlayerBtn();
+      trackWatch();
+    }).observe(mp, { attributes: true, attributeFilter: ['class'], childList: true, subtree: true, characterData: true });
+  }
+  window.addEventListener('storage', (e) => {
+    if (e.key === KEY || e.key === TKEY) { load(); refreshHearts(); }
+    if (e.key === HKEY) { loadHist(); if (histOpen) renderHistory(); }
+  });
   /* ---- account sync API (used by the Account script below) ---- */
   const syncApi = {
     /** every id that has local state (favorite or tombstone) */
@@ -7834,7 +8020,7 @@ document.addEventListener('keydown', (e) => {
       refreshHearts();
     },
   };
-  window.Favorites = { toggle, filter: setFilter, all: () => Object.values(db.items), count, toast, onChange: (f) => listeners.push(f), sync: syncApi };
+  window.Favorites = { toggle, filter: setFilter, all: () => Object.values(db.items), history: () => hist.slice(), openHistory, closeHistory, count, toast, onChange: (f) => listeners.push(f), sync: syncApi };
 })();
 </script>
 <script>
