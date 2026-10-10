@@ -6,6 +6,7 @@ import { resolveVideo, resolveFull } from "../resolve";
 import { fetchMetadata } from "../metadata";
 import { fetchLiveCams, fetchLemoncamsFilters } from "../cams";
 import { fetchChannelsNative } from "../channels";
+import { handleAuth, isAuthPath, authMaintenance } from "../auth";
 
 // ---------------------------------------------------------------------------------------------------------
 // API Worker - built so the site keeps working even when GitHub, a cam platform or your PC is down.
@@ -68,7 +69,7 @@ function corsHeaders(origin: string | null): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": origin || "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Access-Control-Expose-Headers": "X-Source, X-Cache-Age",
     "Access-Control-Max-Age": "600",
     "Vary": "Origin",
@@ -233,12 +234,26 @@ async function maintenance(env: Env): Promise<void> {
 export default {
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(maintenance(env).catch(() => undefined));
+    ctx.waitUntil(authMaintenance(env));
   },
 
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     const headers = corsHeaders(request.headers.get("Origin"));
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
+
+    // accounts + data sync (D1). Never cached, never touches the scrapers.
+    if (isAuthPath(url.pathname)) {
+      let b: any = {};
+      try { b = request.method === "POST" ? JSON.parse((await request.text()) || "{}") : {}; } catch { /* bad json = empty body */ }
+      try {
+        return await handleAuth(env, request, url.pathname, b, (data, status = 200, extra = {}) =>
+          json(data, status, { ...headers, "Cache-Control": "no-store", ...extra }));
+      } catch (e) {
+        console.log("auth error", String(e).slice(0, 300));
+        return err("Server error", 500, { ...headers, "Cache-Control": "no-store" });
+      }
+    }
 
     const isPost = request.method === "POST";
     const isGet = request.method === "GET";

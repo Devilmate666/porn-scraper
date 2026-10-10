@@ -25,11 +25,15 @@ jobs:
     outputs:
       cache_ns_id: ${{ steps.ns.outputs.cache_ns_id }}
       scrape_ns_id: ${{ steps.ns.outputs.scrape_ns_id }}
+      d1_id: ${{ steps.d1.outputs.d1_id }}
     steps:
       - uses: actions/checkout@v4
       - name: Find or create KV namespaces
         id: ns
         run: bash .github/scripts/kv_ids.sh
+      - name: Find or create the D1 database (accounts + synced favorites)
+        id: d1
+        run: bash .github/scripts/d1_id.sh
 
   deploy-worker:
     name: Deploy Worker
@@ -55,6 +59,19 @@ jobs:
           sed -i "s/your-preview-scrape-data-kv-id/${{ needs.setup-kv.outputs.scrape_ns_id }}/" wrangler.toml
           grep -n 'id *=' wrangler.toml
 
+      - name: D1 database (login + sync)
+        env:
+          D1_ID: ${{ needs.setup-kv.outputs.d1_id }}
+        run: |
+          if [ -n "${D1_ID:-}" ]; then
+            sed -i "s/your-d1-database-id/${D1_ID}/" wrangler.toml
+            wrangler d1 execute porn-archive-db --remote --file=migrations/0001_auth.sql \
+              || echo "::warning::D1 migration failed - check the API token has D1: Edit"
+          else
+            # no database: remove the binding so the deploy still succeeds (login stays off)
+            sed -i '/^\[\[d1_databases\]\]/,/^database_id/d' wrangler.toml
+          fi
+
       - name: Install dependencies
         run: if [ -f package.json ]; then npm install; fi
 
@@ -66,6 +83,7 @@ jobs:
           EXTRA_HOSTS: ${{ vars.ALLOWED_HOSTS }}           # optional repo variable: extra scrapable hosts, comma separated
           CB_WM: ${{ vars.CHATURBATE_WM }}                 # optional repo variable: Chaturbate affiliate slug for the fallback endpoint
           CAMS: ${{ vars.CAM_PROVIDERS }}                  # optional repo variable: e.g. "chaturbate,cam4" to limit the direct cam platforms
+          MAILFROM: ${{ vars.MAIL_FROM }}                  # login emails: sender, e.g. Archive <login@yourdomain.com>
         run: |
           EXTRA="--var GITHUB_REPO:${{ github.repository }} --var GITHUB_REF:${{ github.ref_name }}"
           if [ -n "${BACKEND_URL:-}" ]; then EXTRA="$EXTRA --var BACKEND_URL:${BACKEND_URL}"; fi
@@ -73,7 +91,9 @@ jobs:
           if [ -n "${EXTRA_HOSTS:-}" ]; then EXTRA="$EXTRA --var ALLOWED_HOSTS:${EXTRA_HOSTS}"; fi
           if [ -n "${CB_WM:-}" ]; then EXTRA="$EXTRA --var CHATURBATE_WM:${CB_WM}"; fi
           if [ -n "${CAMS:-}" ]; then EXTRA="$EXTRA --var CAM_PROVIDERS:${CAMS}"; fi
-          wrangler deploy $EXTRA 2>&1 | tee deploy.log
+          ARGS=()                                          # array: the sender contains spaces ("Name <a@b.c>")
+          if [ -n "${MAILFROM:-}" ]; then ARGS+=(--var "MAIL_FROM:${MAILFROM}"); fi
+          wrangler deploy $EXTRA "${ARGS[@]}" 2>&1 | tee deploy.log
           URL=$(grep -oE 'https://[A-Za-z0-9._-]+\.workers\.dev' deploy.log | head -1 || true)
           if [ -z "$URL" ]; then
             SUB=$(curl -sS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
@@ -96,6 +116,18 @@ jobs:
           else
             echo "GH_DISPATCH_TOKEN not set - watchdog disabled (cams still self-refresh inside Cloudflare)"
           fi
+
+      # Login secrets (GitHub repo secrets -> Worker secrets). Needed: AUTH_SECRET + (RESEND_API_KEY or BREVO_API_KEY) + variable MAIL_FROM.
+      - name: Give the Worker its login secrets (optional)
+        env:
+          AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
+        run: |
+          for n in AUTH_SECRET RESEND_API_KEY BREVO_API_KEY; do
+            v="${!n:-}"
+            if [ -n "$v" ]; then printf '%s' "$v" | wrangler secret put "$n"; else echo "$n not set"; fi
+          done
 
       - name: Smoke test
         run: |

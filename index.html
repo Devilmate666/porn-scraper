@@ -223,11 +223,6 @@
   }
   .cat-search-loading::before { width: 5rem; margin: .65rem 0; }
   .cams-loading { position: relative; }
-  /* end-of-list markers are static: no animated sweep bar, no spinner */
-  .loading-row.end-marker::before, .cat-search-loading.end-marker::before, .cams-loading.end-marker::before { display: none; }
-  .loading-row.end-marker .mini-spinner, .cat-search-loading.end-marker .mini-spinner { display: none; }
-  /* while the favorites filter is on the list ends where it is: no spinner, no slot, no jump */
-  #results .fav-filter-empty { display: flex !important; align-items: center; justify-content: center; }
   .main-player-status .player-spinner { display: none !important; }
   .main-player-status:not(.is-error)::before {
     content: ''; width: 3.5rem; height: .65rem; border-radius: 999px;
@@ -912,7 +907,6 @@
   @keyframes smFade { from { opacity: 0; } to { opacity: 1; } }
   @media (prefers-reduced-motion: reduce) { #sectionMenu .sm-sheet, #sectionMenu .sm-backdrop { animation: none; } .site-actions .action { transition: none; } }
 /* ===================== Favorites ===================== */
-.app { padding-bottom: 5.5rem; }
 
 /* heart on cards */
 .fav-btn { position: absolute; top: .45rem; right: .45rem; z-index: 6; width: 2rem; height: 2rem; border-radius: 50%;
@@ -935,80 +929,63 @@
 .main-player-close.fav-player.is-fav { color: #ffd6de; border-color: #ff4d6d88; }
 .main-player-close.fav-player.is-fav svg { fill: #ff4d6d; stroke: #ff4d6d; }
 
-/* sticky bottom bar */
+
+/* ===================== Favorites filter button ===================== */
+.app { padding-bottom: 5.5rem; }
+.fav-hidden { display: none !important; }
+body.fav-filter .sentinel { display: none !important; }       /* no endless loading while only favorites are shown */
+
 #favBar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 350; display: flex; justify-content: center; pointer-events: none;
-  padding: 1.4rem .8rem max(.7rem, env(safe-area-inset-bottom));
-  background: linear-gradient(to top, rgba(10,12,16,.9), rgba(10,12,16,0)); }
-#favBar button { pointer-events: auto; display: flex; align-items: center; gap: .55rem; padding: .65rem 1.3rem; border-radius: 999px;
+  padding: 1.4rem .8rem max(.7rem, env(safe-area-inset-bottom)); background: linear-gradient(to top, rgba(10,12,16,.9), rgba(10,12,16,0)); }
+#favBar button { pointer-events: auto; display: flex; align-items: center; gap: .55rem; padding: .65rem 1.3rem; border-radius: 999px; cursor: pointer;
   border: 1px solid #3a4468; background: linear-gradient(135deg, #2a2f5a, #1b2a4d); color: #fff; font: 600 .9rem system-ui, sans-serif;
-  cursor: pointer; box-shadow: 0 10px 28px -8px rgba(0,0,0,.85); }
+  box-shadow: 0 10px 28px -8px rgba(0,0,0,.85); transition: filter .12s ease; }
 #favBar button:hover { filter: brightness(1.15); }
-  #favBar button.is-fav { color: #ffd6de; border-color: #ff4d6d88; }
-  #favBar button.is-fav svg { fill: #ff4d6d; stroke: #ff4d6d; }
-  #favFilterBanner { text-align: center; padding: 2rem 1rem; color: #7a8aaa; }
-  #favFilterBanner .empty { background: #131822; border: 1px dashed #283242; }
-  /* the favorites-only filter hides any card that is not favorited (separate class so it
-     composes with the website / General / BDSM chips and the live-search filter) */
-  .fav-filtered-out { display: none; }
-  #favBar svg { width: 1.05rem; height: 1.05rem; fill: #ff4d6d; stroke: #ff4d6d; stroke-width: 2; stroke-linejoin: round; }
+#favBar svg { width: 1.05rem; height: 1.05rem; fill: none; stroke: #ff4d6d; stroke-width: 2; stroke-linejoin: round; }
 #favBar .fav-count { min-width: 1.5rem; padding: .05rem .45rem; border-radius: 999px; background: #ff4d6d; font-size: .75rem; text-align: center; }
-body.player-open #favBar, body.fav-open #favBar { display: none; }
-body.fav-open { overflow: hidden; }
+#favBar.on button { background: linear-gradient(135deg, #ff4d6d, #c2185b); border-color: #ff8aa0; }
+#favBar.on svg { fill: #fff; stroke: #fff; }
+#favBar.on .fav-count { background: rgba(255,255,255,.28); }
+body.player-open #favBar, body.player-open #favStatus { display: none; }
 
-/* panel */
-#favPanel { position: fixed; inset: 0; z-index: 420; display: none; align-items: flex-end; justify-content: center; }
-#favPanel.open { display: flex; }
-#favPanel .fp-backdrop { position: absolute; inset: 0; background: rgba(4,8,16,.72); }
-#favPanel .fp-sheet { position: relative; width: min(1100px, 100%); height: min(88vh, 900px); display: flex; flex-direction: column;
-  background: #0d121c; border: 1px solid #252e3f; border-bottom: 0; border-radius: 18px 18px 0 0; overflow: hidden;
-  box-shadow: 0 -20px 50px -20px rgba(0,0,0,.85); }
-#favPanel .fp-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .9rem 1.1rem .6rem; }
-#favPanel .fp-title { font-size: 1.05rem; font-weight: 700; display: flex; align-items: center; gap: .5rem; }
-#favPanel .fp-title svg { width: 1.1rem; height: 1.1rem; fill: #ff4d6d; stroke: #ff4d6d; stroke-width: 2; }
-#favPanel .fp-title small { color: #8b9ab8; font-weight: 500; }
-#favPanel .fp-x { border: 1px solid #2e3749; background: #1e2432; color: #cbd5e1; border-radius: 20px; padding: .35rem .8rem; cursor: pointer; font: inherit; font-size: .8rem; }
-#favPanel .fp-tabs { display: flex; gap: .45rem; overflow-x: auto; padding: .2rem 1.1rem .6rem; scrollbar-width: none; flex: 0 0 auto; }
-#favPanel .fp-tabs::-webkit-scrollbar { display: none; }
-#favPanel .fp-tab { flex: 0 0 auto; cursor: pointer; font: inherit; font-size: .78rem; color: #b6c3dc; background: #171d28; border: 1px solid #2b3344;
-  border-radius: 999px; padding: .35rem .8rem; white-space: nowrap; }
-#favPanel .fp-tab small { opacity: .65; margin-left: .3rem; }
-#favPanel .fp-tab.active { background: #2b3556; color: #fff; border-color: #7c8af8; }
-#favPanel .fp-tools { display: flex; gap: .5rem; padding: 0 1.1rem .7rem; flex: 0 0 auto; }
-#favPanel .fp-tools input, #favPanel .fp-tools select { background: #0c0f15; border: 1px solid #232b3b; color: #e2e8f0; border-radius: 30px;
-  padding: .5rem .9rem; font: inherit; font-size: .82rem; outline: none; }
-#favPanel .fp-tools input { flex: 1; min-width: 0; }
-#favPanel .fp-tools input:focus, #favPanel .fp-tools select:focus { border-color: #4f46e5; }
-#favPanel .fp-list { flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; padding: .2rem 1.1rem 1rem; -webkit-overflow-scrolling: touch; }
-#favPanel .fp-group-h { display: flex; align-items: center; gap: .5rem; margin: 1rem 0 .55rem; font-size: .85rem; font-weight: 700; color: #cbd5e1; }
-#favPanel .fp-group-h:first-child { margin-top: .2rem; }
-#favPanel .fp-group-h small { color: #8b9ab8; font-weight: 500; }
-#favPanel .fp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: .8rem; }
-#favPanel .fp-empty { text-align: center; color: #8b9ab8; padding: 3rem 1rem; font-size: .9rem; line-height: 1.6; }
-#favPanel .fp-foot { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: flex-end; padding: .6rem 1.1rem max(.7rem, env(safe-area-inset-bottom));
-  border-top: 1px solid #1e2532; flex: 0 0 auto; }
-#favPanel .fp-foot button { cursor: pointer; font: inherit; font-size: .78rem; color: #b6c3dc; background: #171d28; border: 1px solid #2b3344; border-radius: 999px; padding: .4rem .9rem; }
-#favPanel .fp-foot button:hover { filter: brightness(1.2); }
-#favPanel .fp-foot .danger { color: #ffb4c0; border-color: #5a2b38; }
+#favStatus { position: fixed; left: 50%; bottom: 5.1rem; transform: translateX(-50%); z-index: 349; max-width: min(92vw, 520px); padding: .45rem .95rem;
+  border-radius: 999px; background: rgba(23,29,42,.96); border: 1px solid #3a4468; color: #fecdd6; font-size: .78rem; text-align: center; pointer-events: none;
+  box-shadow: 0 8px 22px -8px rgba(0,0,0,.85); }
+#favStatus[hidden] { display: none; }
 
-.fav-tile { position: relative; display: flex; flex-direction: column; background: #171d28; border: 1px solid #232b3b; border-radius: .8rem;
-  overflow: hidden; cursor: pointer; }
-.fav-tile:hover { border-color: #46526b; }
-.fav-tile .fav-thumb { position: relative; aspect-ratio: 16/9; background: #0b0e14; overflow: hidden; }
-.fav-tile.t-star .fav-thumb { aspect-ratio: 3/4; }
-.fav-tile.t-cam .fav-thumb, .fav-tile.t-channel .fav-thumb, .fav-tile.t-category .fav-thumb { aspect-ratio: 4/3; }
-.fav-tile .fav-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.fav-tile .fav-ph { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 2rem;
-  background: linear-gradient(135deg, #1b2340, #12182a); }
-.fav-tile .fav-dur { position: absolute; right: .4rem; bottom: .4rem; background: rgba(0,0,0,.78); color: #fff; font-size: .68rem; font-weight: 600; padding: .1rem .4rem; border-radius: .3rem; }
-.fav-tile .fav-info { padding: .5rem .6rem .6rem; min-width: 0; }
-.fav-tile .fav-name { font-size: .8rem; font-weight: 600; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.fav-tile .fav-sub { margin-top: .2rem; font-size: .68rem; color: #8b9ab8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* account button + sign-in dialog */
+#acctBtn { margin-left: .5rem; display: inline-flex; align-items: center; gap: .45rem; padding: .4rem .9rem; border-radius: 999px; cursor: pointer;
+  background: #1a1f2b; border: 1px solid #2b3344; color: #cdd8f0; font: inherit; font-size: .8rem; max-width: 190px; }
+#acctBtn:hover { border-color: #5b6fa8; }
+#acctBtn .a-dot { width: .5rem; height: .5rem; border-radius: 50%; background: #6b7690; flex: none; }
+#acctBtn.ok .a-dot { background: #3ddc97; }
+#acctBtn.syncing .a-dot { background: #ffc857; }
+#acctBtn.error .a-dot { background: #ff6b6b; }
+#acctBtn .a-txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#acctOv { position: fixed; inset: 0; z-index: 900; display: flex; align-items: center; justify-content: center; padding: 1rem; background: rgba(5,7,11,.78); }
+#acctOv[hidden] { display: none; }
+.acct-box { position: relative; width: min(94vw, 400px); padding: 1.5rem 1.4rem 1.3rem; border-radius: 16px; background: #131824; border: 1px solid #2b3344;
+  box-shadow: 0 24px 60px -20px rgba(0,0,0,.9); color: #e2e8f0; }
+.acct-box h3 { font-size: 1.1rem; margin-bottom: .4rem; }
+.acct-box p { font-size: .82rem; color: #9fb0d0; line-height: 1.45; margin-bottom: .9rem; }
+.acct-box input { width: 100%; padding: .7rem .8rem; border-radius: 10px; border: 1px solid #2f3a52; background: #0d111a; color: #fff; font-size: 1rem; margin-bottom: .7rem; }
+.acct-box input.code { letter-spacing: .5rem; text-align: center; font-size: 1.4rem; }
+.acct-box input:focus { outline: none; border-color: #7aa9ff; }
+.acct-box button.pri, .acct-box button.sec, .acct-box button.dng { width: 100%; padding: .65rem; border-radius: 10px; font: inherit; font-size: .9rem; cursor: pointer; margin-top: .35rem; }
+.acct-box button.pri { background: linear-gradient(135deg, #7c6cf0, #4f8cff); border: 0; color: #fff; font-weight: 600; }
+.acct-box button.sec { background: transparent; border: 1px solid #34405c; color: #cdd8f0; }
+.acct-box button.dng { background: transparent; border: 1px solid #5a2a35; color: #ff8a9b; }
+.acct-box button:disabled { opacity: .5; cursor: default; }
+.acct-x { position: absolute; top: .5rem; right: .7rem; background: none; border: 0; color: #8fa0c4; font-size: 1.5rem; cursor: pointer; line-height: 1; }
+.acct-msg { min-height: 1.1rem; font-size: .8rem; color: #ff8a9b; margin: -.2rem 0 .3rem; }
+.acct-msg.ok { color: #6fe3b0; }
+.acct-who { font-weight: 600; word-break: break-all; color: #fff; }
+#favStatus.empty { color: #cbd5e1; white-space: normal; }
 
-#favToast { position: fixed; left: 50%; bottom: 5.2rem; transform: translate(-50%, 10px); z-index: 430; max-width: 90vw; padding: .55rem 1rem;
+#favToast { position: fixed; left: 50%; bottom: 8.4rem; transform: translate(-50%, 10px); z-index: 450; max-width: 90vw; padding: .55rem 1rem;
   border-radius: 999px; background: #1e2432; border: 1px solid #3a4468; color: #fff; font-size: .8rem; opacity: 0; pointer-events: none;
   transition: opacity .18s ease, transform .18s ease; box-shadow: 0 10px 28px -8px rgba(0,0,0,.85); }
 #favToast.show { opacity: 1; transform: translate(-50%, 0); }
-body.fav-open #favToast { bottom: 1.5rem; }
 
 </style>
 <base target="_blank">
@@ -2590,9 +2567,6 @@ function observeCategorySentinel() {
         if (!entry.isIntersecting) return;
         const url = entry.target.getAttribute('data-site');
         if (!((isListTab(url) || url === NETWORKS_TAB) && url === activeTab)) return;
-        // Favorites filter is on: the network list ends at the last network that is already on the page —
-        // no more networks load on scroll. Each network's "See All" reveals the rest of its own videos.
-        if (url === NETWORKS_TAB && window.Favorites && window.Favorites.filterActive && window.Favorites.filterActive()) return;
         if (url === PORN_SITES_TAB || url === NETWORKS_TAB) loadNextStudioPage();
         else loadNextCategoriesPage();
       });
@@ -2682,8 +2656,7 @@ async function loadNextCategoriesPage() {
 
     if (!uniqueNew.length) {
       st.emptyCount = (st.emptyCount || 0) + 1;
-      loader.className = 'loading-row end-marker';
-      loader.innerHTML = `<div style="opacity:.6;">🏁 No more categories</div>`;
+      loader.innerHTML = `<div style="opacity:.6;">No more categories</div>`;
       setTimeout(() => loader.remove(), 1200);
       // Update next pointers
       if (st.nextBySource) {
@@ -3027,7 +3000,7 @@ function scheduleMixRecheck(tabKey) {
 function showMixEnd(grid) {
   if (grid.querySelector('.search-end')) return;
   const el = document.createElement('div');
-  el.className = 'loading-row search-end end-marker';
+  el.className = 'loading-row search-end';
   el.innerHTML = `<div style="opacity:.6;">🏁 End of results</div>`;
   grid.insertBefore(el, grid.querySelector('.loading-row-slot'));
 }
@@ -3775,9 +3748,7 @@ async function openCategories(forceRefresh = false, opts = {}) {
 }
 
 /** FullPorno networks / sites listing — always available as "Porn Series". */
-/** Each studio card: its own row of the same preview videos the sites page already shows for it.
-    Every network shows the SAME fixed number of preview cards; "See All" reveals the rest. */
-const STUDIO_PREVIEW_CARDS = 4;
+/** Each studio card: its own row of the same preview videos the sites page already shows for it. */
 function studioSectionHtml(section, si) {
   const rawName = section.name || 'Untitled';
   const name = escapeHtml(rawName);
@@ -3785,8 +3756,7 @@ function studioSectionHtml(section, si) {
   const countLabel = section.video_count
     ? `See All ${section.video_count}`
     : 'See All';
-  // cap the preview row so the last-added network looks exactly like the others
-  const videos = (section.videos || []).slice(0, STUDIO_PREVIEW_CARDS);
+  const videos = section.videos || [];
   const hasVideos = videos.length > 0;
 
   // Superporn-style series: no preview videos → standalone card (image / title / button stacked)
@@ -3939,18 +3909,19 @@ function applyStudioFilter() {
     if (!empty && list) {
       empty = document.createElement('div');
       empty.className = 'studio-filter-empty';
+      empty.style.cssText = 'padding:2rem;text-align:center;color:#7a8aaa;grid-column:1/-1;';
       const slot = list.querySelector('.loading-row-slot');
       list.insertBefore(empty, slot);
     }
     if (empty) {
-      empty.classList.add('show');
+      empty.style.display = '';
       const what = `${flt ? fLabel + ' ' : ''}sites${words.length ? ` matching “${q}”` : ''}`;
       empty.textContent = searchActive && !studioState.searchExhausted && !studioState.exhausted
         ? `Searching ${what}…`
         : `No ${what}.`;
     }
   } else if (empty) {
-    empty.classList.remove('show');
+    empty.style.display = 'none';
   }
   if (words.length) setStatus(`${shown} site match${shown !== 1 ? 'es' : ''} for “${q}”`, false);
   else setStatus(`${studioView().title} — ${shown}`, false);
@@ -4229,10 +4200,7 @@ async function loadNextStudioPage() {
       applyStudioFilter();
     } else {
       loader.remove();
-      if (!isNet) {
-        st.exhausted = true;
-        showStudioEnd();
-      } else if (!st.exhausted) scheduleStudioRecheck();
+      if (!isNet) st.exhausted = true; else if (!st.exhausted) scheduleStudioRecheck();
     }
   } catch (err) {
     st.retryCount = (st.retryCount || 0) + 1;
@@ -4241,7 +4209,6 @@ async function loadNextStudioPage() {
       loader.innerHTML = `<div style="color:#f87171;">Failed to load more sites</div>`;
       setTimeout(() => loader.remove(), 2000);
       st.exhausted = true;
-      showStudioEnd();
     } else {
       loader.remove();
       const backoff = Math.min(8000, 800 * Math.pow(2, st.retryCount - 1));
@@ -4252,17 +4219,6 @@ async function loadNextStudioPage() {
   } finally {
     st.loading = false;
   }
-}
-
-/** Static "End of list" marker for the studio/network feeds (no animated sweep bar). */
-function showStudioEnd() {
-  const list = results.querySelector('.studio-list');
-  if (!list || list.querySelector('.end-marker')) return;
-  const el = document.createElement('div');
-  el.className = 'loading-row end-marker';
-  el.innerHTML = `<div style="opacity:.6;">🏁 End of list</div>`;
-  const slot = list.querySelector('.loading-row-slot');
-  list.insertBefore(el, slot || null);
 }
 
 function scheduleStudioRecheck() {
@@ -7479,14 +7435,14 @@ document.addEventListener('keydown', (e) => {
   'use strict';
   const KEY = 'pa_favorites_v1';
   const TYPES = {
-    video:    { icon: '🎬', label: 'Videos' },
-    cam:      { icon: '📹', label: 'Cams' },
-    camnet:   { icon: '📡', label: 'Cam networks' },
-    channel:  { icon: '📺', label: 'Live channels' },
-    star:     { icon: '⭐', label: 'Stars' },
-    category: { icon: '🏷️', label: 'Categories' },
-    series:   { icon: '🎞️', label: 'Series & studios' },
-    network:  { icon: '🌐', label: 'Networks' },
+    video:    { icon: '🎬', label: 'Videos',           one: 'Video' },
+    cam:      { icon: '📹', label: 'Cams',             one: 'Cam' },
+    camnet:   { icon: '📡', label: 'Cam networks',     one: 'Cam network' },
+    channel:  { icon: '📺', label: 'Live channels',    one: 'Live channel' },
+    star:     { icon: '⭐', label: 'Stars',            one: 'Star' },
+    category: { icon: '🏷️', label: 'Categories',       one: 'Category' },
+    series:   { icon: '🎞️', label: 'Series & studios', one: 'Series' },
+    network:  { icon: '🌐', label: 'Networks',         one: 'Network' },
   };
   const ORDER = Object.keys(TYPES);
   const HEART = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>';
@@ -7508,20 +7464,32 @@ document.addEventListener('keydown', (e) => {
 
   // ---- store
   let db = { items: {} };
+  /* removed favorites are remembered as {id: time} ("tombstones") so a deletion can sync to other devices */
+  const TKEY = 'pa_fav_tomb_v1';
+  let tomb = {};
+  const listeners = [];
   function load() {
     try {
       const o = JSON.parse(localStorage.getItem(KEY) || 'null');
       db = o && o.items && typeof o.items === 'object' ? o : { items: {} };
     } catch (e) { db = { items: {} }; }
+    try {
+      const t = JSON.parse(localStorage.getItem(TKEY) || 'null');
+      tomb = t && typeof t === 'object' ? t : {};
+      const old = Date.now() - 90 * 864e5;
+      for (const k of Object.keys(tomb)) if (!(tomb[k] > old)) delete tomb[k];
+    } catch (e) { tomb = {}; }
   }
+  function saveTomb() { try { localStorage.setItem(TKEY, JSON.stringify(tomb)); } catch (e) {} }
   function save() {
     try { localStorage.setItem(KEY, JSON.stringify(db)); return true; }
     catch (e) { toast('Could not save favorites (browser storage is full or blocked)'); return false; }
   }
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const normLink = (u) => {
-    try { const x = new URL(u); x.hash = ''; return x.origin + x.pathname.replace(/\/+$/, '') + x.search; }
-    catch (e) { return String(u || '').split('#')[0].replace(/\/+$/, ''); }
+  /** canonical form of a link; videos ignore the ?query (like the app's own de-duplication), cams / pages keep it */
+  const normLink = (u, keepQuery = true) => {
+    try { const x = new URL(u); x.hash = ''; return x.origin + x.pathname.replace(/\/+$/, '') + (keepQuery ? x.search : ''); }
+    catch (e) { const b = String(u || '').split('#')[0]; return (keepQuery ? b : b.split('?')[0]).replace(/\/+$/, ''); }
   };
   const idOf = (type, key) => type + '|' + key;
   const has = (id) => !!db.items[id];
@@ -7530,10 +7498,12 @@ document.addEventListener('keydown', (e) => {
   function toggle(rec) {
     const id = idOf(rec.type, rec.key);
     let added;
-    if (db.items[id]) { delete db.items[id]; added = false; }
-    else { db.items[id] = { ...rec, id, ts: Date.now() }; added = true; }
+    if (db.items[id]) { delete db.items[id]; tomb[id] = Date.now(); added = false; }
+    else { db.items[id] = { ...rec, id, ts: Date.now() }; delete tomb[id]; added = true; }
     save();
+    saveTomb();
     changed();
+    listeners.forEach((f) => { try { f(id); } catch (e) {} });      // the account module syncs this
     return added;
   }
   function changed() { refreshHearts(); }
@@ -7574,7 +7544,7 @@ document.addEventListener('keydown', (e) => {
       const link = el.getAttribute('data-detail');
       if (!link) return null;
       const it = gItems().get(link) || {};
-      return { type: 'video', key: normLink(link), link, name: el.getAttribute('data-title') || 'Video',
+      return { type: 'video', key: normLink(link, false), link, name: el.getAttribute('data-title') || 'Video',
         sub: siteLabel(el) || el.getAttribute('data-host') || '', thumbs: [posterOf(el)].filter(Boolean),
         extra: { duration: it.duration || ((el.querySelector('.dur-badge') || {}).textContent || '') || null, views: it.views || null, rating: it.rating || null } };
     }
@@ -7626,6 +7596,7 @@ document.addEventListener('keydown', (e) => {
   }
 
   // ---- hearts on the page
+  const elId = new WeakMap();
   const SEL = 'a.card[data-detail], a.category-card[data-link], a.series-card[data-link], .studio-section-head, a.cam-card, .cams-chips .cam-chip, #mainPlayerMeta .tag-chip';
   function mountOf(el) {
     if (el.matches('a.cam-card')) return { host: el.querySelector('.cam-thumb'), cls: '' };
@@ -7647,6 +7618,7 @@ document.addEventListener('keydown', (e) => {
     b.tabIndex = 0;
     b.setAttribute('data-fav', '1');
     b.dataset.favId = idOf(rec.type, rec.key);
+    elId.set(el, b.dataset.favId);
     b._host = el;
     b.innerHTML = HEART;
     if (m.after && m.after.parentNode === m.host) m.after.after(b); else m.host.appendChild(b);
@@ -7662,12 +7634,11 @@ document.addEventListener('keydown', (e) => {
     document.querySelectorAll('.fav-btn[data-fav]').forEach(paint);
     syncPlayerBtn();
     updateBar();
-    if (panelOpen) renderPanel();
-    if (favFilterActive) applyFavFilter();
+    applyFilter();
   }
   function scan(root) {
     if (!root || root.nodeType !== 1) return;
-    if (root.closest && root.closest('#favPanel, #favBar')) return;
+    if (root.closest && root.closest('#favBar')) return;
     if (root.matches(SEL)) decorate(root);
     root.querySelectorAll(SEL).forEach(decorate);
   }
@@ -7714,7 +7685,7 @@ document.addEventListener('keydown', (e) => {
     let thumbs = (it._thumbs || []).slice(0, 4);
     if (!thumbs.length && it.thumbnail) thumbs = [it.thumbnail];
     if (!thumbs.length) { const s = document.getElementById('stillImg'); if (s && s.src && !/^data:/i.test(s.src)) thumbs = [s.src]; }
-    return { type, key: normLink(info.detail), link: info.detail, name: info.title || it.title || 'Video',
+    return { type, key: normLink(info.detail, type !== 'video'), link: info.detail, name: info.title || it.title || 'Video',
       sub: it._camProvider || '', thumbs, item: type === 'video' ? null : slim(it),
       extra: type === 'video' ? { duration: it.duration || null, views: it.views || null, rating: it.rating || null } : undefined };
   }
@@ -7743,295 +7714,333 @@ document.addEventListener('keydown', (e) => {
     toastTimer = setTimeout(() => toastEl.classList.remove('show'), 1800);
   }
 
-  // ---- sticky bottom bar: toggles a "favorites only" filter over the current feed.
-  // The full manage-panel is still reachable via window.Favorites.open() (e.g. from the console).
+
+  // =====================================================================================
+  //  The Favorites button: filters the whole website down to what you saved
+  // =====================================================================================
+  let filterOn = false;
+  const ITEM_SEL = 'a.card[data-detail], a.category-card[data-link], a.series-card[data-link], a.cam-card';
+  const idFor = (el) => {
+    let id = elId.get(el);
+    if (!id) { const r = describe(el); id = r ? idOf(r.type, r.key) : null; if (id) elId.set(el, id); }
+    return id;
+  };
+  const headOf = (sec) => sec.querySelector(':scope > .studio-section-head');
+  const headIsFav = (sec) => { const h = headOf(sec); const id = h && idFor(h); return !!id && has(id); };
+  /** a card counts as a favorite when it is saved itself, sits in a saved studio / network row, or is a cam on a saved cam network */
+  function isFavEl(el) {
+    const id = idFor(el);
+    if (id && has(id)) return true;
+    if (el.matches('a.cam-card:not(.chan-card)')) {
+      const it = gItems().get(el.getAttribute('data-cam-link')) || {};
+      const prov = String(it._camProvider || (el.querySelector('.cam-provider') || {}).title || '').toLowerCase();
+      if (prov && has(idOf('camnet', prov))) return true;
+    }
+    const sec = el.closest('.studio-section');
+    return !!(sec && sec !== el && headOf(sec) && headIsFav(sec));
+  }
+  function applyFilter() {
+    const items = document.querySelectorAll(ITEM_SEL);
+    items.forEach((el) => el.classList.toggle('fav-hidden', filterOn && !isFavEl(el)));
+    document.querySelectorAll('.studio-section').forEach((sec) => {        // rows (header + cards): hidden when nothing in them is a favorite
+      if (!headOf(sec)) return;
+      const any = headIsFav(sec) || [...sec.querySelectorAll(ITEM_SEL)].some((c) => !c.classList.contains('fav-hidden'));
+      sec.classList.toggle('fav-hidden', filterOn && !any);
+    });
+    updateStatus(items);
+  }
+
+  // ---- sticky bottom button + status line
   const bar = document.createElement('div');
   bar.id = 'favBar';
-  bar.innerHTML = `<button type="button" title="Show only favorites">${HEART}<span>Favorites</span><span class="fav-count">0</span></button>`;
+  bar.innerHTML = `<button type="button" aria-pressed="false" title="Show only your favorites">${HEART}<span class="fb-label">Favorites</span><span class="fav-count">0</span></button>`;
   document.body.appendChild(bar);
-  let favFilterActive = false;
+  const status = document.createElement('div');
+  status.id = 'favStatus';
+  status.setAttribute('role', 'status');
+  status.hidden = true;
+  document.body.appendChild(status);
+
   function updateBar() {
-    const btn = bar.querySelector('button');
     const n = count();
     bar.querySelector('.fav-count').textContent = String(n);
-    btn.classList.toggle('is-fav', favFilterActive);
-    btn.setAttribute('aria-pressed', String(favFilterActive));
-    btn.title = favFilterActive ? 'Show everything (clear the favorites filter)' : 'Show only favorites';
-    btn.querySelector('span').textContent = favFilterActive ? 'Showing favorites' : 'Favorites';
+    bar.querySelector('.fb-label').textContent = filterOn ? 'Favorites only' : 'Favorites';
+    bar.firstChild.setAttribute('aria-pressed', filterOn ? 'true' : 'false');
+    bar.classList.toggle('on', filterOn);
   }
-  bar.querySelector('button').addEventListener('click', () => {
-    favFilterActive = !favFilterActive;
-    updateBar();
-    if (!favFilterActive) {
-      // turning the filter off: unhide everything first, then re-apply the feed's own filters
-      results.querySelectorAll('.fav-filtered-out').forEach(c => c.classList.remove('fav-filtered-out'));
-      results.querySelectorAll('.loading-row, .loading-row-slot, .mini-spinner').forEach(el => { el.style.display = ''; });
-      const banner = results.querySelector('#favFilterBanner');
-      if (banner) banner.style.display = 'none';
-    }
-    applyFavFilter();
-    if (favFilterActive) window.scrollTo({ top: 0, behavior: 'smooth' });
-  });
-  function videoIsFav(link) {
-    if (!link) return false;
-    return has(idOf('video', normLink(link)));
-  }
-  /** Hide every favoriteable card in the current feed that is not favorited (when the filter is on). */
-  function applyFavFilter() {
-    // every heart the decorator attached: each one carries the host element it sits on (b._host)
-    const hosts = results.querySelectorAll('.fav-btn[data-fav]');
+  function updateStatus(items) {
+    status.hidden = !filterOn;
+    if (!filterOn) return;
     let shown = 0;
-    hosts.forEach(b => {
-      const ok = has(b.dataset.favId);
-      const el = b._host;
-      if (!el) return;
-      // hide the whole visual unit the heart belongs to (a section header's heart must hide its
-      // entire .studio-section + video row, not just the header)
-      const unit = el.closest('.studio-section, .series-card, .card, .category-card, .cam-card') || el;
-      unit.classList.toggle('fav-filtered-out', !ok);
-      if (ok) shown++;
-    });
-    // video cards whose heart is not yet decorated (no _host): fall back to data-detail
-    results.querySelectorAll('.card[data-detail]:not(.fav-filtered-out)').forEach(c => {
-      if (c.querySelector(':scope > .fav-btn[data-fav]')) return;   // handled above
-      const link = c.getAttribute('data-detail');
-      const ok = !link || videoIsFav(link);
-      c.classList.toggle('fav-filtered-out', !ok);
-      if (ok) shown++;
-    });
-    // the filter caps the list: never show the "loading more" spinner / slot while it is on
-    results.querySelectorAll('.loading-row, .loading-row-slot, .mini-spinner').forEach(el => {
-      if (el.closest('#favPanel, #favBar')) return;
-      el.style.display = 'none';
-    });
-    let banner = results.querySelector('#favFilterBanner');
-    if (favFilterActive && !shown) {
-      if (!banner) {
-        banner = document.createElement('div');
-        banner.id = 'favFilterBanner';
-        banner.className = 'fav-filter-empty';
-        banner.innerHTML = '<div class="empty">♥ Nothing added yet.<br>Tap the heart on any video, cam, channel, category, star, series or network to add it here, then it shows up filtered.</div>';
-        results.appendChild(banner);
-      } else {
-        banner.style.display = '';
-      }
-    } else if (banner) {
-      banner.style.display = 'none';
-    }
+    (items || document.querySelectorAll(ITEM_SEL)).forEach((el) => { if (!el.closest('.fav-hidden')) shown++; });
+    status.textContent = shown
+      ? `♥ Showing favorites only · ${shown} here`
+      : count() ? 'No favorites in this view. Try another tab, or turn the filter off.' : 'No favorites yet. Tap ♥ on anything to add it.';
+    status.classList.toggle('empty', !shown);
   }
-
-  // ---- panel
-  const panel = document.createElement('div');
-  panel.id = 'favPanel';
-  panel.setAttribute('role', 'dialog');
-  panel.setAttribute('aria-modal', 'true');
-  panel.setAttribute('aria-label', 'Favorites');
-  panel.innerHTML = `<div class="fp-backdrop"></div>
-    <div class="fp-sheet">
-      <div class="fp-head"><div class="fp-title">${HEART}<span>Favorites</span><small id="fpTotal"></small></div>
-        <button type="button" class="fp-x" id="fpClose">Close</button></div>
-      <div class="fp-tabs" id="fpTabs"></div>
-      <div class="fp-tools"><input id="fpSearch" type="search" placeholder="Search your favorites…" autocomplete="off" aria-label="Search favorites">
-        <select id="fpSort" aria-label="Sort"><option value="recent">Recently added</option><option value="name">A – Z</option></select></div>
-      <div class="fp-list" id="fpList"></div>
-      <div class="fp-foot"><button type="button" id="fpExport">⬇ Export</button><button type="button" id="fpImport">⬆ Import</button>
-        <button type="button" class="danger" id="fpClear">🗑 Clear</button>
-        <input type="file" id="fpFile" accept="application/json,.json" hidden></div>
-    </div>`;
-  document.body.appendChild(panel);
-  const $ = (id) => panel.querySelector('#' + id);
-  const ui = { tab: 'all', q: '', sort: 'recent' };
-  let panelOpen = false;
-
-  function groupsNow() {
-    const q = ui.q.trim().toLowerCase();
-    const all = Object.values(db.items);
-    const visible = all.filter((r) => !q || (r.name + ' ' + (r.sub || '')).toLowerCase().includes(q));
-    const by = {};
-    visible.forEach((r) => { (by[r.type] = by[r.type] || []).push(r); });
-    const cmp = ui.sort === 'name' ? (a, b) => a.name.localeCompare(b.name) : (a, b) => (b.ts || 0) - (a.ts || 0);
-    Object.values(by).forEach((l) => l.sort(cmp));
-    const totals = {};
-    all.forEach((r) => { totals[r.type] = (totals[r.type] || 0) + 1; });
-    return { by, totals, shown: visible.length, all: all.length };
+  function setFilter(on) {
+    if (on && !count()) { toast('No favorites yet. Tap ♥ on anything to add it'); return; }
+    filterOn = on;
+    document.body.classList.toggle('fav-filter', on);      // CSS also stops the endless-scroll loader while filtering
+    updateBar();
+    applyFilter();
+    if (on) window.scrollTo(0, 0);
   }
-  function tileHtml(r) {
-    const t = TYPES[r.type] || TYPES.video;
-    const th = (r.thumbs || []).filter(Boolean);
-    const thumb = th.length
-      ? `<img src="${esc(th[0])}" data-alts="${esc(JSON.stringify(th.slice(1)))}" referrerpolicy="no-referrer" loading="lazy" alt="">`
-      : `<div class="fav-ph">${t.icon}</div>`;
-    const dur = r.extra && r.extra.duration ? `<span class="fav-dur">${esc(r.extra.duration)}</span>` : '';
-    return `<div class="fav-tile t-${r.type}" data-open="${esc(r.id)}" role="button" tabindex="0" title="${esc(r.name)}">
-      <div class="fav-thumb">${thumb}${dur}<span class="fav-btn is-fav fav-rm" role="button" tabindex="0" data-rm="${esc(r.id)}" title="Remove from favorites">${HEART}</span></div>
-      <div class="fav-info"><div class="fav-name">${esc(r.name)}</div>${r.sub ? `<div class="fav-sub">${esc(r.sub)}</div>` : ''}</div></div>`;
-  }
-  function renderPanel() {
-    const g = groupsNow();
-    $('fpTotal').textContent = g.all ? `· ${g.all}` : '';
-    const present = ORDER.filter((k) => g.totals[k]);
-    if (ui.tab !== 'all' && !g.totals[ui.tab]) ui.tab = 'all';
-    $('fpTabs').innerHTML = `<button type="button" class="fp-tab${ui.tab === 'all' ? ' active' : ''}" data-tab="all">All<small>${g.all}</small></button>` +
-      present.map((k) => `<button type="button" class="fp-tab${ui.tab === k ? ' active' : ''}" data-tab="${k}">${TYPES[k].icon} ${TYPES[k].label}<small>${g.totals[k]}</small></button>`).join('');
-    const keys = (ui.tab === 'all' ? ORDER : [ui.tab]).filter((k) => g.by[k] && g.by[k].length);
-    let html = '';
-    if (!g.all) {
-      html = `<div class="fp-empty">♥<br>Nothing here yet.<br>Tap the heart on any video, cam, live channel, category, star, series, network or cam network<br>and it shows up here, sorted by type.</div>`;
-    } else if (!keys.length) {
-      html = `<div class="fp-empty">No favorites match “${esc(ui.q)}”.</div>`;
-    } else {
-      html = keys.map((k) => (ui.tab === 'all' ? `<div class="fp-group-h">${TYPES[k].icon} ${TYPES[k].label} <small>${g.by[k].length}</small></div>` : '') +
-        `<div class="fp-grid">${g.by[k].map(tileHtml).join('')}</div>`).join('');
-    }
-    const list = $('fpList');
-    const y = list.scrollTop;
-    list.innerHTML = html;
-    list.scrollTop = y;
-    $('fpClear').textContent = ui.tab === 'all' ? '🗑 Clear all' : `🗑 Clear ${TYPES[ui.tab].label.toLowerCase()}`;
-    $('fpClear').hidden = !g.all;
-    $('fpExport').hidden = !g.all;
-  }
-  let lastFocus = null;
-  function openPanel() {
-    lastFocus = document.activeElement;
-    panelOpen = true;
-    panel.classList.add('open');
-    document.body.classList.add('fav-open');
-    renderPanel();
-    setTimeout(() => { try { $('fpClose').focus(); } catch (e) {} }, 0);
-  }
-  function closePanel() {
-    if (!panelOpen) return;
-    panelOpen = false;
-    panel.classList.remove('open');
-    document.body.classList.remove('fav-open');
-    try { (lastFocus && lastFocus.focus ? lastFocus : bar.querySelector('button')).focus({ preventScroll: true }); } catch (e) {}
-  }
-  $('fpClose').addEventListener('click', closePanel);
-  panel.querySelector('.fp-backdrop').addEventListener('click', closePanel);
-  window.addEventListener('popstate', closePanel);
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && panelOpen) { e.stopPropagation(); closePanel(); } }, true);
-  $('fpSearch').addEventListener('input', (e) => { ui.q = e.target.value; renderPanel(); });
-  $('fpSort').addEventListener('change', (e) => { ui.sort = e.target.value; renderPanel(); });
-  $('fpTabs').addEventListener('click', (e) => { const t = e.target.closest('.fp-tab'); if (t) { ui.tab = t.dataset.tab; renderPanel(); } });
-  panel.addEventListener('error', (e) => {                 // thumbnail fallbacks: try the next known URL, then an icon
-    const im = e.target;
-    if (!im || im.tagName !== 'IMG') return;
-    let alts = []; try { alts = JSON.parse(im.dataset.alts || '[]'); } catch (x) {}
-    if (alts.length) { im.src = alts.shift(); im.dataset.alts = JSON.stringify(alts); return; }
-    const tile = im.closest('.fav-tile');
-    const rec = tile && db.items[tile.dataset.open];
-    const ph = document.createElement('div');
-    ph.className = 'fav-ph';
-    ph.textContent = (TYPES[(rec && rec.type) || 'video'] || TYPES.video).icon;
-    im.replaceWith(ph);
-  }, true);
-  $('fpList').addEventListener('click', (e) => {
-    const rm = e.target.closest('[data-rm]');
-    if (rm) { e.stopPropagation(); delete db.items[rm.dataset.rm]; save(); changed(); return; }
-    const tile = e.target.closest('[data-open]');
-    if (tile) openFav(db.items[tile.dataset.open]);
-  });
-  $('fpList').addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter' && e.key !== ' ') return;
-    const rm = e.target.closest('[data-rm]');
-    if (rm) { e.preventDefault(); delete db.items[rm.dataset.rm]; save(); changed(); return; }
-    const tile = e.target.closest('[data-open]');
-    if (tile) { e.preventDefault(); openFav(db.items[tile.dataset.open]); }
-  });
-
-  // ---- open a favorite
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  async function openCamNetwork(name) {
-    if (/^xlivetv$/i.test(name)) { const b = document.getElementById('chansBtn'); if (b) b.click(); return; }
-    const btn = document.getElementById('camsBtn');
-    if (btn) btn.click();
-    for (let i = 0; i < 50; i++) {                          // the cams list loads asynchronously: wait for the platform chip
-      await sleep(150);
-      const chip = document.querySelector('.cams-chips .cam-chip[data-prov="' + (window.CSS && CSS.escape ? CSS.escape(name) : name) + '"]');
-      if (chip) { chip.click(); return; }
-    }
-  }
-  function openFav(rec) {
-    if (!rec) return;
-    closePanel();
-    const items = gItems();
-    const playerOpen = !!document.getElementById('mainPlayer').classList.contains('active');
-    setTimeout(() => {
-      try {
-        if (rec.type === 'video') {
-          if (!items.has(rec.link)) items.set(rec.link, { link: rec.link, title: rec.name, thumbnail: (rec.thumbs || [])[0] || null, ...(rec.extra || {}) });
-          playInMainPlayer(rec.link, rec.name);
-        } else if (rec.type === 'cam' || rec.type === 'channel') {
-          if (rec.item) items.set(rec.link, rec.item);
-          playInMainPlayer(rec.link, rec.name);
-        } else if (rec.type === 'camnet') {
-          openCamNetwork(rec.name);
-        } else if (playerOpen && typeof closePlayerAndOpen === 'function') {
-          closePlayerAndOpen(rec.link, rec.name);
-        } else {
-          openMetaLink(rec.link, rec.name);               // categories, stars, series, networks, live-TV categories
-        }
-      } catch (err) { toast('Could not open that favorite'); console.error('[favorites]', err); }
-    }, 60);
-  }
-
-  // ---- export / import / clear
-  $('fpExport').addEventListener('click', () => {
-    const blob = new Blob([JSON.stringify({ app: 'porn-archives', version: 1, exported: new Date().toISOString(), items: Object.values(db.items) }, null, 2)], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'favorites-' + new Date().toISOString().slice(0, 10) + '.json';
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
-  });
-  $('fpImport').addEventListener('click', () => $('fpFile').click());
-  $('fpFile').addEventListener('change', async (e) => {
-    const f = e.target.files && e.target.files[0];
-    e.target.value = '';
-    if (!f) return;
-    try {
-      const data = JSON.parse(await f.text());
-      const list = Array.isArray(data) ? data : data.items;
-      let n = 0;
-      (list || []).forEach((r) => {
-        if (!r || !TYPES[r.type] || !r.key || !r.name) return;
-        const id = idOf(r.type, r.key);
-        if (!db.items[id]) { db.items[id] = { ...r, id, ts: r.ts || Date.now() }; n++; }
-      });
-      save();
-      changed();
-      toast(n ? `Imported ${n} favorite${n === 1 ? '' : 's'}` : 'Nothing new to import');
-    } catch (err) { toast('That file is not a favorites export'); }
-  });
-  $('fpClear').addEventListener('click', () => {
-    const only = ui.tab !== 'all' ? ui.tab : null;
-    const n = Object.values(db.items).filter((r) => !only || r.type === only).length;
-    if (!n || !confirm(`Remove ${n} favorite${n === 1 ? '' : 's'}${only ? ' from ' + TYPES[only].label : ''}? This cannot be undone.`)) return;
-    Object.keys(db.items).forEach((id) => { if (!only || db.items[id].type === only) delete db.items[id]; });
-    save();
-    changed();
-  });
+  bar.firstChild.addEventListener('click', () => setFilter(!filterOn));
 
   // ---- boot
   load();
   updateBar();
   scan(document.body);
-  applyFavFilter();
   let pending = new Set(), scheduled = false;
   new MutationObserver((muts) => {
     for (const m of muts) m.addedNodes.forEach((n) => { if (n.nodeType === 1) pending.add(n); });
     if (scheduled || !pending.size) return;
     scheduled = true;
-    requestAnimationFrame(() => { const batch = pending; pending = new Set(); scheduled = false; batch.forEach(scan); if (favFilterActive) applyFavFilter(); });
+    requestAnimationFrame(() => {
+      const batch = pending; pending = new Set(); scheduled = false;
+      batch.forEach(scan);
+      if (filterOn) applyFilter();                          // cards rendered later (new tab, scrolling) obey the filter too
+    });
   }).observe(document.body, { childList: true, subtree: true });
-  // keep the favorites-only filter applied as cards scroll in / feeds re-render
-  new MutationObserver(() => { if (favFilterActive) applyFavFilter(); }).observe(results, { childList: true, subtree: true });
   const mp = document.getElementById('mainPlayer');
   if (mp) new MutationObserver(syncPlayerBtn).observe(mp, { attributes: true, attributeFilter: ['class'], childList: true, subtree: true, characterData: true });
-  window.addEventListener('storage', (e) => { if (e.key === KEY) { load(); refreshHearts(); } });
-  window.Favorites = { open: openPanel, close: closePanel, toggle, all: () => Object.values(db.items), filterActive: () => favFilterActive };
+  window.addEventListener('storage', (e) => { if (e.key === KEY || e.key === TKEY) { load(); refreshHearts(); } });
+
+  /* ---- account sync API (used by the Account script below) ---- */
+  const syncApi = {
+    /** every id that has local state (favorite or tombstone) */
+    all: () => Object.keys(db.items).concat(Object.keys(tomb).filter((k) => !db.items[k])),
+    /** one change record: {id, ts, data} (data = null means "removed") */
+    snapshot: (id) => db.items[id] ? { id, ts: db.items[id].ts || 0, data: db.items[id] } : (tomb[id] ? { id, ts: tomb[id], data: null } : null),
+    /** apply changes from the server, newest timestamp wins; returns how many changed */
+    apply(list) {
+      let n = 0;
+      for (const c of list || []) {
+        if (!c || typeof c.id !== 'string') continue;
+        const ts = Number(c.ts) || 0;
+        const cur = db.items[c.id] ? (db.items[c.id].ts || 0) : (tomb[c.id] || 0);
+        if (ts <= cur) continue;
+        if (c.data === null) { delete db.items[c.id]; tomb[c.id] = ts; n++; }
+        else if (c.data && typeof c.data === 'object') { db.items[c.id] = { ...c.data, id: c.id, ts }; delete tomb[c.id]; n++; }
+      }
+      if (n) { save(); saveTomb(); refreshHearts(); }
+      return n;
+    },
+    /** forget everything on this device (sign out) */
+    clear() {
+      db = { items: {} }; tomb = {};
+      try { localStorage.removeItem(KEY); localStorage.removeItem(TKEY); } catch (e) {}
+      refreshHearts();
+    },
+  };
+  window.Favorites = { toggle, filter: setFilter, all: () => Object.values(db.items), count, toast, onChange: (f) => listeners.push(f), sync: syncApi };
+})();
+</script>
+<script>
+/* ===================== Account: email-code login + favorites sync across devices =====================
+   Sign in with your email (a 6-digit code, no password). Favorites then sync through the Worker (/api/auth/*, /api/sync).
+   The session token lives in localStorage ('pa_auth_v1'); favorites keep working offline and merge on the next sync. */
+(function () {
+  'use strict';
+  const F = window.Favorites;
+  if (!F || !F.sync) return;
+  const AK = 'pa_auth_v1', SK = 'pa_sync_v1';
+  const rd = (k) => { try { return JSON.parse(localStorage.getItem(k) || 'null') || {}; } catch (e) { return {}; } };
+  const wr = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  let auth = rd(AK);                         // {token, expires, user:{id,email}}
+  let st = rd(SK);                           // {uid, cursor, dirty:{id:1}}
+  if (!st.dirty) st.dirty = {};
+  const signedIn = () => !!(auth.token && auth.user && auth.expires * 1000 > Date.now());
+
+  async function api(path, body, withAuth) {
+    const h = { 'Content-Type': 'application/json' };
+    if (withAuth && auth.token) h.Authorization = 'Bearer ' + auth.token;
+    let r;
+    try { r = await fetch(path, { method: 'POST', headers: h, body: JSON.stringify(body || {}) }); }
+    catch (e) { return { ok: false, status: 0, data: { error: 'No connection. Try again.' } }; }
+    let data = {};
+    try { data = await r.json(); } catch (e) {}
+    return { ok: r.ok, status: r.status, data };
+  }
+
+  // ---------------------------------------------------------------- sync
+  let running = false, again = false, timer = null, lastSync = 0, state = 'idle';
+  function schedule(ms) { clearTimeout(timer); timer = setTimeout(sync, ms == null ? 1500 : ms); }
+  function dropAuth() { auth = {}; try { localStorage.removeItem(AK); } catch (e) {} paintBtn(); if (open) render(); }
+
+  async function sync() {
+    auth = rd(AK); st = rd(SK); if (!st.dirty) st.dirty = {};
+    if (!signedIn()) return;
+    if (running) { again = true; return; }
+    running = true; setState('syncing');
+    try {
+      for (let round = 0; round < 40; round++) {
+        const ids = Object.keys(st.dirty).slice(0, 400), sent = {}, changes = [];
+        ids.forEach((id) => { const c = F.sync.snapshot(id); if (c) { changes.push(c); sent[id] = c.ts; } else delete st.dirty[id]; });
+        const r = await api('/api/sync', { kind: 'fav', cursor: st.cursor || 0, changes }, true);
+        if (r.status === 401) { dropAuth(); F.toast('Session expired. Sign in again to keep syncing'); return; }
+        if (!r.ok) throw new Error((r.data && r.data.error) || 'sync failed');
+        F.sync.apply(r.data.changes || []);
+        st.cursor = r.data.cursor || st.cursor || 0;
+        ids.forEach((id) => { const c = F.sync.snapshot(id); if (!c || c.ts === sent[id]) delete st.dirty[id]; });
+        wr(SK, st);
+        if (!r.data.more && !Object.keys(st.dirty).length) break;
+      }
+      lastSync = Date.now(); setState('ok');
+    } catch (e) { setState('error'); }
+    finally { running = false; if (again) { again = false; schedule(500); } }
+  }
+
+  F.onChange((id) => {                       // every heart tap = one pending change
+    if (!signedIn()) return;
+    st = rd(SK); if (!st.dirty) st.dirty = {};
+    st.dirty[id] = 1; wr(SK, st);
+    schedule(1500);
+  });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && signedIn() && Date.now() - lastSync > 30000) schedule(200); });
+  window.addEventListener('online', () => schedule(500));
+  setInterval(() => { if (!document.hidden && signedIn()) schedule(0); }, 5 * 60 * 1000);
+
+  // ---------------------------------------------------------------- UI
+  const btn = document.createElement('button');
+  btn.id = 'acctBtn'; btn.type = 'button';
+  btn.innerHTML = '<span class="a-dot"></span><span class="a-txt"></span>';
+  const ov = document.createElement('div');
+  ov.id = 'acctOv'; ov.hidden = true;
+  ov.innerHTML = '<div class="acct-box" role="dialog" aria-modal="true" aria-label="Account"><button class="acct-x" type="button" aria-label="Close">&times;</button><div id="acctBody"></div></div>';
+  document.body.appendChild(ov);
+  const body = ov.querySelector('#acctBody');
+  let open = false, step = 'email', pendingEmail = '', cooldown = 0, cdTimer = null;
+
+  function setState(s) { state = s; paintBtn(); if (open && signedIn()) render(); }
+  function paintBtn() {
+    btn.className = signedIn() ? state : '';
+    btn.querySelector('.a-txt').textContent = signedIn() ? auth.user.email.split('@')[0] : 'Sign in';
+    btn.title = signedIn() ? 'Signed in as ' + auth.user.email + ' (favorites sync)' : 'Sign in to sync favorites across devices';
+  }
+  function mountBtn() {
+    const row = document.querySelector('.app > header .top-row');
+    (row || document.body).appendChild(btn);
+    paintBtn();
+  }
+  function openDlg() { open = true; step = signedIn() ? 'account' : 'email'; ov.hidden = false; render(); }
+  function closeDlg() { open = false; ov.hidden = true; }
+  ov.addEventListener('mousedown', (e) => { if (e.target === ov) closeDlg(); });
+  ov.querySelector('.acct-x').addEventListener('click', closeDlg);
+  document.addEventListener('keydown', (e) => { if (open && e.key === 'Escape') closeDlg(); });
+  btn.addEventListener('click', openDlg);
+
+  const $ = (sel) => body.querySelector(sel);
+  const msg = (t, ok) => { const m = $('.acct-msg'); if (m) { m.textContent = t || ''; m.classList.toggle('ok', !!ok); } };
+  const busy = (b, on) => { if (b) b.disabled = !!on; };
+
+  function render() {
+    if (step === 'account' && !signedIn()) step = 'email';
+    if (step === 'email') {
+      body.innerHTML = '<h3>Sign in to sync your favorites</h3><p>We email you a 6-digit code. No password needed. New here? The same code creates your account.</p>' +
+        '<input id="acEmail" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com" value="' + esc(pendingEmail) + '"><div class="acct-msg"></div>' +
+        '<button class="pri" id="acSend" type="button">Send code</button>';
+      const inp = $('#acEmail'); inp.focus();
+      const go = async () => {
+        const email = inp.value.trim();
+        if (!/^\S+@\S+\.\S+$/.test(email)) return msg('Enter a valid email address');
+        busy($('#acSend'), true); msg('');
+        const r = await api('/api/auth/request', { email });
+        busy($('#acSend'), false);
+        if (!r.ok) return msg((r.data && r.data.error) || 'Could not send the code');
+        pendingEmail = email.toLowerCase(); startCooldown((r.data && r.data.retry_after) || 45);
+        step = 'code'; render();
+      };
+      $('#acSend').addEventListener('click', go);
+      inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+    } else if (step === 'code') {
+      body.innerHTML = '<h3>Check your email</h3><p>We sent a 6-digit code to <span class="acct-who">' + esc(pendingEmail) + '</span>. It works for 10 minutes. Check spam if it does not arrive.</p>' +
+        '<input id="acCode" class="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000"><div class="acct-msg"></div>' +
+        '<button class="pri" id="acVerify" type="button">Sign in</button>' +
+        '<button class="sec" id="acResend" type="button"></button><button class="sec" id="acBack" type="button">Use another email</button>';
+      const inp = $('#acCode'); inp.focus();
+      const verify = async () => {
+        const code = inp.value.replace(/\D/g, '');
+        if (code.length !== 6) return msg('Enter the 6-digit code');
+        busy($('#acVerify'), true); msg('');
+        const r = await api('/api/auth/verify', { email: pendingEmail, code });
+        busy($('#acVerify'), false);
+        if (!r.ok) return msg((r.data && r.data.error) || 'Could not sign in');
+        signedInNow(r.data);
+      };
+      $('#acVerify').addEventListener('click', verify);
+      inp.addEventListener('input', () => { inp.value = inp.value.replace(/\D/g, '').slice(0, 6); if (inp.value.length === 6) verify(); });
+      inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') verify(); });
+      $('#acBack').addEventListener('click', () => { step = 'email'; render(); });
+      $('#acResend').addEventListener('click', async () => {
+        busy($('#acResend'), true);
+        const r = await api('/api/auth/request', { email: pendingEmail });
+        if (!r.ok) { msg((r.data && r.data.error) || 'Could not send the code'); paintResend(); return; }
+        startCooldown((r.data && r.data.retry_after) || 45); msg('New code sent', true);
+      });
+      paintResend();
+    } else {
+      const n = F.all().length;
+      const when = lastSync ? 'Synced ' + (Date.now() - lastSync < 60000 ? 'just now' : Math.round((Date.now() - lastSync) / 60000) + ' min ago') : (state === 'syncing' ? 'Syncing…' : 'Not synced yet');
+      body.innerHTML = '<h3>Your account</h3><p>Signed in as <span class="acct-who">' + esc(auth.user.email) + '</span><br>' + esc(when) + ' &middot; ' + n + ' favorite' + (n === 1 ? '' : 's') +
+        (state === 'error' ? '<br><span style="color:#ff8a9b">Last sync failed, it retries automatically.</span>' : '') + '</p><div class="acct-msg"></div>' +
+        '<button class="pri" id="acSync" type="button">Sync now</button>' +
+        '<button class="sec" id="acOut" type="button">Sign out</button>' +
+        '<button class="sec" id="acOutAll" type="button">Sign out on all devices</button>' +
+        '<button class="dng" id="acDel" type="button">Delete account and synced data</button>';
+      $('#acSync').addEventListener('click', async () => { await sync(); if (open) render(); });
+      $('#acOut').addEventListener('click', () => signOut(false));
+      $('#acOutAll').addEventListener('click', () => signOut(true));
+      $('#acDel').addEventListener('click', deleteAccount);
+    }
+  }
+  function startCooldown(s) { cooldown = s; clearInterval(cdTimer); cdTimer = setInterval(() => { cooldown--; if (cooldown <= 0) clearInterval(cdTimer); if (open && step === 'code') paintResend(); }, 1000); }
+  function paintResend() { const b = $('#acResend'); if (!b) return; b.disabled = cooldown > 0; b.textContent = cooldown > 0 ? 'Send a new code (' + cooldown + 's)' : 'Send a new code'; }
+
+  // ---------------------------------------------------------------- session changes
+  function signedInNow(res) {
+    auth = { token: res.token, expires: res.expires, user: res.user }; wr(AK, auth);
+    st = rd(SK); if (!st.dirty) st.dirty = {};
+    if (st.uid && st.uid !== res.user.id) { F.sync.clear(); st = { dirty: {}, cursor: 0 }; }   // another account used this browser before
+    st.uid = res.user.id; st.cursor = st.cursor || 0;
+    F.sync.all().forEach((id) => { st.dirty[id] = 1; });      // favorites saved before signing in are merged into the account
+    wr(SK, st);
+    step = 'account'; paintBtn(); render(); F.toast('Signed in. Syncing favorites…');
+    sync();
+  }
+  function wipeLocal() {
+    F.sync.clear(); auth = {}; st = { dirty: {}, cursor: 0 }; lastSync = 0; state = 'idle';
+    try { localStorage.removeItem(AK); localStorage.removeItem(SK); } catch (e) {}
+    paintBtn();
+  }
+  async function signOut(all) {
+    if (Object.keys(rd(SK).dirty || {}).length) await sync();            // push the last changes first
+    const left = Object.keys(rd(SK).dirty || {}).length;
+    const ask = left
+      ? left + ' recent change(s) could not be synced yet and will be lost on this device. Sign out anyway?'
+      : 'Sign out? Your favorites stay in your account; this device\'s copy is cleared.';
+    if (!confirm(ask)) return;
+    await api('/api/auth/logout', { all: !!all }, true);
+    wipeLocal(); closeDlg();
+  }
+  async function deleteAccount() {
+    const typed = prompt('This permanently deletes your account and the favorites stored in it.\nType your email address to confirm:');
+    if (typed == null) return;
+    const r = await api('/api/auth/delete', { confirm: typed.trim() }, true);
+    if (!r.ok) return msg((r.data && r.data.error) || 'Could not delete the account');
+    wipeLocal(); closeDlg(); F.toast('Account deleted');
+  }
+
+  // ---------------------------------------------------------------- boot: only show the button when the server has login configured
+  (async function boot() {
+    let enabled = false;
+    try { const r = await api('/api/auth/config', {}); enabled = !!(r.ok && r.data && r.data.enabled); } catch (e) {}
+    if (!enabled && !signedIn()) return;
+    mountBtn();
+    if (signedIn()) sync();
+  })();
 })();
 </script>
 </body>
