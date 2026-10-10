@@ -1037,9 +1037,24 @@ body.player-open #favBar, body.player-open #favStatus, body.player-open #histPan
         </div>
       </div>
       <div class="status"><span class="dot" id="dot"></span><span id="statusText">Ready</span></div>
+      <div class="status" id="acctBtn" style="display:none"><span class="a-dot"></span><span class="a-txt">Sign in</span></div>
     </div>
 
   </header>
+
+  <div id="acctOv" hidden>
+    <div class="acct-box">
+      <button class="acct-x" id="acctX" type="button">&times;</button>
+      <h3 id="acctTitle">Sign in</h3>
+      <p id="acctSub" style="display:none"></p>
+      <input id="acctUser" type="text" autocomplete="username" placeholder="Username" />
+      <input id="acctPass" type="password" autocomplete="current-password" placeholder="Password" />
+      <p class="acct-msg" id="acctMsg"></p>
+      <button class="pri" id="acctPrimary" type="button">Sign in</button>
+      <button class="sec" id="acctToggle" type="button" style="margin-top:.5rem">Create an account</button>
+      <button class="sec" id="acctLogout" type="button" style="margin-top:.5rem;display:none">Sign out</button>
+    </div>
+  </div>
 
   <div id="navActionStaging" hidden></div>
 
@@ -8035,7 +8050,7 @@ document.addEventListener('keydown', (e) => {
   const rd = (k) => { try { return JSON.parse(localStorage.getItem(k) || 'null') || {}; } catch (e) { return {}; } };
   const wr = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  let auth = rd(AK);                         // {token, expires, user:{id,email}}
+  let auth = rd(AK);                         // {token, expires, user:{id,username}}
   let st = rd(SK);                           // {uid, cursor, dirty:{id:1}}
   if (!st.dirty) st.dirty = {};
   const signedIn = () => !!(auth.token && auth.user && auth.expires * 1000 > Date.now());
@@ -8098,20 +8113,20 @@ document.addEventListener('keydown', (e) => {
   ov.innerHTML = '<div class="acct-box" role="dialog" aria-modal="true" aria-label="Account"><button class="acct-x" type="button" aria-label="Close">&times;</button><div id="acctBody"></div></div>';
   document.body.appendChild(ov);
   const body = ov.querySelector('#acctBody');
-  let open = false, step = 'email', pendingEmail = '', cooldown = 0, cdTimer = null;
+  let open = false, mode = 'login';
 
   function setState(s) { state = s; paintBtn(); if (open && signedIn()) render(); }
   function paintBtn() {
     btn.className = signedIn() ? state : '';
-    btn.querySelector('.a-txt').textContent = signedIn() ? auth.user.email.split('@')[0] : 'Sign in';
-    btn.title = signedIn() ? 'Signed in as ' + auth.user.email + ' (favorites sync)' : 'Sign in to sync favorites across devices';
+    btn.querySelector('.a-txt').textContent = signedIn() ? auth.user.username : 'Sign in';
+    btn.title = signedIn() ? 'Signed in as ' + auth.user.username + ' (favorites sync)' : 'Sign in to sync favorites across devices';
   }
   function mountBtn() {
     const row = document.querySelector('.app > header .top-row');
     (row || document.body).appendChild(btn);
     paintBtn();
   }
-  function openDlg() { open = true; step = signedIn() ? 'account' : 'email'; ov.hidden = false; render(); }
+  function openDlg() { open = true; mode = signedIn() ? 'account' : 'login'; ov.hidden = false; render(); }
   function closeDlg() { open = false; ov.hidden = true; }
   ov.addEventListener('mousedown', (e) => { if (e.target === ov) closeDlg(); });
   ov.querySelector('.acct-x').addEventListener('click', closeDlg);
@@ -8122,55 +8137,58 @@ document.addEventListener('keydown', (e) => {
   const msg = (t, ok) => { const m = $('.acct-msg'); if (m) { m.textContent = t || ''; m.classList.toggle('ok', !!ok); } };
   const busy = (b, on) => { if (b) b.disabled = !!on; };
 
-  function render() {
-    if (step === 'account' && !signedIn()) step = 'email';
-    if (step === 'email') {
-      body.innerHTML = '<h3>Sign in to sync your favorites</h3><p>We email you a 6-digit code. No password needed. New here? The same code creates your account.</p>' +
-        '<input id="acEmail" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com" value="' + esc(pendingEmail) + '"><div class="acct-msg"></div>' +
-        '<button class="pri" id="acSend" type="button">Send code</button>';
-      const inp = $('#acEmail'); inp.focus();
+function render() {
+    if (mode === 'account' && !signedIn()) mode = 'login';
+    if (mode === 'login') {
+      body.innerHTML = '<h3>Sign in to sync your favorites</h3><p>Create an account or sign in with your username and password. Your favorites sync across devices.</p>' +
+        '<input id="acUser" type="text" autocomplete="username" placeholder="Username">' +
+        '<input id="acPass" type="password" autocomplete="current-password" placeholder="Password">' +
+        '<div class="acct-msg"></div>' +
+        '<button class="pri" id="acPrimary" type="button">Sign in</button>' +
+        '<button class="sec" id="acToggle" type="button" style="margin-top:.5rem">Create an account</button>';
+      const u = $('#acUser'); u.focus();
       const go = async () => {
-        const email = inp.value.trim();
-        if (!/^\S+@\S+\.\S+$/.test(email)) return msg('Enter a valid email address');
-        busy($('#acSend'), true); msg('');
-        const r = await api('/api/auth/request', { email });
-        busy($('#acSend'), false);
-        if (!r.ok) return msg((r.data && r.data.error) || 'Could not send the code');
-        pendingEmail = email.toLowerCase(); startCooldown((r.data && r.data.retry_after) || 45);
-        step = 'code'; render();
-      };
-      $('#acSend').addEventListener('click', go);
-      inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
-    } else if (step === 'code') {
-      body.innerHTML = '<h3>Check your email</h3><p>We sent a 6-digit code to <span class="acct-who">' + esc(pendingEmail) + '</span>. It works for 10 minutes. Check spam if it does not arrive.</p>' +
-        '<input id="acCode" class="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000"><div class="acct-msg"></div>' +
-        '<button class="pri" id="acVerify" type="button">Sign in</button>' +
-        '<button class="sec" id="acResend" type="button"></button><button class="sec" id="acBack" type="button">Use another email</button>';
-      const inp = $('#acCode'); inp.focus();
-      const verify = async () => {
-        const code = inp.value.replace(/\D/g, '');
-        if (code.length !== 6) return msg('Enter the 6-digit code');
-        busy($('#acVerify'), true); msg('');
-        const r = await api('/api/auth/verify', { email: pendingEmail, code });
-        busy($('#acVerify'), false);
+        const username = u.value.trim();
+        const p = $('#acPass').value;
+        if (!username) return msg('Enter a username');
+        if (!p) return msg('Enter a password');
+        busy($('#acPrimary'), true); msg('');
+        const r = await api('/api/auth/login', { username, password: p });
+        busy($('#acPrimary'), false);
         if (!r.ok) return msg((r.data && r.data.error) || 'Could not sign in');
         signedInNow(r.data);
       };
-      $('#acVerify').addEventListener('click', verify);
-      inp.addEventListener('input', () => { inp.value = inp.value.replace(/\D/g, '').slice(0, 6); if (inp.value.length === 6) verify(); });
-      inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') verify(); });
-      $('#acBack').addEventListener('click', () => { step = 'email'; render(); });
-      $('#acResend').addEventListener('click', async () => {
-        busy($('#acResend'), true);
-        const r = await api('/api/auth/request', { email: pendingEmail });
-        if (!r.ok) { msg((r.data && r.data.error) || 'Could not send the code'); paintResend(); return; }
-        startCooldown((r.data && r.data.retry_after) || 45); msg('New code sent', true);
-      });
-      paintResend();
+      $('#acPrimary').addEventListener('click', go);
+      u.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+      $('#acPass').addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+      $('#acToggle').addEventListener('click', () => { mode = 'register'; render(); });
+    } else if (mode === 'register') {
+      body.innerHTML = '<h3>Create an account</h3><p>Your favorites will sync across devices. You can sign in later from any device.</p>' +
+        '<input id="acUser" type="text" autocomplete="username" placeholder="Username (3-32 letters, numbers, _)" autofocus>' +
+        '<input id="acPass" type="password" autocomplete="new-password" placeholder="Password (at least 6 characters)">' +
+        '<div class="acct-msg"></div>' +
+        '<button class="pri" id="acPrimary" type="button">Create account</button>' +
+        '<button class="sec" id="acToggle" type="button" style="margin-top:.5rem">Back to sign in</button>';
+      const u = $('#acUser'); u.focus();
+      const go = async () => {
+        const username = u.value.trim();
+        const p = $('#acPass').value;
+        if (username.length < 3 || username.length > 32 || !/^[a-zA-Z0-9_]+$/.test(username)) return msg('Username must be 3-32 letters, numbers or underscores');
+        if (p.length < 6) return msg('Password must be at least 6 characters');
+        busy($('#acPrimary'), true); msg('');
+        const r = await api('/api/auth/register', { username, password: p });
+        busy($('#acPrimary'), false);
+        if (!r.ok) return msg((r.data && r.data.error) || 'Could not create the account');
+        signedInNow(r.data);
+      };
+      $('#acPrimary').addEventListener('click', go);
+      u.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+      $('#acPass').addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+      $('#acToggle').addEventListener('click', () => { mode = 'login'; render(); });
     } else {
       const n = F.all().length;
       const when = lastSync ? 'Synced ' + (Date.now() - lastSync < 60000 ? 'just now' : Math.round((Date.now() - lastSync) / 60000) + ' min ago') : (state === 'syncing' ? 'Syncing…' : 'Not synced yet');
-      body.innerHTML = '<h3>Your account</h3><p>Signed in as <span class="acct-who">' + esc(auth.user.email) + '</span><br>' + esc(when) + ' &middot; ' + n + ' favorite' + (n === 1 ? '' : 's') +
+      body.innerHTML = '<h3>Your account</h3><p>Signed in as <span class="acct-who">' + esc(auth.user.username) + '</span><br>' + esc(when) + ' &middot; ' + n + ' favorite' + (n === 1 ? '' : 's') +
         (state === 'error' ? '<br><span style="color:#ff8a9b">Last sync failed, it retries automatically.</span>' : '') + '</p><div class="acct-msg"></div>' +
         '<button class="pri" id="acSync" type="button">Sync now</button>' +
         '<button class="sec" id="acOut" type="button">Sign out</button>' +
@@ -8182,8 +8200,6 @@ document.addEventListener('keydown', (e) => {
       $('#acDel').addEventListener('click', deleteAccount);
     }
   }
-  function startCooldown(s) { cooldown = s; clearInterval(cdTimer); cdTimer = setInterval(() => { cooldown--; if (cooldown <= 0) clearInterval(cdTimer); if (open && step === 'code') paintResend(); }, 1000); }
-  function paintResend() { const b = $('#acResend'); if (!b) return; b.disabled = cooldown > 0; b.textContent = cooldown > 0 ? 'Send a new code (' + cooldown + 's)' : 'Send a new code'; }
 
   // ---------------------------------------------------------------- session changes
   function signedInNow(res) {
@@ -8193,7 +8209,7 @@ document.addEventListener('keydown', (e) => {
     st.uid = res.user.id; st.cursor = st.cursor || 0;
     F.sync.all().forEach((id) => { st.dirty[id] = 1; });      // favorites saved before signing in are merged into the account
     wr(SK, st);
-    step = 'account'; paintBtn(); render(); F.toast('Signed in. Syncing favorites…');
+    mode = 'account'; paintBtn(); render(); F.toast('Signed in. Syncing favorites…');
     sync();
   }
   function wipeLocal() {
@@ -8212,7 +8228,7 @@ document.addEventListener('keydown', (e) => {
     wipeLocal(); closeDlg();
   }
   async function deleteAccount() {
-    const typed = prompt('This permanently deletes your account and the favorites stored in it.\nType your email address to confirm:');
+    const typed = prompt('This permanently deletes your account and the favorites stored in it.\nType your username to confirm:');
     if (typed == null) return;
     const r = await api('/api/auth/delete', { confirm: typed.trim() }, true);
     if (!r.ok) return msg((r.data && r.data.error) || 'Could not delete the account');

@@ -1,16 +1,11 @@
--- Accounts, login codes, sessions, synced items, rate counters (Cloudflare D1 / SQLite). Safe to run repeatedly.
+-- Accounts, sessions, synced items, rate counters (Cloudflare D1 / SQLite). Safe to run repeatedly.
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
-  email TEXT NOT NULL UNIQUE,
+  username TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
   created INTEGER NOT NULL,
-  last_login INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS login_codes (
-  email TEXT PRIMARY KEY,
-  code_hash TEXT NOT NULL,
-  expires INTEGER NOT NULL,
-  attempts INTEGER NOT NULL DEFAULT 0,
-  sent INTEGER NOT NULL
+  last_login INTEGER NOT NULL,
+  is_admin INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS sessions (
   token_hash TEXT PRIMARY KEY,

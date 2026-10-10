@@ -1,15 +1,10 @@
 export interface Env {
   CACHE: KVNamespace;
   SCRAPE_DATA: KVNamespace;
-  /** D1 database: accounts, login codes, sessions, synced favorites (optional: login is off without it) */
+  /** D1 database: accounts, sessions, synced favorites (optional: login is off without it) */
   DB?: D1Database;
-  /** Random 32+ char secret that signs login codes (wrangler secret AUTH_SECRET) */
+  /** Random 32+ char secret that signs session tokens (wrangler secret AUTH_SECRET) */
   AUTH_SECRET?: string;
-  /** Email provider: set ONE of these (secrets) plus MAIL_FROM */
-  RESEND_API_KEY?: string;
-  BREVO_API_KEY?: string;
-  /** Sender, e.g. "Archive <login@yourdomain.com>" (must be verified at the provider) */
-  MAIL_FROM?: string;
   CLOUDFLARE_API_TOKEN?: string;
   CLOUDFLARE_ACCOUNT_ID?: string;
   /** Live backend (your Flask app, e.g. behind a Cloudflare Tunnel). Asked FIRST when set; KV/native are the fallbacks. */

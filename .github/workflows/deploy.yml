@@ -117,17 +117,12 @@ jobs:
             echo "GH_DISPATCH_TOKEN not set - watchdog disabled (cams still self-refresh inside Cloudflare)"
           fi
 
-      # Login secrets (GitHub repo secrets -> Worker secrets). Needed: AUTH_SECRET + (RESEND_API_KEY or BREVO_API_KEY) + variable MAIL_FROM.
-      - name: Give the Worker its login secrets (optional)
+      # Login secrets (GitHub repo secrets -> Worker secrets). Needed: AUTH_SECRET (signs session tokens).
+      - name: Give the Worker its login secret (optional)
         env:
           AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
-          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
-          BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
         run: |
-          for n in AUTH_SECRET RESEND_API_KEY BREVO_API_KEY; do
-            v="${!n:-}"
-            if [ -n "$v" ]; then printf '%s' "$v" | wrangler secret put "$n"; else echo "$n not set"; fi
-          done
+          if [ -n "${AUTH_SECRET:-}" ]; then printf '%s' "$AUTH_SECRET" | wrangler secret put AUTH_SECRET; else echo "AUTH_SECRET not set - login stays off"; fi
 
       - name: Smoke test
         run: |

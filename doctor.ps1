@@ -23,7 +23,7 @@ $targets = @(
     @{ Path = 'src\index.ts';                 Marker = 'handleAuth' },
     @{ Path = 'wrangler.toml';                Marker = 'd1_databases' },
     @{ Path = 'index.html';                   Marker = 'acctBtn' },
-    @{ Path = 'migrations\0001_auth.sql';     Marker = 'login_codes' },
+    @{ Path = 'migrations\0001_auth.sql';     Marker = 'password_hash' },
     @{ Path = '.github\scripts\d1_id.sh';     Marker = 'D1_NAME' },
     @{ Path = '.github\workflows\deploy.yml'; Marker = 'd1_id.sh' }
 )

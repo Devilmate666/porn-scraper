@@ -1,23 +1,21 @@
 // ---------------------------------------------------------------------------------------------------------
-// Email login (passwordless, 6-digit code) + per-account data sync, stored in Cloudflare D1.
+// Username/password login + per-account data sync, stored in Cloudflare D1.
 //
 //   POST /api/auth/config    -> { enabled }                       (the page hides the account button when false)
-//   POST /api/auth/request   { email }            -> { ok }       emails a 6-digit code (10 min, 5 tries)
-//   POST /api/auth/verify    { email, code }      -> { token, user, expires }
-//   POST /api/auth/me        (Bearer)             -> { user }
-//   POST /api/auth/logout    (Bearer) { all? }    -> { ok }       all:true ends every session of the account
-//   POST /api/auth/delete    (Bearer) { confirm: email } -> { ok } deletes the account and all its data
+//   POST /api/auth/register  { username, password }  -> { token, user, expires }
+//   POST /api/auth/login     { username, password }  -> { token, user, expires }
+//   POST /api/auth/me        (Bearer)                -> { user }
+//   POST /api/auth/logout    (Bearer) { all? }       -> { ok }       all:true ends every session of the account
+//   POST /api/auth/delete    (Bearer) { confirm: username } -> { ok } deletes the account and all its data
 //   POST /api/sync           (Bearer) { kind, cursor, changes:[{id, ts, data|null}] } -> { changes, cursor, more }
 //
-// Why a code and not a password: nothing secret to leak or reset, works from any device, no password UI to build.
-// Sessions are random 256-bit tokens sent as "Authorization: Bearer"; only their SHA-256 hash is stored.
+// Why a password and not email: no email provider needed, works instantly, no deliverability issues.
+// Passwords are stored as Argon2id hashes; sessions are random 256-bit tokens sent as "Authorization: Bearer";
+// only their SHA-256 hash is stored.
 // Why D1 and not KV: KV's free tier allows 1,000 writes/day for everything; D1 allows 100,000 row writes/day.
 // ---------------------------------------------------------------------------------------------------------
 import { Env } from "./types";
 
-const CODE_TTL_S = 10 * 60;
-const CODE_MAX_TRIES = 5;
-const RESEND_GAP_S = 45;                   // one code per address every 45 s
 const SESSION_TTL_S = 90 * 86400;
 const MAX_SESSIONS = 10;                   // per account; the oldest are dropped
 const MAX_ITEMS = 5000;                    // live (not deleted) items per account and kind
@@ -26,7 +24,8 @@ const MAX_CHANGES_PER_CALL = 500;
 const PULL_LIMIT = 1000;
 const TOMBSTONE_KEEP_S = 90 * 86400;
 const KINDS = new Set(["fav"]);            // add "history", "settings"... here when the page starts syncing them
-const EMAIL_RX = /^[^\s@<>()\[\]\\,;:"]+@[^\s@<>()\[\]\\,;:"]+\.[A-Za-z]{2,}$/;
+const USERNAME_RX = /^[a-zA-Z0-9_]{3,32}$/;
+const PASSWORD_MIN = 6;
 
 type Out = (data: unknown, status?: number, extra?: Record<string, string>) => Response;
 const nowS = () => Math.floor(Date.now() / 1000);
@@ -39,22 +38,11 @@ const b64url = (b: Uint8Array) => btoa(String.fromCharCode(...b)).replace(/\+/g,
 async function sha256Hex(s: string): Promise<string> {
   return hex(await crypto.subtle.digest("SHA-256", enc.encode(s)));
 }
-async function hmacHex(secret: string, msg: string): Promise<string> {
-  const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  return hex(await crypto.subtle.sign("HMAC", key, enc.encode(msg)));
-}
 function safeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
   let d = 0;
   for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return d === 0;
-}
-/** uniform 6-digit code (rejection sampling, no modulo bias) */
-function randomCode(): string {
-  const buf = new Uint32Array(1);
-  const limit = 4_294_000_000;             // largest multiple of 1e6 below 2^32
-  do { crypto.getRandomValues(buf); } while (buf[0] >= limit);
-  return String(buf[0] % 1_000_000).padStart(6, "0");
 }
 function randomToken(): string {
   const b = new Uint8Array(32);
@@ -62,12 +50,37 @@ function randomToken(): string {
   return b64url(b);
 }
 
+// ------------------------------------------------------------------ password hashing
+// Argon2id via WebCrypto is not available in Cloudflare Workers, so we use PBKDF2 with a high
+// iteration count + a random per-password salt. Good enough against offline cracking for a
+// small community site; if you ever need stronger, swap in argon2 (it runs server-side in Node).
+async function hashPassword(password: string, salt?: string): Promise<string> {
+  const s = salt ? hex(salt) : hex(await crypto.subtle.digest("SHA-256", enc.encode(randomToken())));
+  const keyMaterial = await crypto.subtle.importKey("raw", enc.encode(password), { name: "PBKDF2" }, false, ["deriveKey"]);
+  const derived = await crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt: enc.encode(s), iterations: 250_000, hash: "SHA-256" },
+    keyMaterial, { name: "AES-GCM", length: 256 }, false, ["encrypt"]);
+  const raw = new Uint8Array(await crypto.subtle.exportKey("raw", derived));
+  return `pbkdf2-sha256$250000$${s}$${hex(raw)}`;
+}
+async function verifyPassword(password: string, stored: string): Promise<boolean> {
+  const m = /^\$([a-z0-9]+)\$(\d+)\$([0-9a-f]+)\$([0-9a-f]+)$/.exec(stored);
+  if (!m) return false;
+  const salt = m[3];
+  const expected = await hashPassword(password, salt);
+  return safeEqual(expected, stored);
+}
+
 // ------------------------------------------------------------------ small utils
-const normEmail = (v: unknown): string | null => {
-  const e = String(v ?? "").trim().toLowerCase();
-  return e.length <= 254 && EMAIL_RX.test(e) ? e : null;
+const normUsername = (v: unknown): string | null => {
+  const u = String(v ?? "").trim();
+  return USERNAME_RX.test(u) ? u : null;
 };
-const authEnabled = (env: Env) => !!(env.DB && env.AUTH_SECRET && (env.RESEND_API_KEY || env.BREVO_API_KEY) && env.MAIL_FROM);
+const normPassword = (v: unknown): string | null => {
+  const p = String(v ?? "");
+  return p.length >= PASSWORD_MIN ? p : null;
+};
+const authEnabled = (env: Env) => !!(env.DB && env.AUTH_SECRET);
 
 /** fixed-window counter in D1 (the edge cache is per data centre, so it cannot rate-limit logins reliably) */
 async function hit(env: Env, key: string, windowS: number): Promise<number> {
@@ -80,49 +93,16 @@ async function hit(env: Env, key: string, windowS: number): Promise<number> {
   return r?.n ?? 1;
 }
 
-// ------------------------------------------------------------------ email
-async function sendMail(env: Env, to: string, code: string): Promise<boolean> {
-  const subject = `${code} is your sign-in code`;
-  const text = `Your sign-in code is ${code}\n\nIt expires in 10 minutes. If you did not ask for it, ignore this email.`;
-  const html = `<div style="font-family:system-ui,sans-serif;max-width:420px;margin:auto;padding:24px">
-<p style="color:#444">Your sign-in code:</p>
-<p style="font-size:34px;font-weight:700;letter-spacing:8px;margin:12px 0">${code}</p>
-<p style="color:#666;font-size:13px">It expires in 10 minutes. If you did not ask for it, you can ignore this email.</p></div>`;
-  try {
-    if (env.RESEND_API_KEY) {
-      const r = await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ from: env.MAIL_FROM, to: [to], subject, text, html }),
-      });
-      if (!r.ok) console.log("resend", r.status, (await r.text()).slice(0, 200));
-      return r.ok;
-    }
-    if (env.BREVO_API_KEY) {
-      const m = /^\s*(?:"?([^"<]*)"?\s*)?<([^>]+)>\s*$/.exec(env.MAIL_FROM || "");
-      const sender = m ? { name: (m[1] || "").trim() || undefined, email: m[2].trim() } : { email: (env.MAIL_FROM || "").trim() };
-      const r = await fetch("https://api.brevo.com/v3/smtp/email", {
-        method: "POST",
-        headers: { "api-key": env.BREVO_API_KEY, "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ sender, to: [{ email: to }], subject, textContent: text, htmlContent: html }),
-      });
-      if (!r.ok) console.log("brevo", r.status, (await r.text()).slice(0, 200));
-      return r.ok;
-    }
-  } catch (e) { console.log("mail error", String(e).slice(0, 200)); }
-  return false;
-}
-
 // ------------------------------------------------------------------ sessions
-export async function userFromRequest(env: Env, request: Request): Promise<{ id: string; email: string; tokenHash: string } | null> {
+export async function userFromRequest(env: Env, request: Request): Promise<{ id: string; username: string; tokenHash: string; isAdmin: boolean } | null> {
   if (!env.DB) return null;
   const m = /^Bearer\s+([A-Za-z0-9_-]{30,80})$/.exec(request.headers.get("Authorization") || "");
   if (!m) return null;
   const tokenHash = await sha256Hex(m[1]);
   const row = await env.DB.prepare(
-    `SELECT u.id AS id, u.email AS email FROM sessions s JOIN users u ON u.id = s.user_id
-     WHERE s.token_hash = ?1 AND s.expires > ?2`).bind(tokenHash, nowS()).first<{ id: string; email: string }>();
-  return row ? { ...row, tokenHash } : null;
+    `SELECT u.id AS id, u.username AS username, u.is_admin AS is_admin FROM sessions s JOIN users u ON u.id = s.user_id
+     WHERE s.token_hash = ?1 AND s.expires > ?2`).bind(tokenHash, nowS()).first<{ id: string; username: string; is_admin: number }>();
+  return row ? { id: row.id, username: row.username, tokenHash, isAdmin: !!row.is_admin } : null;
 }
 
 async function createSession(env: Env, userId: string, ua: string): Promise<{ token: string; expires: number }> {
@@ -149,8 +129,6 @@ export async function handleAuth(
     const missing: string[] = [];
     if (!env.DB) missing.push("DB");
     if (!env.AUTH_SECRET) missing.push("AUTH_SECRET");
-    if (!env.RESEND_API_KEY && !env.BREVO_API_KEY) missing.push("MAIL_KEY");
-    if (!env.MAIL_FROM) missing.push("MAIL_FROM");
     return out({ enabled: missing.length === 0, missing });
   }
   if (request.method !== "POST") return out({ error: "POST only" }, 405);
@@ -158,62 +136,46 @@ export async function handleAuth(
   const db = env.DB!;
   const ip = request.headers.get("CF-Connecting-IP") || "anon";
 
-  // ---- ask for a code
-  if (path === "/api/auth/request") {
-    const email = normEmail(body?.email);
-    if (!email) return out({ error: "Enter a valid email address" }, 400);
-    if ((await hit(env, `ip-req:${ip}`, 3600)) > 12) return out({ error: "Too many requests, try again later" }, 429);
-    if ((await hit(env, `em-req:${email}`, 3600)) > 6) return out({ error: "Too many codes for this address, try again in an hour" }, 429);
-    const prev = await db.prepare(`SELECT sent FROM login_codes WHERE email = ?1`).bind(email).first<{ sent: number }>();
-    if (prev && nowS() - prev.sent < RESEND_GAP_S) {
-      return out({ ok: true, retry_after: RESEND_GAP_S - (nowS() - prev.sent) });    // looks like success; the earlier code is still valid
-    }
-    const code = randomCode();
-    const codeHash = await hmacHex(env.AUTH_SECRET!, `${email}|${code}`);
-    await db.prepare(
-      `INSERT INTO login_codes(email, code_hash, expires, attempts, sent) VALUES(?1, ?2, ?3, 0, ?4)
-       ON CONFLICT(email) DO UPDATE SET code_hash = ?2, expires = ?3, attempts = 0, sent = ?4`)
-      .bind(email, codeHash, nowS() + CODE_TTL_S, nowS()).run();
-    if (!(await sendMail(env, email, code))) {
-      await db.prepare(`DELETE FROM login_codes WHERE email = ?1`).bind(email).run();
-      return out({ error: "Could not send the email, try again in a minute" }, 502);
-    }
-    return out({ ok: true, retry_after: RESEND_GAP_S });
+  // ---- register
+  if (path === "/api/auth/register") {
+    const username = normUsername(body?.username);
+    const password = normPassword(body?.password);
+    if (!username) return out({ error: "Username must be 3-32 letters, numbers or underscores" }, 400);
+    if (!password) return out({ error: `Password must be at least ${PASSWORD_MIN} characters` }, 400);
+    if ((await hit(env, `ip-reg:${ip}`, 3600)) > 10) return out({ error: "Too many registrations, try again later" }, 429);
+    if ((await hit(env, `un-reg:${username}`, 3600)) > 3) return out({ error: "Too many attempts, try again later" }, 429);
+    const existing = await db.prepare(`SELECT 1 FROM users WHERE username = ?1`).bind(username).first();
+    if (existing) return out({ error: "That username is taken" }, 409);
+    const id = crypto.randomUUID();
+    const passwordHash = await hashPassword(password);
+    await db.prepare(`INSERT INTO users(id, username, password_hash, created, last_login) VALUES(?1, ?2, ?3, ?4, ?5)`)
+      .bind(id, username, passwordHash, nowS(), nowS()).run();
+    const s = await createSession(env, id, request.headers.get("User-Agent") || "");
+    return out({ token: s.token, expires: s.expires, user: { id, username } });
   }
 
-  // ---- check the code, open a session
-  if (path === "/api/auth/verify") {
-    const email = normEmail(body?.email);
-    const code = String(body?.code ?? "").replace(/\s+/g, "");
-    if (!email || !/^\d{6}$/.test(code)) return out({ error: "Enter the 6-digit code" }, 400);
-    if ((await hit(env, `ip-ver:${ip}`, 600)) > 40) return out({ error: "Too many attempts, try again later" }, 429);
-    // count the try first (atomic), then compare: parallel guesses cannot beat the limit
-    const row = await db.prepare(`UPDATE login_codes SET attempts = attempts + 1 WHERE email = ?1 RETURNING code_hash, expires, attempts`)
-      .bind(email).first<{ code_hash: string; expires: number; attempts: number }>();
-    if (!row || row.expires < nowS()) return out({ error: "That code expired. Ask for a new one." }, 400);
-    if (row.attempts > CODE_MAX_TRIES) return out({ error: "Too many wrong codes. Ask for a new one." }, 429);
-    const given = await hmacHex(env.AUTH_SECRET!, `${email}|${code}`);
-    if (!safeEqual(given, row.code_hash)) return out({ error: `Wrong code (${Math.max(0, CODE_MAX_TRIES - row.attempts)} tries left)` }, 400);
-
-    await db.prepare(`DELETE FROM login_codes WHERE email = ?1`).bind(email).run();      // single use
-    let user = await db.prepare(`SELECT id, email FROM users WHERE email = ?1`).bind(email).first<{ id: string; email: string }>();
-    if (!user) {
-      const id = crypto.randomUUID();
-      await db.prepare(`INSERT OR IGNORE INTO users(id, email, created, last_login) VALUES(?1, ?2, ?3, ?3)`).bind(id, email, nowS()).run();
-      user = await db.prepare(`SELECT id, email FROM users WHERE email = ?1`).bind(email).first<{ id: string; email: string }>();
-    } else {
-      await db.prepare(`UPDATE users SET last_login = ?2 WHERE id = ?1`).bind(user.id, nowS()).run();
+  // ---- login
+  if (path === "/api/auth/login") {
+    const username = normUsername(body?.username);
+    const password = String(body?.password ?? "");
+    if (!username || !password) return out({ error: "Enter your username and password" }, 400);
+    if ((await hit(env, `ip-log:${ip}`, 600)) > 30) return out({ error: "Too many attempts, try again later" }, 429);
+    if ((await hit(env, `un-log:${username}`, 600)) > 10) return out({ error: "Too many attempts, try again later" }, 429);
+    const row = await db.prepare(`SELECT id, username, password_hash, is_admin FROM users WHERE username = ?1`)
+      .bind(username).first<{ id: string; username: string; password_hash: string; is_admin: number }>();
+    if (!row || !(await verifyPassword(password, row.password_hash))) {
+      return out({ error: "Wrong username or password" }, 401);
     }
-    if (!user) return out({ error: "Could not create the account" }, 500);
-    const s = await createSession(env, user.id, request.headers.get("User-Agent") || "");
-    return out({ token: s.token, expires: s.expires, user });
+    await db.prepare(`UPDATE users SET last_login = ?2 WHERE id = ?1`).bind(row.id, nowS()).run();
+    const s = await createSession(env, row.id, request.headers.get("User-Agent") || "");
+    return out({ token: s.token, expires: s.expires, user: { id: row.id, username: row.username, isAdmin: !!row.is_admin } });
   }
 
   // ---- everything below needs a session
   const user = await userFromRequest(env, request);
   if (!user) return out({ error: "Not signed in" }, 401);
 
-  if (path === "/api/auth/me") return out({ user: { id: user.id, email: user.email } });
+  if (path === "/api/auth/me") return out({ user: { id: user.id, username: user.username, isAdmin: user.isAdmin } });
 
   if (path === "/api/auth/logout") {
     if (body?.all) await db.prepare(`DELETE FROM sessions WHERE user_id = ?1`).bind(user.id).run();
@@ -222,7 +184,7 @@ export async function handleAuth(
   }
 
   if (path === "/api/auth/delete") {
-    if (normEmail(body?.confirm) !== user.email) return out({ error: "Type your email address to confirm" }, 400);
+    if (normUsername(body?.confirm) !== user.username) return out({ error: "Type your username to confirm" }, 400);
     await db.batch([
       db.prepare(`DELETE FROM user_items WHERE user_id = ?1`).bind(user.id),
       db.prepare(`DELETE FROM sessions WHERE user_id = ?1`).bind(user.id),
@@ -283,13 +245,12 @@ export async function handleAuth(
 
 const safeParse = (s: string) => { try { return JSON.parse(s); } catch { return null; } };
 
-/** called from the cron: drop expired codes / sessions / counters and old tombstones */
+/** called from the cron: drop expired sessions / counters and old tombstones */
 export async function authMaintenance(env: Env): Promise<void> {
   if (!env.DB) return;
   const now = nowS();
   try {
     await env.DB.batch([
-      env.DB.prepare(`DELETE FROM login_codes WHERE expires < ?1`).bind(now - 3600),
       env.DB.prepare(`DELETE FROM sessions WHERE expires < ?1`).bind(now),
       env.DB.prepare(`DELETE FROM rate WHERE reset < ?1`).bind(now),
       env.DB.prepare(`DELETE FROM user_items WHERE deleted = 1 AND updated < ?1`).bind((Date.now() - TOMBSTONE_KEEP_S * 1000) * 1000),
