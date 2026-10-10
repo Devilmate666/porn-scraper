@@ -57,11 +57,13 @@ function randomToken(): string {
 const PBKDF2_ITERS = 100_000;
 async function hashPassword(password: string, salt?: string): Promise<string> {
   const s = salt ? hex(salt) : hex(await crypto.subtle.digest("SHA-256", enc.encode(randomToken())));
-  const keyMaterial = await crypto.subtle.importKey("raw", enc.encode(password), { name: "PBKDF2" }, false, ["deriveKey"]);
-  const derived = await crypto.subtle.deriveKey(
+  const keyMaterial = await crypto.subtle.importKey("raw", enc.encode(password), { name: "PBKDF2" }, false, ["deriveBits"]);
+  // deriveBits gives the raw bytes directly - no AES-GCM key object to wrap/extract, which avoids
+  // the "non-extractable key" / "invalid usage extractable" errors that deriveKey+exportKey hit on Workers.
+  const bits = await crypto.subtle.deriveBits(
     { name: "PBKDF2", salt: enc.encode(s), iterations: PBKDF2_ITERS, hash: "SHA-256" },
-    keyMaterial, { name: "AES-GCM", length: 256 }, true, ["extractable"]);
-  const raw = new Uint8Array(await crypto.subtle.exportKey("raw", derived));
+    keyMaterial, 256);
+  const raw = new Uint8Array(bits);
   return `pbkdf2-sha256$${PBKDF2_ITERS}$${s}$${hex(raw)}`;
 }
 async function verifyPassword(password: string, stored: string): Promise<boolean> {
