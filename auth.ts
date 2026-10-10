@@ -60,7 +60,7 @@ async function hashPassword(password: string, salt?: string): Promise<string> {
   const keyMaterial = await crypto.subtle.importKey("raw", enc.encode(password), { name: "PBKDF2" }, false, ["deriveKey"]);
   const derived = await crypto.subtle.deriveKey(
     { name: "PBKDF2", salt: enc.encode(s), iterations: PBKDF2_ITERS, hash: "SHA-256" },
-    keyMaterial, { name: "AES-GCM", length: 256 }, false, ["encrypt"]);
+    keyMaterial, { name: "AES-GCM", length: 256 }, true, ["extractable"]);
   const raw = new Uint8Array(await crypto.subtle.exportKey("raw", derived));
   return `pbkdf2-sha256$${PBKDF2_ITERS}$${s}$${hex(raw)}`;
 }
