@@ -18,11 +18,11 @@ binding = "SCRAPE_DATA"
 id = "your-scrape-data-kv-id"
 preview_id = "your-preview-scrape-data-kv-id"
 
-# accounts + synced favorites (database id is injected by the deploy workflow, see .github/scripts/d1_id.sh)
+# accounts + synced favorites (real id from `wrangler d1 list`; the deploy workflow also injects it)
 [[d1_databases]]
 binding = "DB"
 database_name = "porn-archive-db"
-database_id = "your-d1-database-id"
+database_id = "c8316e03-c6a6-4e7e-a81f-82de6d9bc75a"
 
 [observability]
 enabled = true

@@ -51,17 +51,18 @@ function randomToken(): string {
 }
 
 // ------------------------------------------------------------------ password hashing
-// Argon2id via WebCrypto is not available in Cloudflare Workers, so we use PBKDF2 with a high
-// iteration count + a random per-password salt. Good enough against offline cracking for a
-// small community site; if you ever need stronger, swap in argon2 (it runs server-side in Node).
+// PBKDF2-SHA256 via WebCrypto. Cloudflare Workers cap PBKDF2 at 100,000 iterations (browsers allow more,
+// so 250k works locally but throws "iteration counts above 100000 are not supported" on the Worker).
+// 100k + a random per-password salt is strong enough for a small community site.
+const PBKDF2_ITERS = 100_000;
 async function hashPassword(password: string, salt?: string): Promise<string> {
   const s = salt ? hex(salt) : hex(await crypto.subtle.digest("SHA-256", enc.encode(randomToken())));
   const keyMaterial = await crypto.subtle.importKey("raw", enc.encode(password), { name: "PBKDF2" }, false, ["deriveKey"]);
   const derived = await crypto.subtle.deriveKey(
-    { name: "PBKDF2", salt: enc.encode(s), iterations: 250_000, hash: "SHA-256" },
+    { name: "PBKDF2", salt: enc.encode(s), iterations: PBKDF2_ITERS, hash: "SHA-256" },
     keyMaterial, { name: "AES-GCM", length: 256 }, false, ["encrypt"]);
   const raw = new Uint8Array(await crypto.subtle.exportKey("raw", derived));
-  return `pbkdf2-sha256$250000$${s}$${hex(raw)}`;
+  return `pbkdf2-sha256$${PBKDF2_ITERS}$${s}$${hex(raw)}`;
 }
 async function verifyPassword(password: string, stored: string): Promise<boolean> {
   const m = /^\$([a-z0-9]+)\$(\d+)\$([0-9a-f]+)\$([0-9a-f]+)$/.exec(stored);

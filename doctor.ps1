@@ -24,7 +24,7 @@ $targets = @(
     @{ Path = 'wrangler.toml';                Marker = 'd1_databases' },
     @{ Path = 'index.html';                   Marker = 'acctBtn' },
     @{ Path = 'migrations\0001_auth.sql';     Marker = 'password_hash' },
-    @{ Path = 'migrations\0002_alter_users.sql'; Marker = 'ALTER TABLE users ADD COLUMN username' },
+    @{ Path = 'migrations\0002_alter_users.sql'; Marker = 'already_migrated' },
     @{ Path = 'migrations\0003_clear_rate.sql';    Marker = 'DELETE FROM rate' },
     @{ Path = '.github\scripts\d1_id.sh';     Marker = 'D1_NAME' },
     @{ Path = '.github\workflows\deploy.yml'; Marker = 'd1_id.sh' }
