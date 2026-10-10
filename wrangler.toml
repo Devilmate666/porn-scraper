@@ -9,6 +9,9 @@ CACHE_TTL = "3600"
 LEMONCAMS_PROXY = "https://r.jina.ai/http://"
 # the account with this username (register it yourself, right after deploying) can open /admin.html
 ADMIN_USERNAME = "HISHAM"
+# one account per network: how many sign-ups one network may make per window (0 = unlimited)
+SIGNUP_MAX_PER_IP = "1"
+SIGNUP_WINDOW_DAYS = "30"
 
 [[kv_namespaces]]
 binding = "CACHE"

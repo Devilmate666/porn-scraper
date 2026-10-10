@@ -8,6 +8,7 @@ import { fetchLiveCams, fetchLemoncamsFilters } from "../cams";
 import { fetchChannelsNative } from "../channels";
 import { handleAuth, isAuthPath, authMaintenance } from "../auth";
 import { handleAdmin, isAdminPath } from "../admin";
+import { signupBlocked, signupRecord, signupMaintenance } from "../signup";
 
 // ---------------------------------------------------------------------------------------------------------
 // API Worker - built so the site keeps working even when GitHub, a cam platform or your PC is down.
@@ -236,6 +237,7 @@ export default {
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(maintenance(env).catch(() => undefined));
     ctx.waitUntil(authMaintenance(env));
+    ctx.waitUntil(signupMaintenance(env));
   },
 
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -261,8 +263,15 @@ export default {
       let b: any = {};
       try { b = request.method === "POST" ? JSON.parse((await request.text()) || "{}") : {}; } catch { /* bad json = empty body */ }
       try {
-        return await handleAuth(env, request, url.pathname, b, (data, status = 200, extra = {}) =>
+        const isReg = url.pathname === "/api/auth/register";
+        if (isReg) {                                   // one account per network (signup.ts)
+          const why = await signupBlocked(env, request, b);
+          if (why) return json({ error: why }, 403, { ...headers, "Cache-Control": "no-store" });
+        }
+        const res = await handleAuth(env, request, url.pathname, b, (data, status = 200, extra = {}) =>
           json(data, status, { ...headers, "Cache-Control": "no-store", ...extra }));
+        if (isReg && res.status < 300) ctx.waitUntil(signupRecord(env, request, b));
+        return res;
       } catch (e) {
         const msg = String(e).slice(0, 300);
         console.log("auth error", msg);

@@ -959,14 +959,11 @@ body.player-open #favBar, body.player-open #favStatus, body.player-open #histPan
 #favStatus[hidden] { display: none; }
 
 /* account button + sign-in dialog */
-#acctBtn { margin-left: .5rem; display: inline-flex; align-items: center; gap: .45rem; padding: .4rem .9rem; border-radius: 999px; cursor: pointer;
-  background: #1a1f2b; border: 1px solid #2b3344; color: #cdd8f0; font: inherit; font-size: .8rem; max-width: 190px; }
-#acctBtn:hover { border-color: #5b6fa8; }
 #acctBtn .a-dot { width: .5rem; height: .5rem; border-radius: 50%; background: #6b7690; flex: none; }
 #acctBtn.ok .a-dot { background: #3ddc97; }
 #acctBtn.syncing .a-dot { background: #ffc857; }
 #acctBtn.error .a-dot { background: #ff6b6b; }
-#acctBtn .a-txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#acctBtn .a-txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 8rem; }
 #acctOv { position: fixed; inset: 0; z-index: 900; display: flex; align-items: center; justify-content: center; padding: 1rem; background: rgba(5,7,11,.78); }
 #acctOv[hidden] { display: none; }
 .acct-box { position: relative; width: min(94vw, 400px); padding: 1.5rem 1.4rem 1.3rem; border-radius: 16px; background: #131824; border: 1px solid #2b3344;
@@ -8052,6 +8049,8 @@ document.addEventListener('keydown', (e) => {
   }
 
   // ---------------------------------------------------------------- sync
+  const MADE = 'pa_has_account_v1';          // set when this browser has signed up / signed in once
+  const hasAccount = () => { try { return localStorage.getItem(MADE) === '1'; } catch (e) { return false; } };
   let running = false, again = false, timer = null, lastSync = 0, state = 'idle', isAdmin = false;
   function schedule(ms) { clearTimeout(timer); timer = setTimeout(sync, ms == null ? 1500 : ms); }
   function dropAuth() { auth = {}; isAdmin = false; try { localStorage.removeItem(AK); } catch (e) {} paintBtn(); if (open) render(); }
@@ -8091,7 +8090,7 @@ document.addEventListener('keydown', (e) => {
 
   // ---------------------------------------------------------------- UI
   const btn = document.createElement('button');
-  btn.id = 'acctBtn'; btn.type = 'button';
+  btn.id = 'acctBtn'; btn.type = 'button'; btn.className = 'action';
   btn.innerHTML = '<span class="a-dot"></span><span class="a-txt"></span>';
   const ov = document.createElement('div');
   ov.id = 'acctOv'; ov.hidden = true;
@@ -8102,12 +8101,13 @@ document.addEventListener('keydown', (e) => {
 
   function setState(s) { state = s; paintBtn(); if (open && signedIn()) render(); }
   function paintBtn() {
-    btn.className = signedIn() ? state : '';
+    btn.classList.remove('ok', 'syncing', 'error');
+    if (signedIn() && state !== 'idle') btn.classList.add(state);
     btn.querySelector('.a-txt').textContent = signedIn() ? auth.user.username : 'Sign in';
     btn.title = signedIn() ? 'Signed in as ' + auth.user.username + ' (favorites sync)' : 'Sign in to sync favorites across devices';
   }
   function mountBtn() {
-    const row = document.querySelector('.app > header .top-row');
+    const row = document.querySelector('#favBar .fb-row');      // next to Favorites and History
     (row || document.body).appendChild(btn);
     paintBtn();
   }
@@ -8124,13 +8124,14 @@ document.addEventListener('keydown', (e) => {
 
 function render() {
     if (mode === 'account' && !signedIn()) mode = 'login';
+    if (mode === 'register' && hasAccount()) mode = 'login';
     if (mode === 'login') {
-      body.innerHTML = '<h3>Sign in to sync your favorites</h3><p>Create an account or sign in with your username and password. Your favorites sync across devices.</p>' +
+      body.innerHTML = '<h3>Sign in to sync your favorites</h3><p>' + (hasAccount() ? 'Sign in with your username and password.' : 'Create an account or sign in with your username and password.') + ' Your favorites sync across devices.</p>' +
         '<input id="acUser" type="text" autocomplete="username" placeholder="Username">' +
         '<input id="acPass" type="password" autocomplete="current-password" placeholder="Password">' +
         '<div class="acct-msg"></div>' +
         '<button class="pri" id="acPrimary" type="button">Sign in</button>' +
-        '<button class="sec" id="acToggle" type="button" style="margin-top:.5rem">Create an account</button>';
+        (hasAccount() ? '' : '<button class="sec" id="acToggle" type="button" style="margin-top:.5rem">Create an account</button>');
       const u = $('#acUser'); u.focus();
       const go = async () => {
         const username = u.value.trim();
@@ -8146,7 +8147,7 @@ function render() {
       $('#acPrimary').addEventListener('click', go);
       u.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
       $('#acPass').addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
-      $('#acToggle').addEventListener('click', () => { mode = 'register'; render(); });
+      if ($('#acToggle')) $('#acToggle').addEventListener('click', () => { mode = 'register'; render(); });
     } else if (mode === 'register') {
       body.innerHTML = '<h3>Create an account</h3><p>Your favorites will sync across devices. You can sign in later from any device.</p>' +
         '<input id="acUser" type="text" autocomplete="username" placeholder="Username (3-32 letters, numbers, _)" autofocus>' +
@@ -8175,12 +8176,10 @@ function render() {
       const when = lastSync ? 'Synced ' + (Date.now() - lastSync < 60000 ? 'just now' : Math.round((Date.now() - lastSync) / 60000) + ' min ago') : (state === 'syncing' ? 'Syncing…' : 'Not synced yet');
       body.innerHTML = '<h3>Your account</h3><p>Signed in as <span class="acct-who">' + esc(auth.user.username) + '</span><br>' + esc(when) + ' &middot; ' + n + ' favorite' + (n === 1 ? '' : 's') +
         (state === 'error' ? '<br><span style="color:#ff8a9b">Last sync failed, it retries automatically.</span>' : '') + '</p><div class="acct-msg"></div>' +
-        '<button class="pri" id="acSync" type="button">Sync now</button>' +
         '<button class="sec" id="acOut" type="button">Sign out</button>' +
         '<button class="sec" id="acOutAll" type="button">Sign out on all devices</button>' +
         (isAdmin ? '<button class="sec" id="acAdmin" type="button" style="border-color:#ffc857;color:#ffc857">Admin panel</button>' : '') +
         '<button class="dng" id="acDel" type="button">Delete account and synced data</button>';
-      $('#acSync').addEventListener('click', async () => { await sync(); if (open) render(); });
       $('#acOut').addEventListener('click', () => signOut(false));
       $('#acOutAll').addEventListener('click', () => signOut(true));
       $('#acDel').addEventListener('click', deleteAccount);
@@ -8199,6 +8198,7 @@ function render() {
   // ---------------------------------------------------------------- session changes
   function signedInNow(res) {
     auth = { token: res.token, expires: res.expires, user: res.user }; wr(AK, auth);
+    try { localStorage.setItem(MADE, '1'); } catch (e) {}
     st = rd(SK); if (!st.dirty) st.dirty = {};
     if (st.uid && st.uid !== res.user.id) { F.sync.clear(); st = { dirty: {}, cursor: 0 }; }   // another account used this browser before
     st.uid = res.user.id; st.cursor = st.cursor || 0;
@@ -8227,7 +8227,7 @@ function render() {
     if (typed == null) return;
     const r = await api('/api/auth/delete', { confirm: typed.trim() }, true);
     if (!r.ok) return msg((r.data && r.data.error) || 'Could not delete the account');
-    wipeLocal(); closeDlg(); F.toast('Account deleted');
+    wipeLocal(); try { localStorage.removeItem(MADE); } catch (e) {} closeDlg(); F.toast('Account deleted');
   }
 
   // ---------------------------------------------------------------- boot: only show the button when the server has login configured

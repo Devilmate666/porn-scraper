@@ -7,6 +7,9 @@ export interface Env {
   AUTH_SECRET?: string;
   /** Username of the admin account (a normal account that registered with this name); see admin.ts */
   ADMIN_USERNAME?: string;
+  /** Registrations allowed per network per window (default "1", "0" = unlimited) and the window in days (default "30"); see signup.ts */
+  SIGNUP_MAX_PER_IP?: string;
+  SIGNUP_WINDOW_DAYS?: string;
   CLOUDFLARE_API_TOKEN?: string;
   CLOUDFLARE_ACCOUNT_ID?: string;
   /** Live backend (your Flask app, e.g. behind a Cloudflare Tunnel). Asked FIRST when set; KV/native are the fallbacks. */

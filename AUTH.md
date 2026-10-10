@@ -72,3 +72,10 @@ How it is protected:
 * The page builds everything with `textContent` (a user cannot inject script through a favorite title) and has a Content-Security-Policy that only allows talking to your API. It is sent with `X-Frame-Options: DENY`, `Cache-Control: no-store`, `noindex`.
 * Admin requests are rate limited per IP.
 * Be aware that you can read users' favorites: mention it in your privacy notice.
+
+
+## One account per person
+* **In the browser:** once a browser has signed up or signed in, the "Create an account" button is gone for good, also after signing out (only "Sign in" remains). Deleting your own account brings it back.
+* **On the server:** each network (IP address) may create `SIGNUP_MAX_PER_IP` accounts per `SIGNUP_WINDOW_DAYS` (default 1 per 30 days, set in `wrangler.toml`; `0` = unlimited). Only a keyed hash of the IP is stored, and rows are deleted after the window. The admin username is exempt.
+* This is the best a website can do without verifying real identities: someone on another network (mobile data, VPN) can still register again, and people who share one network (family, school) share the limit. If real users get blocked, raise `SIGNUP_MAX_PER_IP`.
+* Needs `migrations/0005_signups.sql` (the deploy runs it). Before it has run, nobody is blocked.

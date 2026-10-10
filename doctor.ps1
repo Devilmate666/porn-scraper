@@ -27,6 +27,8 @@ $targets = @(
     @{ Path = 'migrations\0002_alter_users.sql'; Marker = 'already_migrated' },
     @{ Path = 'migrations\0003_clear_rate.sql';    Marker = 'DELETE FROM rate' },
     @{ Path = 'admin.ts';                     Marker = 'handleAdmin' },
+    @{ Path = 'signup.ts';                    Marker = 'signupBlocked' },
+    @{ Path = 'migrations\0005_signups.sql';  Marker = 'signups' },
     @{ Path = 'admin.html';                   Marker = 'Admin panel' },
     @{ Path = 'migrations\0004_admin.sql';    Marker = 'admin_log' },
     @{ Path = '.github\scripts\d1_id.sh';     Marker = 'D1_NAME' },

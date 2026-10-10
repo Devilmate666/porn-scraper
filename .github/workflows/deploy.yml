@@ -77,6 +77,9 @@ jobs:
             # 0004 = admin audit log (admin panel)
             wrangler d1 execute porn-archive-db --remote --file=migrations/0004_admin.sql \
               || echo "::warning::D1 migration 0004 failed"
+            # 0005 = one account per network (sign-up limit)
+            wrangler d1 execute porn-archive-db --remote --file=migrations/0005_signups.sql \
+              || echo "::warning::D1 migration 0005 failed"
           else
             # no database: remove the binding so the deploy still succeeds (login stays off)
             sed -i '/^\[\[d1_databases\]\]/,/^database_id/d' wrangler.toml
