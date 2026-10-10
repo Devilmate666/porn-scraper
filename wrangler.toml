@@ -7,6 +7,8 @@ compatibility_flags = ["nodejs_compat"]
 ENVIRONMENT = "production"
 CACHE_TTL = "3600"
 LEMONCAMS_PROXY = "https://r.jina.ai/http://"
+# the account with this username (register it yourself, right after deploying) can open /admin.html
+ADMIN_USERNAME = "HISHAM"
 
 [[kv_namespaces]]
 binding = "CACHE"

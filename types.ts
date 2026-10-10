@@ -5,6 +5,8 @@ export interface Env {
   DB?: D1Database;
   /** Random 32+ char secret that signs session tokens (wrangler secret AUTH_SECRET) */
   AUTH_SECRET?: string;
+  /** Username of the admin account (a normal account that registered with this name); see admin.ts */
+  ADMIN_USERNAME?: string;
   CLOUDFLARE_API_TOKEN?: string;
   CLOUDFLARE_ACCOUNT_ID?: string;
   /** Live backend (your Flask app, e.g. behind a Cloudflare Tunnel). Asked FIRST when set; KV/native are the fallbacks. */

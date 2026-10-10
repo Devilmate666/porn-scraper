@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<!-- user-controlled text (favorite titles...) is only ever inserted with textContent. This policy is a second lock:
+     the page can talk to the API only, load no images/scripts/frames from anywhere else. __API_BASE__ is replaced by the deploy. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src __API_BASE__; img-src data:; base-uri 'none'; form-action 'none'">
+<title>Admin</title>
+<style>
+:root { --bg:#0d1117; --panel:#151b26; --line:#263042; --txt:#e2e8f0; --mut:#8b9bb8; --acc:#7aa9ff; --ok:#3ddc97; --bad:#ff6b7d; --warn:#ffc857; }
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--txt); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+.wrap { max-width: 1100px; margin: 0 auto; padding: 16px; }
+h1 { font-size: 1.2rem; margin: 0; }
+h2 { font-size: 1rem; margin: 0 0 .6rem; }
+.top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.top .sp { flex: 1; }
+.mut { color: var(--mut); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 14px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.stat { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+.stat b { display: block; font-size: 1.4rem; }
+.stat span { color: var(--mut); font-size: .75rem; }
+button, input, select { font: inherit; color: var(--txt); }
+input, select { background: #0b0f16; border: 1px solid var(--line); border-radius: 8px; padding: .5rem .65rem; }
+input:focus, select:focus { outline: none; border-color: var(--acc); }
+button { background: #1c2434; border: 1px solid var(--line); border-radius: 8px; padding: .45rem .8rem; cursor: pointer; }
+button:hover { border-color: var(--acc); }
+button.pri { background: linear-gradient(135deg, #7c6cf0, #4f8cff); border: 0; font-weight: 600; }
+button.dng { border-color: #5a2a35; color: var(--bad); }
+button:disabled { opacity: .5; cursor: default; }
+.tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+.tabs button.on { border-color: var(--acc); color: var(--acc); }
+.bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; align-items: center; }
+.bar input[type=search] { flex: 1; min-width: 160px; }
+.tw { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: .5rem .6rem; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { color: var(--mut); font-weight: 500; font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; }
+tr.row { cursor: pointer; }
+tr.row:hover td, tr.sel td { background: #1a2335; }
+.badge { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: .7rem; border: 1px solid var(--line); color: var(--mut); }
+.badge.adm { border-color: var(--warn); color: var(--warn); }
+.badge.ok { border-color: var(--ok); color: var(--ok); }
+.pager { display: flex; gap: 8px; align-items: center; justify-content: flex-end; margin-top: 10px; }
+.msg { min-height: 1.2rem; font-size: .85rem; color: var(--bad); }
+.msg.ok { color: var(--ok); }
+.fav { padding: .45rem 0; border-bottom: 1px solid var(--line); word-break: break-word; }
+.fav a { color: var(--acc); text-decoration: none; }
+.fav small { color: var(--mut); display: block; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
+.login { max-width: 340px; margin: 12vh auto; }
+.login input { width: 100%; margin-bottom: 10px; }
+</style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script>
+(function () {
+  'use strict';
+  const API_BASE = '__API_BASE__';
+  const AK = 'pa_auth_v1';                      // same key the main site uses: signing in there signs you in here
+  const app = document.getElementById('app');
+
+  // ------------------------------------------------------------ helpers
+  const rd = () => { try { return JSON.parse(localStorage.getItem(AK) || 'null') || {}; } catch (e) { return {}; } };
+  let auth = rd();
+  const signedIn = () => !!(auth.token && auth.user && auth.expires * 1000 > Date.now());
+  function el(tag, props) {
+    const e = document.createElement(tag);
+    if (props) for (const k in props) {
+      const v = props[k];
+      if (k === 'class') e.className = v;
+      else if (k === 'text') e.textContent = v;
+      else if (k.slice(0, 2) === 'on') e.addEventListener(k.slice(2), v);
+      else if (v !== false && v != null) e.setAttribute(k, v);
+    }
+    for (let i = 2; i < arguments.length; i++) {
+      [].concat(arguments[i]).forEach((c) => {
+        if (c == null || c === false) return;
+        e.appendChild(typeof c === 'object' ? c : document.createTextNode(String(c)));
+      });
+    }
+    return e;
+  }
+  const clear = (n) => { while (n.firstChild) n.removeChild(n.firstChild); };
+  const tms = (t) => (t > 1e12 ? t : t * 1000);
+  const fmt = (t) => (t ? new Date(tms(t)).toLocaleString() : '-');
+  const ago = (t) => {
+    if (!t) return 'never';
+    const s = Math.max(0, (Date.now() - tms(t)) / 1000);
+    if (s < 90) return 'just now';
+    if (s < 5400) return Math.round(s / 60) + ' min ago';
+    if (s < 129600) return Math.round(s / 3600) + ' h ago';
+    return Math.round(s / 86400) + ' days ago';
+  };
+  async function api(path, body) {
+    if (!/^https?:\/\//.test(API_BASE)) return { ok: false, status: 0, data: { error: 'API address missing: open the deployed page, not the local file.' } };
+    const h = { 'Content-Type': 'application/json' };
+    if (auth.token) h.Authorization = 'Bearer ' + auth.token;
+    let r;
+    try { r = await fetch(API_BASE + path, { method: 'POST', headers: h, body: JSON.stringify(body || {}) }); }
+    catch (e) { return { ok: false, status: 0, data: { error: 'No connection' } }; }
+    let data = {};
+    try { data = await r.json(); } catch (e) {}
+    return { ok: r.ok, status: r.status, data };
+  }
+  function signOutLocal() { auth = {}; try { localStorage.removeItem(AK); } catch (e) {} boot(); }
+  function download(name, text, type) {
+    const a = el('a', { href: URL.createObjectURL(new Blob([text], { type })), download: name });
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+  const csvCell = (v) => { let s = String(v == null ? '' : v); if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; return '"' + s.replace(/"/g, '""') + '"'; };
+  const safeHref = (u) => (typeof u === 'string' && /^https?:\/\//i.test(u) ? u : null);
+
+  // ------------------------------------------------------------ login
+  function viewLogin(note) {
+    clear(app);
+    const u = el('input', { type: 'text', placeholder: 'Username', autocomplete: 'username' });
+    const p = el('input', { type: 'password', placeholder: 'Password', autocomplete: 'current-password' });
+    const m = el('div', { class: 'msg', text: note || '' });
+    const b = el('button', { class: 'pri', text: 'Sign in', style: 'width:100%' });
+    const go = async () => {
+      if (!u.value.trim() || !p.value) { m.textContent = 'Enter username and password'; return; }
+      b.disabled = true; m.textContent = '';
+      const r = await api('/api/auth/login', { username: u.value.trim(), password: p.value });
+      b.disabled = false;
+      if (!r.ok) { m.textContent = (r.data && r.data.error) || 'Could not sign in'; return; }
+      auth = { token: r.data.token, expires: r.data.expires, user: r.data.user };
+      try { localStorage.setItem(AK, JSON.stringify(auth)); } catch (e) {}
+      boot();
+    };
+    b.addEventListener('click', go);
+    [u, p].forEach((i) => i.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); }));
+    app.appendChild(el('div', { class: 'card login' }, el('h1', { text: 'Admin sign in', style: 'margin-bottom:12px' }), u, p, m, b));
+    u.focus();
+  }
+
+  function viewDenied(name) {
+    clear(app);
+    app.appendChild(el('div', { class: 'card login' }, el('h1', { text: 'Not allowed' }),
+      el('p', { class: 'mut', text: (name || 'This account') + ' is not an admin.' }),
+      el('button', { text: 'Sign out', onclick: signOutLocal })));
+  }
+
+  // ------------------------------------------------------------ main app
+  const S = { q: '', sort: 'created', dir: 'desc', offset: 0, limit: 50, total: 0, tab: 'users', sel: null };
+  let statsBox, content, flash;
+
+  async function boot() {
+    if (!signedIn()) return viewLogin();
+    const r = await api('/api/admin/me');
+    if (r.status === 401) { auth = {}; try { localStorage.removeItem(AK); } catch (e) {} return viewLogin('Session expired, sign in again'); }
+    if (r.status === 403) return viewDenied(auth.user && auth.user.username);
+    if (!r.ok) { clear(app); app.appendChild(el('div', { class: 'card' }, el('div', { class: 'msg', text: (r.data && r.data.error) || 'Could not reach the server' }), el('button', { text: 'Retry', onclick: boot }))); return; }
+    viewApp(r.data);
+  }
+
+  function say(text, ok) { flash.textContent = text || ''; flash.className = 'msg' + (ok ? ' ok' : ''); }
+
+  function viewApp(me) {
+    clear(app);
+    flash = el('div', { class: 'msg' });
+    statsBox = el('div', { class: 'stats' });
+    content = el('div');
+    const tabs = el('div', { class: 'tabs' });
+    [['users', 'Users'], ['log', 'Activity log'], ['tools', 'Tools']].forEach(([id, label]) => {
+      tabs.appendChild(el('button', { class: S.tab === id ? 'on' : '', text: label, onclick: () => { S.tab = id; viewApp(me); } }));
+    });
+    app.appendChild(el('div', { class: 'top' },
+      el('h1', { text: 'Admin panel' }), el('span', { class: 'badge adm', text: me.username }), el('span', { class: 'sp' }),
+      el('button', { text: 'Main site', onclick: () => { location.href = './'; } }),
+      el('button', { text: 'Sign out', onclick: signOutLocal })));
+    app.appendChild(statsBox); app.appendChild(tabs); app.appendChild(flash); app.appendChild(content);
+    loadStats();
+    if (S.tab === 'users') viewUsers(); else if (S.tab === 'log') viewLog(); else viewTools();
+  }
+
+  async function loadStats() {
+    const r = await api('/api/admin/stats');
+    if (!r.ok) return;
+    const d = r.data;
+    clear(statsBox);
+    [['Users', d.users], ['Admins', d.admins], ['New 24 h', d.signups_24h], ['New 7 d', d.signups_7d],
+     ['Active 24 h', d.active_24h], ['Active 7 d', d.active_7d], ['Open sessions', d.sessions], ['Favorites', d.favorites]]
+      .forEach(([l, v]) => statsBox.appendChild(el('div', { class: 'stat' }, el('b', { text: String(v) }), el('span', { text: l }))));
+  }
+
+  // ------------------------------------------------------------ users tab
+  function viewUsers() {
+    clear(content);
+    const search = el('input', { type: 'search', placeholder: 'Search username...', value: S.q });
+    const sort = el('select');
+    [['created', 'Newest'], ['last_login', 'Last login'], ['username', 'Username'], ['favorites', 'Favorites'], ['sessions', 'Sessions']]
+      .forEach(([v, l]) => sort.appendChild(el('option', { value: v, text: l, selected: S.sort === v ? 'selected' : false })));
+    const dir = el('button', { text: S.dir === 'desc' ? 'Descending' : 'Ascending', onclick: () => { S.dir = S.dir === 'desc' ? 'asc' : 'desc'; S.offset = 0; viewUsers(); } });
+    const exp = el('button', { text: 'Export CSV', onclick: exportCsv });
+    let tm; search.addEventListener('input', () => { clearTimeout(tm); tm = setTimeout(() => { S.q = search.value.trim(); S.offset = 0; S.sel = null; viewUsers(); }, 300); });
+    sort.addEventListener('change', () => { S.sort = sort.value; S.offset = 0; viewUsers(); });
+    const list = el('div', { class: 'card' });
+    const detail = el('div', { id: 'detail' });
+    content.appendChild(el('div', { class: 'bar' }, search, sort, dir, exp));
+    content.appendChild(list); content.appendChild(detail);
+    loadUsers(list, detail);
+    if (S.sel) loadUser(S.sel, detail);
+  }
+
+  async function loadUsers(list, detail) {
+    clear(list); list.appendChild(el('div', { class: 'mut', text: 'Loading...' }));
+    const r = await api('/api/admin/users', { q: S.q, sort: S.sort, dir: S.dir, limit: S.limit, offset: S.offset });
+    clear(list);
+    if (!r.ok) { list.appendChild(el('div', { class: 'msg', text: (r.data && r.data.error) || 'Failed' })); return; }
+    S.total = r.data.total;
+    const tb = el('tbody');
+    r.data.users.forEach((u) => {
+      const tr = el('tr', { class: 'row' + (S.sel === u.id ? ' sel' : ''), onclick: () => { S.sel = u.id; loadUsers(list, detail); loadUser(u.id, detail); } },
+        el('td', {}, u.username, u.is_admin ? ' ' : '', u.is_admin ? el('span', { class: 'badge adm', text: 'admin' }) : null),
+        el('td', { text: fmt(u.created) }), el('td', { text: ago(u.last_login) }),
+        el('td', { text: String(u.favorites) }), el('td', { text: String(u.sessions) }));
+      tb.appendChild(tr);
+    });
+    if (!r.data.users.length) tb.appendChild(el('tr', {}, el('td', { colspan: '5', class: 'mut', text: 'No users found' })));
+    list.appendChild(el('div', { class: 'tw' }, el('table', {},
+      el('thead', {}, el('tr', {}, ['Username', 'Created', 'Last login', 'Favorites', 'Sessions'].map((h) => el('th', { text: h })))), tb)));
+    const from = S.total ? S.offset + 1 : 0, to = Math.min(S.total, S.offset + S.limit);
+    list.appendChild(el('div', { class: 'pager' }, el('span', { class: 'mut', text: from + '-' + to + ' of ' + S.total }),
+      el('button', { text: 'Prev', disabled: S.offset <= 0 ? 'disabled' : false, onclick: () => { S.offset = Math.max(0, S.offset - S.limit); loadUsers(list, detail); } }),
+      el('button', { text: 'Next', disabled: to >= S.total ? 'disabled' : false, onclick: () => { S.offset += S.limit; loadUsers(list, detail); } })));
+  }
+
+  async function allUsers() {
+    const all = []; let off = 0;
+    for (;;) {
+      const r = await api('/api/admin/users', { q: S.q, sort: S.sort, dir: S.dir, limit: 500, offset: off });
+      if (!r.ok) throw new Error((r.data && r.data.error) || 'export failed');
+      all.push.apply(all, r.data.users);
+      off += 500;
+      if (off >= r.data.total) return all;
+    }
+  }
+  async function exportCsv() {
+    say('Preparing export...', true);
+    try {
+      const rows = await allUsers();
+      const head = ['id', 'username', 'admin', 'created', 'last_login', 'favorites', 'sessions'];
+      const lines = [head.join(',')].concat(rows.map((u) => [u.id, u.username, u.is_admin, fmt(u.created), fmt(u.last_login), u.favorites, u.sessions].map(csvCell).join(',')));
+      download('users.csv', lines.join('\r\n'), 'text/csv');
+      say(rows.length + ' users exported', true);
+    } catch (e) { say(e.message); }
+  }
+
+  // ------------------------------------------------------------ one user
+  async function loadUser(id, box, offset) {
+    clear(box); box.appendChild(el('div', { class: 'card mut', text: 'Loading user...' }));
+    const r = await api('/api/admin/user', { id, offset: offset || 0, limit: 300 });
+    clear(box);
+    if (!r.ok) { box.appendChild(el('div', { class: 'card msg', text: (r.data && r.data.error) || 'Failed' })); return; }
+    const { user, sessions, items, counts } = r.data;
+    const act = async (path, body, okText) => {
+      const x = await api(path, body);
+      if (!x.ok) { say((x.data && x.data.error) || 'Failed'); return false; }
+      say(okText, true); loadStats(); return true;
+    };
+    const buttons = el('div', { class: 'bar' },
+      el('button', { text: 'Sign out everywhere', onclick: async () => { if (confirm('Sign ' + user.username + ' out on all devices?') && await act('/api/admin/revoke', { id: user.id }, 'Sessions revoked')) loadUser(id, box); } }),
+      user.reserved ? el('span', { class: 'badge adm', text: 'main admin' }) :
+        el('button', { text: user.is_admin ? 'Remove admin' : 'Make admin', onclick: async () => { if (confirm((user.is_admin ? 'Remove admin rights from ' : 'Give admin rights to ') + user.username + '?') && await act('/api/admin/set-admin', { id: user.id, value: user.is_admin ? 0 : 1 }, 'Saved')) { loadUser(id, box); viewUsersRefresh(); } } }),
+      el('button', { text: 'Export JSON', onclick: () => exportUser(user) }),
+      user.reserved ? null : el('button', { class: 'dng', text: 'Delete account', onclick: async () => {
+        const t = prompt('This permanently deletes the account and all its synced data.\nType the username to confirm: ' + user.username);
+        if (t == null) return;
+        if (await act('/api/admin/delete-user', { id: user.id, confirm: t.trim() }, 'Account deleted')) { S.sel = null; viewUsers(); }
+      } }));
+
+    const sTb = el('tbody');
+    sessions.forEach((s) => sTb.appendChild(el('tr', {}, el('td', { text: fmt(s.created) }), el('td', { text: fmt(s.expires) }),
+      el('td', {}, el('span', { class: 'badge' + (s.active ? ' ok' : ''), text: s.active ? 'active' : 'expired' })), el('td', { text: String(s.ua || '').slice(0, 60) }))));
+    if (!sessions.length) sTb.appendChild(el('tr', {}, el('td', { colspan: '4', class: 'mut', text: 'No sessions' })));
+
+    const favs = el('div');
+    const fill = (q) => {
+      clear(favs); const k = (q || '').toLowerCase(); let n = 0;
+      items.forEach((it) => {
+        const d = it.data && typeof it.data === 'object' ? it.data : {};
+        const title = String(d.title || d.name || d.username || it.id);
+        const link = safeHref(d.link || d.url || d.href);
+        const site = String(d.site || d.page || d.provider || it.kind || '');
+        let host = ''; try { if (link) host = new URL(link).hostname; } catch (e) {}
+        if (k && (title + ' ' + site + ' ' + host).toLowerCase().indexOf(k) < 0) return;
+        n++;
+        favs.appendChild(el('div', { class: 'fav' },
+          link ? el('a', { href: link, target: '_blank', rel: 'noopener noreferrer nofollow', text: title }) : el('span', { text: title }),
+          el('small', { text: [site, host, fmt(it.ts)].filter(Boolean).join('  |  ') })));
+      });
+      if (!n) favs.appendChild(el('div', { class: 'mut', text: 'Nothing here' }));
+    };
+    fill('');
+    const fq = el('input', { type: 'search', placeholder: 'Filter favorites...' });
+    fq.addEventListener('input', () => fill(fq.value));
+    const more = counts.live > offset_(r.data) + items.length
+      ? el('button', { text: 'Load next ' + 300, onclick: () => loadUser(id, box, offset_(r.data) + items.length) }) : null;
+
+    box.appendChild(el('div', { class: 'card' },
+      el('h2', {}, user.username, ' ', user.is_admin ? el('span', { class: 'badge adm', text: 'admin' }) : null),
+      el('div', { class: 'mut', text: 'ID ' + user.id + '  |  created ' + fmt(user.created) + '  |  last login ' + fmt(user.last_login) + '  |  ' + counts.live + ' favorites, ' + counts.removed + ' removed' }),
+      el('div', { class: 'mut', text: 'Password: stored only as a salted hash, it cannot be shown.', style: 'margin:.3rem 0 .7rem' }), buttons));
+    box.appendChild(el('div', { class: 'grid2' },
+      el('div', { class: 'card' }, el('h2', { text: 'Sessions' }), el('div', { class: 'tw' }, el('table', {}, el('thead', {}, el('tr', {}, ['Started', 'Expires', 'State', 'Device'].map((h) => el('th', { text: h })))), sTb))),
+      el('div', { class: 'card' }, el('h2', { text: 'Favorites' }), fq, favs, more)));
+  }
+  const offset_ = (d) => d.offset || 0;
+  function viewUsersRefresh() { if (S.tab === 'users') viewUsers(); }
+
+  async function exportUser(user) {
+    say('Preparing export...', true);
+    const all = []; let off = 0, sess = [];
+    for (;;) {
+      const r = await api('/api/admin/user', { id: user.id, offset: off, limit: 500 });
+      if (!r.ok) return say((r.data && r.data.error) || 'export failed');
+      sess = r.data.sessions; all.push.apply(all, r.data.items); off += 500;
+      if (off >= r.data.counts.live) break;
+    }
+    download('user-' + user.username + '.json', JSON.stringify({ user, sessions: sess, favorites: all }, null, 2), 'application/json');
+    say('Exported', true);
+  }
+
+  // ------------------------------------------------------------ log + tools
+  async function viewLog() {
+    clear(content);
+    const card = el('div', { class: 'card' }, el('div', { class: 'mut', text: 'Loading...' }));
+    content.appendChild(card);
+    const r = await api('/api/admin/log');
+    clear(card);
+    if (!r.ok) { card.appendChild(el('div', { class: 'msg', text: (r.data && r.data.error) || 'Failed' })); return; }
+    if (r.data.note) card.appendChild(el('div', { class: 'mut', text: r.data.note }));
+    const tb = el('tbody');
+    (r.data.log || []).forEach((l) => tb.appendChild(el('tr', {}, el('td', { text: fmt(l.ts) }), el('td', { text: l.admin }), el('td', { text: l.action }), el('td', { text: l.target || '' }), el('td', { text: l.ip || '' }))));
+    if (!(r.data.log || []).length) tb.appendChild(el('tr', {}, el('td', { colspan: '5', class: 'mut', text: 'No admin actions yet' })));
+    card.appendChild(el('div', { class: 'tw' }, el('table', {}, el('thead', {}, el('tr', {}, ['When', 'Admin', 'Action', 'Target', 'IP'].map((h) => el('th', { text: h })))), tb)));
+  }
+
+  function viewTools() {
+    clear(content);
+    content.appendChild(el('div', { class: 'card' },
+      el('h2', { text: 'Login rate limits' }),
+      el('p', { class: 'mut', text: 'Resets the counters that block too many sign-in / sign-up attempts (use it if real users got locked out).' }),
+      el('button', { text: 'Clear rate limits', onclick: async () => {
+        const r = await api('/api/admin/clear-rate'); say(r.ok ? 'Rate limits cleared' : ((r.data && r.data.error) || 'Failed'), r.ok);
+      } })));
+    content.appendChild(el('div', { class: 'card' },
+      el('h2', { text: 'Refresh' }), el('button', { text: 'Reload numbers', onclick: loadStats })));
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>

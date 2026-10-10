@@ -8052,9 +8052,9 @@ document.addEventListener('keydown', (e) => {
   }
 
   // ---------------------------------------------------------------- sync
-  let running = false, again = false, timer = null, lastSync = 0, state = 'idle';
+  let running = false, again = false, timer = null, lastSync = 0, state = 'idle', isAdmin = false;
   function schedule(ms) { clearTimeout(timer); timer = setTimeout(sync, ms == null ? 1500 : ms); }
-  function dropAuth() { auth = {}; try { localStorage.removeItem(AK); } catch (e) {} paintBtn(); if (open) render(); }
+  function dropAuth() { auth = {}; isAdmin = false; try { localStorage.removeItem(AK); } catch (e) {} paintBtn(); if (open) render(); }
 
   async function sync() {
     auth = rd(AK); st = rd(SK); if (!st.dirty) st.dirty = {};
@@ -8178,12 +8178,22 @@ function render() {
         '<button class="pri" id="acSync" type="button">Sync now</button>' +
         '<button class="sec" id="acOut" type="button">Sign out</button>' +
         '<button class="sec" id="acOutAll" type="button">Sign out on all devices</button>' +
+        (isAdmin ? '<button class="sec" id="acAdmin" type="button" style="border-color:#ffc857;color:#ffc857">Admin panel</button>' : '') +
         '<button class="dng" id="acDel" type="button">Delete account and synced data</button>';
       $('#acSync').addEventListener('click', async () => { await sync(); if (open) render(); });
       $('#acOut').addEventListener('click', () => signOut(false));
       $('#acOutAll').addEventListener('click', () => signOut(true));
       $('#acDel').addEventListener('click', deleteAccount);
+      if (isAdmin) $('#acAdmin').addEventListener('click', () => { window.open('admin.html', '_blank', 'noopener'); });
     }
+  }
+
+  // only the admin account gets the button (the server decides; everybody else just gets a 403 and sees nothing)
+  async function probeAdmin() {
+    if (!signedIn()) { isAdmin = false; return; }
+    const r = await api('/api/admin/me', {}, true);
+    isAdmin = !!(r.ok && r.data && r.data.admin);
+    if (open && mode === 'account') render();
   }
 
   // ---------------------------------------------------------------- session changes
@@ -8195,10 +8205,10 @@ function render() {
     F.sync.all().forEach((id) => { st.dirty[id] = 1; });      // favorites saved before signing in are merged into the account
     wr(SK, st);
     mode = 'account'; paintBtn(); render(); F.toast('Signed in. Syncing favorites…');
-    sync();
+    sync(); probeAdmin();
   }
   function wipeLocal() {
-    F.sync.clear(); auth = {}; st = { dirty: {}, cursor: 0 }; lastSync = 0; state = 'idle';
+    F.sync.clear(); auth = {}; isAdmin = false; st = { dirty: {}, cursor: 0 }; lastSync = 0; state = 'idle';
     try { localStorage.removeItem(AK); localStorage.removeItem(SK); } catch (e) {}
     paintBtn();
   }
@@ -8226,7 +8236,7 @@ function render() {
     try { const r = await api('/api/auth/config', {}); enabled = !!(r.ok && r.data && r.data.enabled); } catch (e) {}
     if (!enabled && !signedIn()) return;
     mountBtn();
-    if (signedIn()) sync();
+    if (signedIn()) { sync(); probeAdmin(); }
   })();
 })();
 </script>

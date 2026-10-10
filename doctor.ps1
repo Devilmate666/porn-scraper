@@ -26,6 +26,9 @@ $targets = @(
     @{ Path = 'migrations\0001_auth.sql';     Marker = 'password_hash' },
     @{ Path = 'migrations\0002_alter_users.sql'; Marker = 'already_migrated' },
     @{ Path = 'migrations\0003_clear_rate.sql';    Marker = 'DELETE FROM rate' },
+    @{ Path = 'admin.ts';                     Marker = 'handleAdmin' },
+    @{ Path = 'admin.html';                   Marker = 'Admin panel' },
+    @{ Path = 'migrations\0004_admin.sql';    Marker = 'admin_log' },
     @{ Path = '.github\scripts\d1_id.sh';     Marker = 'D1_NAME' },
     @{ Path = '.github\workflows\deploy.yml'; Marker = 'd1_id.sh' }
 )
@@ -195,6 +198,15 @@ if ($Phase -eq 'post') {
     }
 
     Ok "The new Worker code is live."
+    try {
+        Invoke-RestMethod -Method Post -Uri "$worker/api/admin/me" -ContentType 'application/json' -Body '{}' -TimeoutSec 20 | Out-Null
+        Warn "admin API answered without a login (should never happen)"
+    } catch {
+        $ac = 0; try { $ac = [int]$_.Exception.Response.StatusCode } catch { }
+        if ($ac -eq 401) { Ok "Admin API is live and locked (401 without a login)." }
+        elseif ($ac -eq 404) { Bad "Admin API not found (404): the Worker does not have admin.ts yet." }
+        else { Warn "Admin API answered HTTP $ac" }
+    }
     if ($cfg.enabled) {
         Ok "LOGIN IS ENABLED on the server."
         try {

@@ -7,6 +7,7 @@ import { fetchMetadata } from "../metadata";
 import { fetchLiveCams, fetchLemoncamsFilters } from "../cams";
 import { fetchChannelsNative } from "../channels";
 import { handleAuth, isAuthPath, authMaintenance } from "../auth";
+import { handleAdmin, isAdminPath } from "../admin";
 
 // ---------------------------------------------------------------------------------------------------------
 // API Worker - built so the site keeps working even when GitHub, a cam platform or your PC is down.
@@ -241,6 +242,19 @@ export default {
     const url = new URL(request.url);
     const headers = corsHeaders(request.headers.get("Origin"));
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
+
+    // admin panel API (admin account only, enforced in admin.ts)
+    if (isAdminPath(url.pathname)) {
+      let b: any = {};
+      try { b = request.method === "POST" ? JSON.parse((await request.text()) || "{}") : {}; } catch { /* bad json = empty body */ }
+      try {
+        return await handleAdmin(env, request, url.pathname, b, (data, status = 200, extra = {}) =>
+          json(data, status, { ...headers, "Cache-Control": "no-store", ...extra }));
+      } catch (e) {
+        console.log("admin error", String(e).slice(0, 300));
+        return err("Server error", 500, { ...headers, "Cache-Control": "no-store" });
+      }
+    }
 
     // accounts + data sync (D1). Never cached, never touches the scrapers.
     if (isAuthPath(url.pathname)) {

@@ -74,6 +74,9 @@ jobs:
             # 0003 clears the rate-limit counters (a schema bug can exhaust them legitimately).
             wrangler d1 execute porn-archive-db --remote --file=migrations/0003_clear_rate.sql \
               || echo "::warning::D1 migration 0003 failed"
+            # 0004 = admin audit log (admin panel)
+            wrangler d1 execute porn-archive-db --remote --file=migrations/0004_admin.sql \
+              || echo "::warning::D1 migration 0004 failed"
           else
             # no database: remove the binding so the deploy still succeeds (login stays off)
             sed -i '/^\[\[d1_databases\]\]/,/^database_id/d' wrangler.toml
@@ -163,6 +166,11 @@ jobs:
           cp index.html static/index.html
           sed -i "s|__API_BASE__|${API_URL%/}|g" static/index.html
           grep -c "$API_URL" static/index.html
+          # admin panel page (same API address injected; never framed, never cached, never indexed)
+          cp admin.html static/admin.html
+          sed -i "s|__API_BASE__|${API_URL%/}|g" static/admin.html
+          grep -c "$API_URL" static/admin.html
+          printf '/admin.html\n  X-Frame-Options: DENY\n  Cache-Control: no-store\n  X-Robots-Tag: noindex\n  Referrer-Policy: no-referrer\n' > static/_headers
 
       - name: Ensure Pages project exists
         run: wrangler pages project create porn-archive --production-branch=main || true
