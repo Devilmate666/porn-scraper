@@ -24,6 +24,7 @@ $targets = @(
     @{ Path = 'wrangler.toml';                Marker = 'd1_databases' },
     @{ Path = 'index.html';                   Marker = 'acctBtn' },
     @{ Path = 'migrations\0001_auth.sql';     Marker = 'password_hash' },
+    @{ Path = 'migrations\0002_alter_users.sql'; Marker = 'ALTER TABLE users ADD COLUMN username' },
     @{ Path = '.github\scripts\d1_id.sh';     Marker = 'D1_NAME' },
     @{ Path = '.github\workflows\deploy.yml'; Marker = 'd1_id.sh' }
 )
@@ -208,8 +209,6 @@ if ($Phase -eq 'post') {
         switch ($m) {
             'DB'        { Bad "DB - the database is not connected. Cloudflare API token needs the permission  Account > D1 > Edit  (dash.cloudflare.com/profile/api-tokens, edit your token). Then run run.bat again." }
             'AUTH_SECRET' { Bad "AUTH_SECRET - GitHub repo > Settings > Secrets and variables > Actions > Secrets > New repository secret. Name: AUTH_SECRET, value: any 32+ random characters." }
-            'MAIL_KEY'  { Bad "RESEND_API_KEY or BREVO_API_KEY - add ONE of them as a repository SECRET (the key from resend.com or brevo.com)." }
-            'MAIL_FROM' { Bad "MAIL_FROM - GitHub repo > Settings > Secrets and variables > Actions > the VARIABLES tab (not Secrets). Value like:  Archive <login@yourdomain.com>  (must be a sender verified at your email provider)." }
             default     { Bad $m }
         }
     }

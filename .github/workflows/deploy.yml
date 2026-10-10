@@ -66,7 +66,11 @@ jobs:
           if [ -n "${D1_ID:-}" ]; then
             sed -i "s/your-d1-database-id/${D1_ID}/" wrangler.toml
             wrangler d1 execute porn-archive-db --remote --file=migrations/0001_auth.sql \
-              || echo "::warning::D1 migration failed - check the API token has D1: Edit"
+              || echo "::warning::D1 migration 0001 failed - check the API token has D1: Edit"
+            # 0002 migrates an OLD users table (email + login_codes) to the new schema (username + password_hash + is_admin).
+            # CREATE TABLE IF NOT EXISTS in 0001 does not modify an existing table, so this is needed when the schema changed.
+            wrangler d1 execute porn-archive-db --remote --file=migrations/0002_alter_users.sql \
+              || echo "::warning::D1 migration 0002 failed"
           else
             # no database: remove the binding so the deploy still succeeds (login stays off)
             sed -i '/^\[\[d1_databases\]\]/,/^database_id/d' wrangler.toml
@@ -83,7 +87,6 @@ jobs:
           EXTRA_HOSTS: ${{ vars.ALLOWED_HOSTS }}           # optional repo variable: extra scrapable hosts, comma separated
           CB_WM: ${{ vars.CHATURBATE_WM }}                 # optional repo variable: Chaturbate affiliate slug for the fallback endpoint
           CAMS: ${{ vars.CAM_PROVIDERS }}                  # optional repo variable: e.g. "chaturbate,cam4" to limit the direct cam platforms
-          MAILFROM: ${{ vars.MAIL_FROM }}                  # login emails: sender, e.g. Archive <login@yourdomain.com>
         run: |
           EXTRA="--var GITHUB_REPO:${{ github.repository }} --var GITHUB_REF:${{ github.ref_name }}"
           if [ -n "${BACKEND_URL:-}" ]; then EXTRA="$EXTRA --var BACKEND_URL:${BACKEND_URL}"; fi
@@ -91,8 +94,7 @@ jobs:
           if [ -n "${EXTRA_HOSTS:-}" ]; then EXTRA="$EXTRA --var ALLOWED_HOSTS:${EXTRA_HOSTS}"; fi
           if [ -n "${CB_WM:-}" ]; then EXTRA="$EXTRA --var CHATURBATE_WM:${CB_WM}"; fi
           if [ -n "${CAMS:-}" ]; then EXTRA="$EXTRA --var CAM_PROVIDERS:${CAMS}"; fi
-          ARGS=()                                          # array: the sender contains spaces ("Name <a@b.c>")
-          if [ -n "${MAILFROM:-}" ]; then ARGS+=(--var "MAIL_FROM:${MAILFROM}"); fi
+          ARGS=()
           wrangler deploy $EXTRA "${ARGS[@]}" 2>&1 | tee deploy.log
           URL=$(grep -oE 'https://[A-Za-z0-9._-]+\.workers\.dev' deploy.log | head -1 || true)
           if [ -z "$URL" ]; then

@@ -129,12 +129,10 @@ echo ============================================
 echo https://github.com/%OWNER%/%REPO%/settings/secrets/actions
 echo   Required:
 echo     CLOUDFLARE_API_TOKEN    dash.cloudflare.com/profile/api-tokens
+echo                             must also have  Account - D1 - Edit  (for the database)
 echo     CLOUDFLARE_ACCOUNT_ID   dash.cloudflare.com, right sidebar
-echo   Login (email sign-in) - needs ALL of these:
-echo     Cloudflare API token must also have the permission  Account - D1 - Edit
+echo   Login (username + password, no email needed) - needs:
 echo     AUTH_SECRET             any random 32+ characters (secret)
-echo     RESEND_API_KEY  or  BREVO_API_KEY   (secret, your email provider key)
-echo     MAIL_FROM               a VARIABLE, e.g.  Archive ^<login@yourdomain.com^>
 echo   Optional:
 echo     GH_DISPATCH_TOKEN       lets the Worker start the GitHub scraper when data is stale
 echo                             fine-grained token, this repo only, Actions: Read and write
