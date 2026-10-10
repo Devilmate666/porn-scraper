@@ -199,14 +199,41 @@ tr.row:hover td, tr.sel td { background: #1a2335; }
       .forEach(([v, l]) => sort.appendChild(el('option', { value: v, text: l, selected: S.sort === v ? 'selected' : false })));
     const dir = el('button', { text: S.dir === 'desc' ? 'Descending' : 'Ascending', onclick: () => { S.dir = S.dir === 'desc' ? 'asc' : 'desc'; S.offset = 0; viewUsers(); } });
     const exp = el('button', { text: 'Export CSV', onclick: exportCsv });
+    const mk = el('button', { class: 'pri', text: 'Create user', onclick: () => toggleCreate(createBox, list, detail) });
+    const createBox = el('div');
     let tm; search.addEventListener('input', () => { clearTimeout(tm); tm = setTimeout(() => { S.q = search.value.trim(); S.offset = 0; S.sel = null; viewUsers(); }, 300); });
     sort.addEventListener('change', () => { S.sort = sort.value; S.offset = 0; viewUsers(); });
     const list = el('div', { class: 'card' });
     const detail = el('div', { id: 'detail' });
-    content.appendChild(el('div', { class: 'bar' }, search, sort, dir, exp));
+    content.appendChild(el('div', { class: 'bar' }, search, sort, dir, exp, mk));
+    content.appendChild(createBox);
     content.appendChild(list); content.appendChild(detail);
     loadUsers(list, detail);
     if (S.sel) loadUser(S.sel, detail);
+  }
+
+  // creating accounts here is not limited (the server lets admins skip the one-account-per-network rule)
+  function toggleCreate(box, list, detail) {
+    if (box.firstChild) { clear(box); return; }
+    const u = el('input', { type: 'text', placeholder: 'Username (3-32 letters, numbers, _)', autocomplete: 'off' });
+    const p = el('input', { type: 'text', placeholder: 'Password (at least 6 characters)', autocomplete: 'off' });
+    const m = el('div', { class: 'msg' });
+    const b = el('button', { class: 'pri', text: 'Create' });
+    b.addEventListener('click', async () => {
+      const name = u.value.trim();
+      if (name.length < 3 || name.length > 32 || !/^[A-Za-z0-9_]+$/.test(name)) { m.className = 'msg'; m.textContent = 'Username must be 3-32 letters, numbers or underscores'; return; }
+      if (p.value.length < 6) { m.className = 'msg'; m.textContent = 'Password must be at least 6 characters'; return; }
+      b.disabled = true; m.textContent = '';
+      const r = await api('/api/auth/register', { username: name, password: p.value });
+      if (!r.ok) { b.disabled = false; m.className = 'msg'; m.textContent = (r.data && r.data.error) || 'Could not create the account'; return; }
+      if (r.data && r.data.user && r.data.user.id) await api('/api/admin/finish-create', { id: r.data.user.id });
+      b.disabled = false; u.value = ''; p.value = '';
+      m.className = 'msg ok'; m.textContent = 'Created ' + name + '. Give them the password; they can change nothing else here.';
+      loadStats(); S.offset = 0; loadUsers(list, detail);
+    });
+    box.appendChild(el('div', { class: 'card' }, el('h2', { text: 'Create a user' }),
+      el('p', { class: 'mut', text: 'No limit for admins. The password is shown here in clear text so you can pass it on; it is stored only as a hash.' }),
+      el('div', { class: 'bar' }, u, p, b), m));
   }
 
   async function loadUsers(list, detail) {

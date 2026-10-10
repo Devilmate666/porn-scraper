@@ -12,6 +12,7 @@
 //   /api/admin/delete-user  { id, confirm: username }         delete account + sessions + synced data
 //   /api/admin/set-admin    { id, value }                     grant / remove admin
 //   /api/admin/clear-rate                                     reset the login rate-limit counters
+//   /api/admin/finish-create { id }                           after the panel registered a user: drop the stray session, log it
 //   /api/admin/log                                            last 100 admin actions
 //
 // Passwords are stored only as salted hashes; nobody (including the admin) can read them, and no endpoint returns them.
@@ -75,6 +76,23 @@ async function log(env: Env, admin: string, action: string, target: string, ip: 
 }
 const safeJson = (s: string) => { try { return JSON.parse(s); } catch { return null; } };
 const int = (v: unknown, d: number, min: number, max: number) => Math.min(max, Math.max(min, Math.floor(Number(v)) || d));
+
+/** true when the request carries a valid session of an admin (used to let admins create accounts without the sign-up limits) */
+export async function isAdminRequest(env: Env, request: Request): Promise<boolean> {
+  try {
+    if (!env.DB || !request.headers.get("Authorization")) return false;
+    const uid = await sessionUserId(env, request);
+    if (!uid) return false;
+    let u: { username: string; is_admin: number } | null = null;
+    try {
+      u = await env.DB.prepare(`SELECT username, is_admin FROM users WHERE id = ?1`).bind(uid).first<{ username: string; is_admin: number }>();
+    } catch {
+      const r = await env.DB.prepare(`SELECT username FROM users WHERE id = ?1`).bind(uid).first<{ username: string }>();
+      u = r ? { username: r.username, is_admin: 0 } : null;
+    }
+    return !!u && (u.is_admin === 1 || isReserved(env, u.username));
+  } catch { return false; }
+}
 
 export async function handleAdmin(env: Env, request: Request, path: string, body: any, out: Out): Promise<Response> {
   if (request.method !== "POST") return out({ error: "POST only" }, 405);
@@ -198,6 +216,15 @@ export async function handleAdmin(env: Env, request: Request, path: string, body
     if (isReserved(env, u.username)) return out({ error: "The main admin account is always an admin" }, 400);
     await db.prepare(`UPDATE users SET is_admin = ?2 WHERE id = ?1`).bind(id, value).run();
     await log(env, me.username, value ? "grant-admin" : "remove-admin", u.username, ip);
+    return out({ ok: true });
+  }
+
+  if (path === "/api/admin/finish-create") {
+    const id = String(body?.id ?? "");
+    const u = await db.prepare(`SELECT username FROM users WHERE id = ?1`).bind(id).first<{ username: string }>();
+    if (!u) return out({ error: "User not found" }, 404);
+    await db.prepare(`DELETE FROM sessions WHERE user_id = ?1`).bind(id).run();   // registering opens a session for the new user: close it
+    await log(env, me.username, "create-user", u.username, ip);
     return out({ ok: true });
   }
 

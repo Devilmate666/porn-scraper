@@ -7,7 +7,7 @@ import { fetchMetadata } from "../metadata";
 import { fetchLiveCams, fetchLemoncamsFilters } from "../cams";
 import { fetchChannelsNative } from "../channels";
 import { handleAuth, isAuthPath, authMaintenance } from "../auth";
-import { handleAdmin, isAdminPath } from "../admin";
+import { handleAdmin, isAdminPath, isAdminRequest } from "../admin";
 import { signupBlocked, signupRecord, signupMaintenance } from "../signup";
 
 // ---------------------------------------------------------------------------------------------------------
@@ -264,13 +264,15 @@ export default {
       try { b = request.method === "POST" ? JSON.parse((await request.text()) || "{}") : {}; } catch { /* bad json = empty body */ }
       try {
         const isReg = url.pathname === "/api/auth/register";
-        if (isReg) {                                   // one account per network (signup.ts)
+        // an admin (valid admin session on the request) may create any number of accounts: no limit, nothing recorded
+        const byAdmin = isReg && await isAdminRequest(env, request);
+        if (isReg && !byAdmin) {                       // everybody else: one account per network (signup.ts)
           const why = await signupBlocked(env, request, b);
           if (why) return json({ error: why }, 403, { ...headers, "Cache-Control": "no-store" });
         }
         const res = await handleAuth(env, request, url.pathname, b, (data, status = 200, extra = {}) =>
           json(data, status, { ...headers, "Cache-Control": "no-store", ...extra }));
-        if (isReg && res.status < 300) ctx.waitUntil(signupRecord(env, request, b));
+        if (isReg && !byAdmin && res.status < 300) ctx.waitUntil(signupRecord(env, request, b));
         return res;
       } catch (e) {
         const msg = String(e).slice(0, 300);

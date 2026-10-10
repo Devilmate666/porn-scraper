@@ -79,3 +79,5 @@ How it is protected:
 * **On the server:** each network (IP address) may create `SIGNUP_MAX_PER_IP` accounts per `SIGNUP_WINDOW_DAYS` (default 1 per 30 days, set in `wrangler.toml`; `0` = unlimited). Only a keyed hash of the IP is stored, and rows are deleted after the window. The admin username is exempt.
 * This is the best a website can do without verifying real identities: someone on another network (mobile data, VPN) can still register again, and people who share one network (family, school) share the limit. If real users get blocked, raise `SIGNUP_MAX_PER_IP`.
 * Needs `migrations/0005_signups.sql` (the deploy runs it). Before it has run, nobody is blocked.
+
+* **Admins are the exception:** in the admin panel (Users tab) the **Create user** button makes accounts with no limit. The server skips the one-account-per-network rule only when the request carries a valid admin session, and does not count those accounts. Everybody else stays limited.
