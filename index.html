@@ -912,8 +912,9 @@
 .cat-view-switch button { border: 1px solid #232b3b; background: #131822; color: #a9b9d6; padding: .5rem 1.1rem; border-radius: 30px; font: inherit; font-size: .82rem; font-weight: 600; cursor: pointer; transition: .15s; }
 .cat-view-switch button:hover { background: #1c2330; border-color: #3a465e; color: #d5e0f5; }
 .cat-view-switch button.on { background: linear-gradient(145deg, #4f46e5, #6366f1); border-color: #7c8af8; color: #fff; box-shadow: 0 4px 14px -4px #4f46e5aa; }
-.feed.tg-on > .cat-filter-bar, .feed.tg-on > .cat-search-bar, .feed.tg-on > .videos, .feed.tg-on > .sentinel { display: none !important; }
-.tg-view { padding: .4rem 1.4rem 2rem; }
+  .feed.tg-on > .cat-filter-bar, .feed.tg-on > .cat-search-bar, .feed.tg-on > .videos, .feed.tg-on > .sentinel { display: none !important; }
+  .tg-view { display: none; padding: .4rem 1.4rem 2rem; }
+  .feed.tg-on > .tg-view { display: block; }
 .tg-tools { display: flex; flex-direction: column; gap: .6rem; padding: .5rem 0 .3rem; }
 .tg-tools input { width: 100%; background: #0c0f15; border: 1px solid #232b3b; color: #e2e8f0; padding: .65rem 1.1rem; border-radius: 30px; font: inherit; font-size: .88rem; outline: none; transition: .15s; }
 .tg-tools input:focus { border-color: #4f46e5; box-shadow: 0 0 0 3px #4f46e533; }
@@ -939,7 +940,8 @@
 .tg-site { flex: none; font-size: .6rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; padding: .12rem .45rem; border-radius: 999px; background: #0f1424; color: #8ea0c6; }
 .tg-s-superporn { background: #2b2452; color: #c4b5fd; }
 .tg-s-bdsmhole { background: #4a1f2b; color: #ff9aae; }
-.tg-s-fullporno { background: #11343f; color: #7dd3fc; }
+  .tg-s-fullporno { background: #11343f; color: #7dd3fc; }
+  .tg-s-pornvideobb { background: #083344; color: #67e8f9; }
 .tg-heart { flex: none; width: 1.75rem; height: 1.75rem; border-radius: 50%; display: grid; place-items: center; background: rgba(255,255,255,.06); cursor: pointer; transition: .12s; }
 .tg-heart svg { width: .95rem; height: .95rem; fill: none; stroke: #cfd8ee; stroke-width: 2; stroke-linejoin: round; pointer-events: none; }
 .tg-heart:hover { background: rgba(255,77,109,.22); transform: scale(1.1); }
@@ -1463,6 +1465,9 @@ const PORN_SITES_TAB = '__pornsites__';
 const PORN_TAGS_URL = 'https://www.freesexvideos.xxx/categories/';
 const PORN_TAGS_TAB = '__porntags__';
 const PORN_TAGS_CACHE_KEY = '__porn_tags__';
+
+// PornVideoBB tags (genres of https://2023.pornvideobb.com/tags/)
+const PVB_TAGS_URL = 'https://2023.pornvideobb.com/tags/';
 
 // FullPorno single-source listing kinds share one rendering / paging path
 const isFpKind = (kind) => kind === 'pornsites' || kind === 'porntags';
@@ -2699,20 +2704,29 @@ function updateNavFades() {
   siteActions.classList.toggle('fade-left', siteActions.scrollLeft > 4);
   siteActions.classList.toggle('fade-right', max > 4 && siteActions.scrollLeft < max - 4);
 }
-/** Scroll the button row so this button sits at its left edge: the buttons after it come into view. */
+/** Scroll the button row just enough to reveal the pressed button: clipped on the
+ *  right edge -> scroll right, clipped on the left edge -> scroll left, already
+ *  fully visible -> stay put. (Both ways, not only to the right.) */
 function alignNavButton(button) {
   if (!button || !siteActions || !siteActions.isConnected || siteActions.closest('#navActionStaging')) return;
   const bar = siteActions, br = bar.getBoundingClientRect(), r = button.getBoundingClientRect();
   if (!br.width || !r.width) return;
   const max = Math.max(0, bar.scrollWidth - bar.clientWidth);
-  const target = Math.max(0, Math.min(Math.round(bar.scrollLeft + (r.left - br.left) - 12), max));
+  const pad = 12;
+  let target = bar.scrollLeft;
+  if (r.right > br.right - pad) {
+    target = bar.scrollLeft + (r.right - (br.right - pad));        // hidden past the right edge
+  } else if (r.left < br.left + pad) {
+    target = bar.scrollLeft - ((br.left + pad) - r.left);          // hidden past the left edge
+  }
+  target = Math.max(0, Math.min(Math.round(target), max));
   if (Math.abs(target - bar.scrollLeft) > 1) {
     try { bar.scrollTo({ left: target, behavior: 'smooth' }); } catch (_) { bar.scrollLeft = target; }
   }
   updateNavFades();
 }
 if (siteActions) {
-  siteActions.addEventListener('click', (e) => {          // pressing a button scrolls the row to it: the next buttons show up
+  siteActions.addEventListener('click', (e) => {          // pressing a button scrolls the row to it (both ways): the button comes into view
     const b = e.target.closest && e.target.closest('button.action');
     if (b && siteActions.contains(b)) alignNavButton(b);
   }, true);
@@ -9209,7 +9223,7 @@ function render() {
 (function () {
   'use strict';
   const VKEY = 'pa_cat_view_v1';
-  const SITE_NAMES = { superporn: 'Superporn', bdsmhole: 'BDSMHole', fullporno: 'FreeSexVideos' };
+  const SITE_NAMES = { superporn: 'Superporn', bdsmhole: 'BDSMHole', fullporno: 'FreeSexVideos', pornvideobb: 'PornVideoBB' };
   const HEART = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>';
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const F = () => window.Favorites;
@@ -9227,7 +9241,10 @@ function render() {
     if (!force && data && (data.loading || (data.done && Date.now() - data.at < 15 * 60000))) return;
     const d = data = { at: Date.now(), items: [], seen: new Set(), pending: 0, loading: true, done: false, failed: 0 };
     const add = (list, sid) => (list || []).forEach((c) => {
-      const link = c && c.link || '', key = link.split('?')[0], name = c && c.name ? String(c.name).trim() : '';
+      // key = full link minus hash: some sites carry the tag identity in the
+      // query string (pornvideobb /zone_video/?cat=<name>), the path alone would
+      // collapse all of them into one entry
+      const link = c && c.link || '', key = link.split('#')[0], name = c && c.name ? String(c.name).trim() : '';
       if (!key || !name || d.seen.has(key)) return;
       try { if (typeof isAllVideosLink === 'function' && isAllVideosLink(key)) return; } catch (e) {}
       d.seen.add(key);
@@ -9257,6 +9274,7 @@ function render() {
     const jobs = [];
     (typeof COMBINED_CATEGORY_SOURCES !== 'undefined' ? COMBINED_CATEGORY_SOURCES : []).forEach((s) => jobs.push([s.id, s.indexUrl, null]));
     if (typeof PORN_TAGS_URL !== 'undefined') jobs.push(['fullporno', PORN_TAGS_URL, { mode: 'tags' }]);
+    if (typeof PVB_TAGS_URL !== 'undefined') jobs.push(['pornvideobb', PVB_TAGS_URL, { mode: 'tags' }]);
     d.pending = jobs.length;
     jobs.forEach((j) => job(j[0], j[1], j[2]));
   }

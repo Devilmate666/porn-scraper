@@ -26,7 +26,7 @@ from flask_cors import CORS
 from scraper import (
     scrape_many, resolve_video_url, resolve_full_video_url, search_many,
     scrape_categories, scrape_tags, scrape_studio_sections,
-    scrape_superporn_categories, scrape_models,
+    scrape_superporn_categories, scrape_models, scrape_pornvideobb_tags,
 )
 from scraper import scrape_page, _guess_next_page, _current_page_number, fetch_html
 try:
@@ -379,6 +379,8 @@ def api_scrape_categories():
             return jsonify(scrape_models(url, page_num=data.get("page_num")))
         if host.endswith("superporn.com") and re.match(r"^/categories(/\d+)?/?$", path):
             return jsonify(scrape_superporn_categories(url, page_num=data.get("page_num")))
+        if host.endswith("pornvideobb.com") and path.startswith("/tags"):
+            return jsonify(scrape_pornvideobb_tags(url))
         if mode == "sites" or (host.endswith("freesexvideos.xxx") and re.match(r"^/sites(/\d+)?/?$", path)):
             return jsonify(scrape_studio_sections(url))
         if mode == "tags":

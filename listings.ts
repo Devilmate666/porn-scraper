@@ -272,6 +272,37 @@ export async function scrapeTags(url: string, kind = "porntags", maxItems = 2000
   return { page: base, page_title: title, categories: cut, count: cut.length, next_page: null, next_is_guess: false, page_num: 1, kind };
 }
 
+// ------------------------------------------------------------------ pornvideobb tags
+/** PornVideoBB /tags/ - plain A-Z list of /zone_video/?cat=<name> genre links. The generic
+ *  tag extractors need /categories/<slug>/ style paths, so this site (query-param genres)
+ *  gets its own reader. */
+export async function scrapePornvideobbTags(url = "https://2023.pornvideobb.com/tags/", maxItems = 2000): Promise<any> {
+  const got: any = await pageOrError(url, 20000, { page: url, categories: [], count: 0, next_page: null, page_num: 1, kind: "porntags" });
+  if (got.error) return got;
+  const root = prepare(got.html), base = got.base;
+  const host = new URL(base).host;
+  const tags: any[] = [], seen = new Set<string>();
+  for (const a of root.querySelectorAll("a[href]")) {
+    const abs = absUrl(base, attr(a, "href").trim());
+    if (!abs) continue;
+    let u: URL;
+    try { u = new URL(abs); } catch { continue; }
+    const full = u.toString().split("#")[0];
+    if (host && u.host !== host) continue;
+    if (u.pathname.replace(/\/+$/, "").toLowerCase() !== "/zone_video") continue;
+    const name = cleanTagName(u.searchParams.get("cat")) || cleanTagName(collapse(a.text || "") || attr(a, "title"));
+    if (!name) continue;
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    tags.push({ name, link: full, thumbnail: null, letter: tagLetter(name), uid: hash12(full) });
+    if (tags.length >= maxItems) break;
+  }
+  const out: any = { page: base, page_title: titleOf(root) || base, categories: tags, count: tags.length, next_page: null, next_is_guess: false, page_num: 1, kind: "porntags" };
+  if (!tags.length) out.error = `Tag list not found in the page received (${got.html.length} bytes) - the site may be blocking the scraper.`;
+  return out;
+}
+
 // ------------------------------------------------------------------ studio / network sections
 function studioVideo(item: HTMLElement, base: string): any | null {
   const a = item.querySelector("a[href]");
@@ -480,6 +511,7 @@ export async function scrapeListing(url: string, mode: string | undefined, pageN
   try { const p = new URL(url.includes("://") ? url : "https://" + url); host = p.hostname.toLowerCase(); path = (p.pathname || "/").toLowerCase(); } catch { /* keep */ }
   if (mode === "models" || mode === "pornstars" || (host.endsWith("freesexvideos.xxx") && path.startsWith("/models"))) return scrapeModels(url, pageNum);
   if (host.endsWith("superporn.com") && /^\/categories(\/\d+)?\/?$/.test(path)) return scrapeSuperpornCategories(url, pageNum);
+  if (host.endsWith("pornvideobb.com") && path.startsWith("/tags")) return scrapePornvideobbTags(url);
   if (mode === "sites" || (host.endsWith("freesexvideos.xxx") && /^\/sites(\/\d+)?\/?$/.test(path))) return scrapeStudioSections(url);
   if (mode === "tags") return scrapeTags(url, "porntags");
   return scrapeCategories(url, pageNum);

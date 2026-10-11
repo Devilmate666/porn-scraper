@@ -1271,6 +1271,57 @@ def scrape_tags(url: str, max_items: int = 2000, kind: str = "porntags", max_pag
     _TAGS_CACHE[ckey] = (time.time(), out)
     return out
 
+
+def scrape_pornvideobb_tags(url: str = "https://2023.pornvideobb.com/tags/", max_items: int = 2000):
+    """PornVideoBB /tags/ - plain A-Z list of /zone_video/?cat=<name> genre links.
+    The generic tag extractors need /categories/<slug>/ style paths, so this site
+    (query-param genres) gets its own reader."""
+    tags, seen = [], set()
+    title, base = None, url
+    try:
+        html, base = fetch_html(url, timeout=20.0)
+        soup = BeautifulSoup(html, "lxml")
+        title = soup.title.string.strip() if soup.title and soup.title.string else base
+        base_host = urlparse(base).netloc
+        for a in soup.find_all("a", href=True):
+            href = a["href"].strip()
+            if not href or href.startswith(("#", "javascript:", "mailto:", "tel:")):
+                continue
+            full = urljoin(base, href).split("#")[0]
+            p = urlparse(full)
+            if base_host and p.netloc != base_host:
+                continue
+            if (p.path or "/").rstrip("/").lower() != "/zone_video":
+                continue
+            qs = dict(parse_qsl(p.query))
+            name = _clean_tag_name(qs.get("cat")) or _clean_tag_name(
+                a.get_text(" ", strip=True) or a.get("title"))
+            if not name:
+                continue
+            key = name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            tags.append({
+                "name": name,
+                "link": full,
+                "thumbnail": None,
+                "letter": _tag_letter(name),
+                "uid": hashlib.md5(full.encode("utf-8")).hexdigest()[:12],
+            })
+            if len(tags) >= max_items:
+                break
+    except Exception as e:
+        return {"page": url, "categories": [], "count": 0, "error": str(e),
+                "next_page": None, "page_num": 1, "kind": "porntags"}
+    if not tags:
+        return {"page": base, "page_title": title, "categories": [], "count": 0,
+                "error": "Tag list not found in the page the server received - "
+                         "the site may be blocking the scraper.",
+                "next_page": None, "page_num": 1, "kind": "porntags"}
+    return {"page": base, "page_title": title, "categories": tags, "count": len(tags),
+            "next_page": None, "next_is_guess": False, "page_num": 1, "kind": "porntags"}
+
 # ----------------------------------------------------------------
 # STUDIO SECTIONS - the "sites" listing page groups its own preview
 # videos under each studio name ("WIFEY", "See All 87 Videos", a few
