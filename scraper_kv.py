@@ -25,7 +25,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from scraper import (
     scrape_page, scrape_categories, scrape_tags, scrape_studio_sections,
-    scrape_superporn_categories, scrape_models, search_many, fetch_html,
+    scrape_superporn_categories, scrape_models, scrape_pornvideobb_tags,
+    search_many, fetch_html,
     _current_page_number, _guess_next_page, _find_next_page_link,
     resolve_full_video_url,
 )
@@ -719,7 +720,11 @@ def scrape_channels_bundle(category: str | None = None, max_pages: int | None = 
 def scrape_categories_and_cache(url: str, mode: str = "categories", page_num: int | None = None):
     key = f"categories:{url}:{mode}:{page_num or 1}"
     try:
-        if mode in ("models", "pornstars"):
+        _p = urlparse(url if "://" in url else "https://" + url)
+        _host, _path = (_p.hostname or "").lower(), (_p.path or "/").lower()
+        if _host.endswith("pornvideobb.com") and _path.startswith("/tags"):
+            data = scrape_pornvideobb_tags(url)
+        elif mode in ("models", "pornstars"):
             data = scrape_models(url, page_num=page_num)
         elif mode == "sites":
             data = scrape_studio_sections(url)
@@ -780,6 +785,7 @@ LISTINGS = [
     ("https://www.freesexvideos.xxx/sites/",  "sites",     3),   # Networks (General)
     ("https://www.bdsmhole.com/studios/",     "categories", 2),  # Networks (BDSM)
     ("https://www.bdsmhole.com/categories/",  "categories", 2),
+    ("https://2023.pornvideobb.com/tags/",    "tags",       1),  # PornVideoBB genres
 ]
 # (listing url, env var, default count) -> how many "See All"/model/category feeds to pre-scrape
 FEED_GROUPS = [

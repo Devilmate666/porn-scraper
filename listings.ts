@@ -16,6 +16,10 @@ const CARD_SUBSTR = ["categories_card", "category-card", "category_card", "site-
 const PATH_OK = /\/(?:categor(?:y|ies)|cat|tags?|c|video-category|studio|studios|channel|channels|model|models|site|sites|network|networks|series|sponsor|pornstar)\//;
 const STUDIO_PATH = /\/(?:sites?|studios?|channels?|networks?|sponsors?)\/[^/?#]+/i;
 const SITE_SECTIONS = ["sites", "site", "networks", "network", "studios", "studio", "channels", "channel"];
+// a video page is never a tag (pornvideobb's /tags/ page embeds video cards)
+const VIDEO_FRAGMENTS = ["/video/", "/videos/", "/watch/", "/play/", "/player/",
+  "/embed/", "/v/", "/clip/", "/clips/", "/movie/", "/movies/",
+  "/stream/", "/tube/", "/p/", "/content_video/", "/content_video_alt/"];
 const SP_SKIP = new Set(["categories", "series", "pornstars", "login", "signup", "upload", "contact", "tos", "dmca", "cookies-policy", "search", "live", "es", "de", "it", "fr", "br", "nl"]);
 const COUNT_TAIL = /([\d][\d,.]*)\s*(?:videos?|vids?|clips?)\s*$/i;
 const MODEL_HREF = /\/(?:models?|pornstars?|actresses)\/([^/?#]+)\/?$/i;
@@ -169,6 +173,8 @@ function collectTagLinks(root: HTMLElement, base: string, baseHost: string) {
     if (baseHost && p.host !== baseHost) continue;
     const segs = (p.pathname || "/").split("/").filter(Boolean);
     if (segs.length < 2) continue;
+    const lowPath = (p.pathname || "/").toLowerCase();
+    if (VIDEO_FRAGMENTS.some((f) => lowPath.includes(f))) continue;   // a video page is not a tag
     const name = cleanTagName(collapse(a.text || "") || attr(a, "title"));
     if (name) found.push([segs[0].toLowerCase(), full, name]);
   }

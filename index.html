@@ -2704,22 +2704,37 @@ function updateNavFades() {
   siteActions.classList.toggle('fade-left', siteActions.scrollLeft > 4);
   siteActions.classList.toggle('fade-right', max > 4 && siteActions.scrollLeft < max - 4);
 }
-/** Scroll the button row just enough to reveal the pressed button: clipped on the
- *  right edge -> scroll right, clipped on the left edge -> scroll left, already
- *  fully visible -> stay put. (Both ways, not only to the right.) */
+/** Scroll the button row just enough to reveal the pressed button AND the next one
+ *  in the reading direction completely (LTR: the button after it, RTL: the one
+ *  before it). Clipped past the right edge -> scroll right, clipped past the left
+ *  edge -> scroll left, already fully visible -> stay put. Works both ways,
+ *  LTR and RTL layouts alike. */
 function alignNavButton(button) {
   if (!button || !siteActions || !siteActions.isConnected || siteActions.closest('#navActionStaging')) return;
   const bar = siteActions, br = bar.getBoundingClientRect(), r = button.getBoundingClientRect();
   if (!br.width || !r.width) return;
-  const max = Math.max(0, bar.scrollWidth - bar.clientWidth);
   const pad = 12;
+  const rtl = (getComputedStyle(bar).direction || 'ltr') === 'rtl';
+  const buddy = rtl ? button.previousElementSibling : button.nextElementSibling;
+  const rb = buddy ? buddy.getBoundingClientRect() : null;
   let target = bar.scrollLeft;
-  if (r.right > br.right - pad) {
-    target = bar.scrollLeft + (r.right - (br.right - pad));        // hidden past the right edge
-  } else if (r.left < br.left + pad) {
-    target = bar.scrollLeft - ((br.left + pad) - r.left);          // hidden past the left edge
+  if (!rtl) {
+    const edge = rb ? Math.max(r.right, rb.right) : r.right;
+    if (edge > br.right - pad) {
+      target = bar.scrollLeft + (edge - (br.right - pad));        // reveal right (the next button)
+    } else if (r.left < br.left + pad) {
+      target = bar.scrollLeft - ((br.left + pad) - r.left);       // reveal left
+    }
+  } else {
+    const edge = rb ? Math.min(r.left, rb.left) : r.left;
+    if (edge < br.left + pad) {
+      target = bar.scrollLeft - ((br.left + pad) - edge);         // reveal left (RTL "next")
+    } else if (r.right > br.right - pad) {
+      target = bar.scrollLeft + (r.right - (br.right - pad));     // reveal right
+    }
   }
-  target = Math.max(0, Math.min(Math.round(target), max));
+  const max = Math.max(0, bar.scrollWidth - bar.clientWidth);
+  target = Math.max(rtl ? -max : 0, Math.min(Math.round(target), rtl ? 0 : max));
   if (Math.abs(target - bar.scrollLeft) > 1) {
     try { bar.scrollTo({ left: target, behavior: 'smooth' }); } catch (_) { bar.scrollLeft = target; }
   }

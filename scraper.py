@@ -1113,7 +1113,10 @@ def _collect_tag_links(root, base, base_host):
         if base_host and p.netloc != base_host:
             continue
         segs = [x for x in (p.path or "/").split("/") if x]
-        if len(segs) < 2:            # /categories/ , /sites/ , /ru/ ... are not tags
+        if len(segs) < 2:        # /categories/ , /sites/ , /ru/ ... are not tags
+            continue
+        low_path = (p.path or "/").lower()
+        if any(f in low_path for f in VIDEO_PATH_FRAGMENTS):   # a video page is not a tag
             continue
         name = _clean_tag_name(a.get_text(" ", strip=True) or a.get("title"))
         if not name:
