@@ -1041,13 +1041,14 @@ body.fav-panel-open { overflow: hidden; }
   color: #9fb0cc; padding: .2rem 1.4rem .35rem;
 }
 #favPanel .fav-card-row {
-  display: flex; gap: .7rem; overflow-x: auto;
-  padding: 0 1.4rem .3rem; scrollbar-width: none;
-  -webkit-overflow-scrolling: touch;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: .7rem;
+  padding: 0 1.4rem .3rem;
 }
 #favPanel .fav-card-row::-webkit-scrollbar { display: none; }
 #favPanel .fav-card {
-  flex: 0 0 auto; width: 130px;
+  width: 100%;
   background: #171d28; border: 1px solid #232b3b; border-radius: .8rem;
   overflow: hidden; cursor: pointer; text-decoration: none; color: inherit;
   transition: .15s; display: flex; flex-direction: column;
@@ -1070,12 +1071,18 @@ body.fav-panel-open { overflow: hidden; }
   color: #e2eafc; line-height: 1.3;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+#favPanel .fav-see-all {
+  grid-column: 1 / -1; justify-self: center;
+  border: 1px solid #2e3749; background: #1e2432; color: #d0daea;
+  border-radius: 30px; cursor: pointer; font-family: inherit; font-size: .8rem;
+  padding: .4rem .9rem; transition: .15s;
+}
+#favPanel .fav-see-all:hover { background: #29303f; border-color: #46526b; color: #fff; }
 #favPanel .fav-empty {
   text-align: center; padding: 3rem 1.5rem; color: #7a8aaa; font-size: .9rem; line-height: 1.6;
 }
 @media (max-width: 700px) {
   #favPanel .fav-panel-head { padding: .6rem .8rem; }
-  #favPanel .fav-card { width: 110px; }
   #favPanel .fav-card-name { font-size: .72rem; padding: .4rem .45rem .5rem; }
 }
 /* history page: sits between the top of the screen and the bottom bar */
@@ -8151,8 +8158,21 @@ document.addEventListener('keydown', (e) => {
     } catch (e) { console.error('[favPanel] navigate', e); }
     closeFavoritesPanel();
   }
+  const SEEN_LIMIT = 6;
+  let favExpandedSections = new Set();
+  function renderFavSection(t, arr) {
+    const expanded = favExpandedSections.has(t);
+    const recs = expanded ? arr : arr.slice(0, SEEN_LIMIT);
+    let row = `<div class="fav-card-row" data-favtype="${esc(t)}">${recs.map(favCardHtml).join('')}`;
+    if (arr.length > SEEN_LIMIT) {
+      row += `<button type="button" class="fav-see-all" data-favtype="${esc(t)}">${expanded ? 'Show Less' : 'See All'} (${arr.length})</button>`;
+    }
+    row += `</div>`;
+    return `<div class="fav-section" data-type="${esc(t)}"><div class="fav-section-title">${TYPES[t].icon} ${TYPES[t].label}</div>${row}</div>`;
+  }
   function renderFavoritesPanel() {
     if (!panelBody) return;
+    const y = panelBody.scrollTop;
     const items = Object.values(db.items);
     if (!items.length) {
       panelBody.innerHTML = '<div class="fav-empty">♥ Nothing favorited yet. Tap a heart on any card to add it here.</div>';
@@ -8160,19 +8180,23 @@ document.addEventListener('keydown', (e) => {
     }
     const byType = {}; ORDER.forEach((t) => (byType[t] = []));
     items.forEach((r) => { if (byType[r.type]) byType[r.type].push(r); });
-    let html = '';
-    ORDER.forEach((t) => {
+    panelBody.innerHTML = ORDER.map((t) => {
       const arr = byType[t].sort((a, b) => (b.ts || 0) - (a.ts || 0));
-      if (!arr.length) return;
-      html += `<div class="fav-section"><div class="fav-section-title">${TYPES[t].icon} ${TYPES[t].label}</div><div class="fav-card-row">${arr.map(favCardHtml).join('')}</div></div>`;
-    });
-    panelBody.innerHTML = html;
+      return arr.length ? renderFavSection(t, arr) : '';
+    }).join('');
+    panelBody.scrollTop = y;
     panelBody.querySelectorAll('a.fav-card').forEach((a) => {
       const rec = db.items[a.getAttribute('data-favid')];
       if (!rec) return;
       a.title = rec.name || '';
       a.setAttribute('aria-label', rec.name || (TYPES[rec.type] ? TYPES[rec.type].label : 'Open'));
       a.addEventListener('click', (e) => { e.preventDefault(); navigateFav(rec); });
+    });
+    panelBody.querySelectorAll('.fav-see-all').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        if (favExpandedSections.has(btn.dataset.favtype)) favExpandedSections.delete(btn.dataset.favtype); else favExpandedSections.add(btn.dataset.favtype);
+        renderFavoritesPanel();
+      });
     });
   }
   function syncPanelFilterToggle() {
