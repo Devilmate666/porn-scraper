@@ -933,8 +933,9 @@
 /* ===================== Bottom bar (mirrors the top bar) ===================== */
 :root { --favbar-h: 3.9rem; }
 .app { padding-bottom: calc(var(--favbar-h) + 1rem); }
+.fav-hidden { display: none !important; }
+body.fav-filter .sentinel { display: none !important; }       /* no endless loading while only favorites are shown */
 body.hist-open { overflow: hidden; }
-body.fav-open { overflow: hidden; }
 
 #favBar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 350; background: #0d121c; border-top: 1px solid #252e3f;
   box-shadow: 0 -8px 16px -8px rgba(0,0,0,.6); padding: .55rem 1rem max(.55rem, env(safe-area-inset-bottom)); }
@@ -950,7 +951,12 @@ body.fav-open { overflow: hidden; }
   #favBar { padding-left: .65rem; padding-right: .65rem; }
   #favBar button.action { flex: 1 1 0; max-width: 16rem; padding: .55rem .75rem; font-size: .75rem; }
 }
-body.player-open #favBar, body.player-open #histPanel { display: none; }
+body.player-open #favBar, body.player-open #favStatus, body.player-open #histPanel, body.player-open #favPanel { display: none; }
+
+#favStatus { position: fixed; left: 50%; bottom: calc(var(--favbar-h) + .6rem); transform: translateX(-50%); z-index: 349; max-width: min(92vw, 520px);
+  padding: .45rem .95rem; border-radius: 999px; background: rgba(23,29,42,.96); border: 1px solid #3a4468; color: #fecdd6; font-size: .78rem; text-align: center;
+  pointer-events: none; box-shadow: 0 8px 22px -8px rgba(0,0,0,.85); }
+#favStatus[hidden] { display: none; }
 
 /* account button + sign-in dialog */
 #acctBtn .a-dot { width: .5rem; height: .5rem; border-radius: 50%; background: #6b7690; flex: none; }
@@ -976,12 +982,102 @@ body.player-open #favBar, body.player-open #histPanel { display: none; }
 .acct-msg { min-height: 1.1rem; font-size: .8rem; color: #ff8a9b; margin: -.2rem 0 .3rem; }
 .acct-msg.ok { color: #6fe3b0; }
 .acct-who { font-weight: 600; word-break: break-all; color: #fff; }
+#favStatus.empty { color: #cbd5e1; }
 
 #favToast { position: fixed; left: 50%; bottom: calc(var(--favbar-h) + 3.4rem); transform: translate(-50%, 10px); z-index: 450; max-width: 90vw; padding: .55rem 1rem;
   border-radius: 999px; background: #1e2432; border: 1px solid #3a4468; color: #fff; font-size: .8rem; opacity: 0; pointer-events: none;
   transition: opacity .18s ease, transform .18s ease; box-shadow: 0 10px 28px -8px rgba(0,0,0,.85); }
 #favToast.show { opacity: 1; transform: translate(-50%, 0); }
 
+/* ===================== Favorites panel overlay ===================== */
+body.fav-panel-open { overflow: hidden; }
+#favPanel {
+  position: fixed; left: 0; right: 0; top: 0; bottom: var(--favbar-h); z-index: 360;
+  display: none; flex-direction: column;
+  background: rgba(10,12,16,.96); backdrop-filter: blur(4px);
+  box-shadow: 0 8px 30px -16px rgba(0,0,0,.85);
+  opacity: 0; pointer-events: none; transition: opacity .18s ease;
+}
+#favPanel.show { display: flex; opacity: 1; pointer-events: auto; }
+#favPanel .fav-handle {
+  width: 40px; height: 4px; border-radius: 2px; background: #3a465e;
+  margin: .35rem auto 0; flex-shrink: 0;
+}
+#favPanel .fav-panel-head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: .7rem 1.2rem .6rem; border-bottom: 1px solid #252e3f; flex-shrink: 0;
+}
+#favPanel .fav-panel-title {
+  font-size: 1.1rem; font-weight: 700; color: #e6ecf8;
+}
+#favPanel .fav-panel-actions {
+  display: flex; gap: .35rem;
+}
+#favPanel .fav-filter-toggle {
+  display: inline-flex; align-items: center; gap: .3rem;
+  font-size: .78rem; padding: .35rem .8rem;
+  border: 1px solid #2e3749; background: #1e2432; color: #d0daea;
+  border-radius: 30px; cursor: pointer; font-family: inherit; transition: .15s;
+}
+#favPanel .fav-filter-toggle:hover { background: #29303f; border-color: #46526b; }
+#favPanel .fav-filter-toggle.active {
+  background: linear-gradient(145deg, #4f46e5, #6366f1);
+  border-color: #7c8af8; color: #fff;
+}
+#favPanel .fav-close {
+  border: 1px solid #2e3749; background: #1e2432; color: #cbd5e1;
+  border-radius: 20px; padding: .25rem .7rem; cursor: pointer;
+  font-family: inherit; font-size: 1.1rem; line-height: 1; transition: .15s;
+}
+#favPanel .fav-close:hover { background: #29303f; border-color: #46526b; }
+#favPanel .fav-panel-body {
+  flex: 1; overflow-y: auto; overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: .3rem 0 1rem;
+}
+#favPanel .fav-section { margin-bottom: 1.3rem; }
+#favPanel .fav-section-title {
+  font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  color: #9fb0cc; padding: .2rem 1.4rem .35rem;
+}
+#favPanel .fav-card-row {
+  display: flex; gap: .7rem; overflow-x: auto;
+  padding: 0 1.4rem .3rem; scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+#favPanel .fav-card-row::-webkit-scrollbar { display: none; }
+#favPanel .fav-card {
+  flex: 0 0 auto; width: 130px;
+  background: #171d28; border: 1px solid #232b3b; border-radius: .8rem;
+  overflow: hidden; cursor: pointer; text-decoration: none; color: inherit;
+  transition: .15s; display: flex; flex-direction: column;
+}
+#favPanel .fav-card:hover {
+  transform: translateY(-2px); border-color: #4a5b7d;
+  box-shadow: 0 8px 22px rgba(0,0,0,.4);
+}
+#favPanel .fav-card-img {
+  width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block;
+}
+#favPanel .fav-card-ph {
+  width: 100%; aspect-ratio: 16/9;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.3rem; font-weight: 700; text-transform: uppercase;
+  color: #3d4c6e; background: linear-gradient(135deg, #111726, #1b2338);
+}
+#favPanel .fav-card-name {
+  padding: .5rem .6rem .6rem; font-size: .8rem; font-weight: 600;
+  color: #e2eafc; line-height: 1.3;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#favPanel .fav-empty {
+  text-align: center; padding: 3rem 1.5rem; color: #7a8aaa; font-size: .9rem; line-height: 1.6;
+}
+@media (max-width: 700px) {
+  #favPanel .fav-panel-head { padding: .6rem .8rem; }
+  #favPanel .fav-card { width: 110px; }
+  #favPanel .fav-card-name { font-size: .72rem; padding: .4rem .45rem .5rem; }
+}
 /* history page: sits between the top of the screen and the bottom bar */
 #histPanel { position: fixed; left: 0; right: 0; top: 0; bottom: var(--favbar-h); z-index: 340; display: flex; flex-direction: column; background: #0a0c10; }
 #histPanel[hidden] { display: none; }
@@ -1000,28 +1096,6 @@ body.player-open #favBar, body.player-open #histPanel { display: none; }
   cursor: pointer; font-size: .8rem; color: #fff; background: rgba(8,11,18,.68); border: 1px solid rgba(255,255,255,.18); backdrop-filter: blur(4px); }
 .hist-x:hover { background: #7f1d3a; border-color: #ff4d6d88; }
 .hist-x:focus-visible { outline: 2px solid #7c8af8; outline-offset: 2px; }
-
-/* Favorites panel: same layout as history panel */
-#favPanel { position: fixed; left: 0; right: 0; top: 0; bottom: var(--favbar-h); z-index: 340; display: flex; flex-direction: column; background: #0a0c10; }
-#favPanel[hidden] { display: none; }
-#favPanel .fp-head { flex: none; display: flex; align-items: center; justify-content: space-between; gap: .8rem; flex-wrap: wrap;
-  padding: .75rem 1rem; background: #0d121c; border-bottom: 1px solid #252e3f; box-shadow: 0 8px 16px -8px rgba(0,0,0,.6); }
-#favPanel .fp-title { font-size: 1.05rem; font-weight: 700; }
-#favPanel .fp-title small { color: #8b9ab8; font-weight: 500; }
-#favPanel .fp-actions { display: flex; gap: .5rem; }
-#favPanel .fp-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
-#favPanel .fp-scroll > div { max-width: 1600px; margin: 0 auto; padding-bottom: 1.5rem; }
-#favPanel .fp-h { padding: 1.1rem 1.4rem .1rem; font-size: .95rem; font-weight: 700; color: #cbd5e1; }
-#favPanel .fp-h small { color: #8b9ab8; font-weight: 500; margin-left: .3rem; }
-#favPanel .fp-empty { text-align: center; color: #8b9ab8; padding: 4rem 1.5rem; font-size: .9rem; line-height: 1.7; }
-#favPanel .fp-empty b { display: block; color: #e2e8f0; font-size: 1.05rem; margin-bottom: .3rem; }
-.fav-x { position: absolute; top: .45rem; left: .45rem; z-index: 6; width: 2rem; height: 2rem; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-  cursor: pointer; font-size: .8rem; color: #fff; background: rgba(8,11,18,.68); border: 1px solid rgba(255,255,255,.18); backdrop-filter: blur(4px); }
-.fav-x:hover { background: #7f1d3a; border-color: #ff4d6d88; }
-.fav-x:focus-visible { outline: 2px solid #7c8af8; outline-offset: 2px; }
-.fav-panel-back { display: inline-flex; align-items: center; gap: .4rem; padding: .45rem .8rem; border-radius: 20px; background: #1e2432; border: 1px solid #2e3749; color: #cbd5e1; font-size: .8rem; cursor: pointer; font-family: inherit; white-space: nowrap; }
-.fav-panel-back:hover { background: #29303f; border-color: #46526b; }
-.fav-panel-back:focus-visible { outline: 2px solid #7c8af8; outline-offset: 2px; }
 
 </style>
 <base target="_blank">
@@ -1345,6 +1419,10 @@ let navSilent = false;
 try { history.scrollRestoration = 'manual'; } catch (_) {}
 let navIdx = 0;                 // position of the history entry on screen: tells Back from Forward
 const NAV_SID = Math.random().toString(36).slice(2);   // entries from an earlier page load are not comparable
+/* Favorites / History panel entries are pushed with pushState (not via pushNav) so they
+   get their own Back slot. When a panel entry is popped, the main popstate handler is
+   skipped; this setter keeps navIdx in sync in that case. */
+window.__setNavIdx = (v) => { navIdx = v; };
 let suggestGuardSkip = false;   // legacy guard kept for compatibility
 let suggestHistoryOpen = false; // the dropdown owns one history entry while it is open
 let suggestHistoryClosing = false;
@@ -3491,7 +3569,12 @@ function playInMainPlayer(detail, title, opts = {}) {
     // Remember exactly where the user was in the current results page so that closing the
     // panel returns to the same page at the same scroll position.
     const under = currentNavState(true);
-    try { history.replaceState({ ...under, scrollY: scrollBefore, ts: Date.now(), idx: navIdx, sid: NAV_SID }, '', ''); } catch {}
+    // If a Favorites/History panel entry was live on the stack, keep its flag on this
+    // "under" slot so Back from the player lands back on the open panel (not the bare page).
+    const cur = history.state || {};
+    const replaced = { ...under, scrollY: scrollBefore, ts: Date.now(), idx: navIdx, sid: NAV_SID };
+    if (cur && cur.panel) { replaced.panel = cur.panel; if (cur.panelScrollY != null) replaced.panelScrollY = cur.panelScrollY; }
+    try { history.replaceState(replaced, '', ''); } catch {}
     pushNav({
       ...under,
       view: 'player',
@@ -7670,11 +7753,12 @@ document.addEventListener('keydown', (e) => {
     document.querySelectorAll('.fav-btn[data-fav]').forEach(paint);
     syncPlayerBtn();
     updateBar();
+    if (favPanelOpen) renderFavoritesPanel();
     applyFilter();
   }
   function scan(root) {
     if (!root || root.nodeType !== 1) return;
-    if (root.closest && root.closest('#favBar')) return;
+    if (root.closest && (root.closest('#favBar') || root.closest('#favPanel'))) return;
     if (root.matches(SEL)) decorate(root);
     root.querySelectorAll(SEL).forEach(decorate);
   }
@@ -7752,8 +7836,10 @@ document.addEventListener('keydown', (e) => {
 
 
   // =====================================================================================
-  //  Bottom bar (same look as the top bar): Favorites + Watch history
+  //  Bottom bar (same look as the top bar): Favorites filter + Watch history
   // =====================================================================================
+  let filterOn = false;
+  const ITEM_SEL = 'a.card[data-detail], a.category-card[data-link], a.series-card[data-link], a.cam-card';
   const playerActive = () => { const m = document.getElementById('mainPlayer'); return !!(m && m.classList.contains('active')); };
   const idFor = (el) => {
     let id = elId.get(el);
@@ -7774,152 +7860,66 @@ document.addEventListener('keydown', (e) => {
     const sec = el.closest('.studio-section');
     return !!(sec && sec !== el && headOf(sec) && headIsFav(sec));
   }
+  function applyFilter() {
+    const items = document.querySelectorAll(ITEM_SEL);
+    items.forEach((el) => el.classList.toggle('fav-hidden', filterOn && !el.closest('#histPanel') && !isFavEl(el)));
+    document.querySelectorAll('.studio-section').forEach((sec) => {        // rows (header + cards): hidden when nothing in them is a favorite
+      if (!headOf(sec)) return;
+      const any = headIsFav(sec) || [...sec.querySelectorAll(ITEM_SEL)].some((c) => !c.classList.contains('fav-hidden'));
+      sec.classList.toggle('fav-hidden', filterOn && !any);
+    });
+    updateStatus(items);
+  }
 
   // ---- the bar
   const bar = document.createElement('nav');
   bar.id = 'favBar';
   bar.setAttribute('aria-label', 'Favorites and history');
   bar.innerHTML = `<div class="fb-row">
-      <button type="button" class="action" id="favBtn" aria-pressed="false" title="Your favorites">${HEART}<span class="fb-label">Favorites</span><span class="fav-count">0</span></button>
+      <button type="button" class="action" id="favFilterBtn" aria-pressed="false" title="Your favorites">${HEART}<span class="fb-label">Favorites</span><span class="fav-count">0</span></button>
       <button type="button" class="action" id="histBtn" aria-pressed="false" title="Videos you watched recently"><span aria-hidden="true">🕘</span><span class="fb-label">History</span></button>
     </div>`;
   document.body.appendChild(bar);
-  const favBtn = bar.querySelector('#favBtn'), histBtn = bar.querySelector('#histBtn');
+  const favBtn = bar.querySelector('#favFilterBtn'), histBtn = bar.querySelector('#histBtn');
+  const status = document.createElement('div');
+  status.id = 'favStatus';
+  status.setAttribute('role', 'status');
+  status.hidden = true;
+  document.body.appendChild(status);
   const setBarHeight = () => { const h = bar.offsetHeight; if (h > 0) document.documentElement.style.setProperty('--favbar-h', h + 'px'); };
   window.addEventListener('resize', () => setBarHeight());
 
   function updateBar() {
+    const favOn = filterOn || favPanelOpen;
     favBtn.querySelector('.fav-count').textContent = String(count());
-    favBtn.classList.toggle('active', favOpen);
-    favBtn.setAttribute('aria-pressed', favOpen ? 'true' : 'false');
-    favBtn.querySelector('.fb-label').textContent = 'Favorites';
-    favBtn.querySelector('svg').classList.toggle('on', favOpen);
+    favBtn.classList.toggle('active', favOn);
+    favBtn.setAttribute('aria-pressed', favOn ? 'true' : 'false');
+    favBtn.querySelector('.fb-label').textContent = filterOn ? 'Favorites only' : 'Favorites';
+    favBtn.querySelector('svg').classList.toggle('on', favOn);
     histBtn.classList.toggle('active', histOpen);
     histBtn.setAttribute('aria-pressed', histOpen ? 'true' : 'false');
   }
-  favBtn.addEventListener('click', () => (favOpen ? closeFavorites() : openFavorites()));
-  histBtn.addEventListener('click', () => (histOpen ? closeHistory() : openHistory()));
-
-  // =====================================================================================
-  //  Favorites panel (categorized like history)
-  // =====================================================================================
-  const favPanel = document.createElement('div');
-  favPanel.id = 'favPanel';
-  favPanel.hidden = true;
-  favPanel.setAttribute('role', 'dialog');
-  favPanel.setAttribute('aria-label', 'Favorites');
-  favPanel.innerHTML = `<div class="fp-head"><div class="fp-title">♥ Favorites <small id="fpCount"></small></div>
-      <div class="fp-actions"><button type="button" class="action fav-panel-back" id="fpBack">← Back</button><button type="button" class="action" id="fpClear">🗑 Clear All</button><button type="button" class="action" id="fpClose">✕ Close</button></div></div>
-    <div class="fp-scroll" id="fpScroll"><div id="fpBody"></div></div>`;
-  document.body.appendChild(favPanel);
-
-  let favOpen = false;
-
-  function favCard(rec, i) {
-    const item = { link: rec.link, title: rec.name, thumbnail: (rec.thumbs && rec.thumbs[0]) || '', duration: rec.extra?.duration || null, views: rec.extra?.views || null, rating: rec.extra?.rating || null, _host: rec.sub || '' };
-    return typeof cardHtml === 'function' ? cardHtml(item, 'fav-' + i)
-      : `<a class="card" href="#" data-detail="${esc(rec.link)}" data-title="${esc(rec.name)}"><div class="thumb"><img src="${esc((rec.thumbs && rec.thumbs[0]) || '')}" alt=""></div><div class="info"><div class="title">${esc(rec.name)}</div></div></a>`;
+  function updateStatus(items) {
+    status.hidden = !filterOn;
+    if (!filterOn) return;
+    let shown = 0;
+    (items || document.querySelectorAll(ITEM_SEL)).forEach((el) => { if (!el.closest('.fav-hidden')) shown++; });
+    status.textContent = shown
+      ? `♥ Showing favorites only · ${shown} here`
+      : count() ? 'No favorites in this view. Try another tab, or turn the filter off.' : 'No favorites yet. Tap ♥ on anything to add it.';
+    status.classList.toggle('empty', !shown);
   }
-
-  function renderFavorites() {
-    const scroll = favPanel.querySelector('#fpScroll'), y = scroll.scrollTop;
-    const all = F.all();
-    favPanel.querySelector('#fpCount').textContent = all.length ? `· ${all.length}` : '';
-    favPanel.querySelector('#fpClear').hidden = !all.length;
-    const body = favPanel.querySelector('#fpBody');
-    if (!all.length) {
-      body.innerHTML = '<div class="fp-empty"><b>No favorites yet</b>Tap ♥ on any video, cam, category, star, or series to add it.</div>';
-      return;
-    }
-    const groups = {};
-    const TYPE_ORDER = ['video', 'cam', 'channel', 'star', 'category', 'series', 'network', 'camnet'];
-    all.forEach(rec => {
-      if (!groups[rec.type]) groups[rec.type] = [];
-      groups[rec.type].push(rec);
-    });
-    const htmlParts = [];
-    TYPE_ORDER.forEach(type => {
-      const recs = groups[type];
-      if (!recs || !recs.length) return;
-      const T = TYPES[type];
-      const cards = recs.map((r, idx) => favCard(r, idx)).join('');
-      htmlParts.push(`<div class="fp-h">${T.icon} ${T.label} <small>${recs.length}</small></div><div class="videos hp-grid">${cards}</div>`);
-    });
-    body.innerHTML = htmlParts.join('') || '<div class="fp-empty"><b>No favorites yet</b>Tap ♥ on any video, cam, category, star, or series to add it.</div>';
-    // Add remove buttons to each card
-    body.querySelectorAll('a.card').forEach((a, i) => {
-      const x = document.createElement('span');
-      x.className = 'fav-x';
-      x.setAttribute('role', 'button');
-      x.tabIndex = 0;
-      x.title = 'Remove from favorites';
-      x.setAttribute('aria-label', 'Remove from favorites');
-      x.textContent = '✕';
-      const th = a.querySelector('.thumb');
-      if (th) th.appendChild(x);
-    });
-    scroll.scrollTop = y;
-  }
-
-  function openFavorites() {
-    if (histOpen) closeHistory();
-    favOpen = true;
-    favPanel.hidden = false;
-    document.body.classList.add('fav-open');
-    renderFavorites();
-    favPanel.querySelector('#fpScroll').scrollTop = 0;
+  function setFilter(on) {
+    if (on && !count()) { toast('No favorites yet. Tap ♥ on anything to add it'); return; }
+    if (on && histOpen) closeHistory();
+    filterOn = on;
+    document.body.classList.toggle('fav-filter', on);       // CSS also stops the endless-scroll loader while filtering
     updateBar();
+    applyFilter();
+    if (on) window.scrollTo(0, 0);
   }
-
-  function closeFavorites() {
-    if (!favOpen) return;
-    favOpen = false;
-    favPanel.hidden = true;
-    document.body.classList.remove('fav-open');
-    updateBar();
-  }
-
-  favPanel.querySelector('#fpClose').addEventListener('click', closeFavorites);
-  favPanel.querySelector('#fpBack').addEventListener('click', closeFavorites);
-  favPanel.querySelector('#fpClear').addEventListener('click', () => {
-    const all = F.all();
-    if (!all.length || !confirm(`Clear all ${all.length} favorites?`)) return;
-    all.forEach(rec => F.toggle(rec));
-    renderFavorites();
-    toast('All favorites cleared');
-  });
-
-  function favAct(e) {
-    const x = e.target.closest('.fav-x');
-    if (x) {
-      e.preventDefault(); e.stopPropagation();
-      const a = x.closest('a.card');
-      const k = a && normLink(a.getAttribute('data-detail'), false);
-      const rec = F.all().find(r => normLink(r.link, false) === k);
-      if (rec) F.toggle(rec);
-      renderFavorites();
-      return;
-    }
-    if (e.type !== 'click') return;
-    const a = e.target.closest('a.card');
-    if (!a) return;
-    e.preventDefault();
-    const detail = a.getAttribute('data-detail');
-    if (detail) { try { playInMainPlayer(detail, a.getAttribute('data-title') || 'Video'); } catch (err) { console.error('[favorites]', err); } }
-  }
-
-  favPanel.querySelector('#fpBody').addEventListener('click', favAct);
-  favPanel.querySelector('#fpBody').addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target.closest('.fav-x')) favAct(e); });
-
-  // Back button handler for Favorites panel
-  window.addEventListener('popstate', () => {
-    if (favOpen && !playerActive()) {
-      closeFavorites();
-      return;
-    }
-  });
-
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && favOpen && !playerActive()) { e.stopPropagation(); closeFavorites(); } }, true);
+  favBtn.addEventListener('click', () => (favPanelOpen ? dismissPanel('fav') : openFavoritesPanel()));
+  histBtn.addEventListener('click', () => (histOpen ? dismissPanel('hist') : openHistory()));
 
   // =====================================================================================
   //  Watch history (videos only: cams and live channels are not logged)
@@ -7959,7 +7959,7 @@ document.addEventListener('keydown', (e) => {
   hp.setAttribute('role', 'dialog');
   hp.setAttribute('aria-label', 'Watch history');
   hp.innerHTML = `<div class="hp-head"><div class="hp-title">🕘 Recently watched <small id="hpCount"></small></div>
-      <div class="hp-actions"><button type="button" class="action fav-panel-back" id="hpBack">← Back</button><button type="button" class="action" id="hpClear">🗑 Clear</button><button type="button" class="action" id="hpClose">✕ Close</button></div></div>
+      <div class="hp-actions"><button type="button" class="action" id="hpClear">🗑 Clear</button><button type="button" class="action" id="hpClose">✕ Close</button></div></div>
     <div class="hp-scroll" id="hpScroll"><div id="hpBody"></div></div>`;
   document.body.appendChild(hp);
 
@@ -8009,7 +8009,9 @@ document.addEventListener('keydown', (e) => {
     scroll.scrollTop = y;
   }
   function openHistory() {
-    if (favOpen) closeFavorites();
+    if (filterOn) setFilter(false);
+    if (favPanelOpen) { closeFavoritesPanel(); replacePanelEntry('hist'); }   // swap the live Favorites entry → History entry (same Back slot)
+    else { pushPanelEntry('hist'); }                                          // own a fresh Back entry
     histOpen = true;
     hp.hidden = false;
     document.body.classList.add('hist-open');
@@ -8017,15 +8019,14 @@ document.addEventListener('keydown', (e) => {
     hp.querySelector('#hpScroll').scrollTop = 0;
     updateBar();
   }
-  function closeHistory() {
+  function closeHistory() {                                  // visual only: keeps the entry so Back returns here
     if (!histOpen) return;
     histOpen = false;
     hp.hidden = true;
     document.body.classList.remove('hist-open');
     updateBar();
   }
-  hp.querySelector('#hpClose').addEventListener('click', closeHistory);
-  hp.querySelector('#hpBack').addEventListener('click', closeHistory);
+  hp.querySelector('#hpClose').addEventListener('click', () => dismissPanel('hist'));
   hp.querySelector('#hpClear').addEventListener('click', () => {
     if (!hist.length || !confirm(`Clear your watch history (${hist.length} video${hist.length === 1 ? '' : 's'})?`)) return;
     hist = [];
@@ -8049,16 +8050,186 @@ document.addEventListener('keydown', (e) => {
     if (!a) return;
     e.preventDefault();
     const detail = a.getAttribute('data-detail');
-    if (detail) { try { playInMainPlayer(detail, a.getAttribute('data-title') || 'Video'); } catch (err) { console.error('[history]', err); } }
+    if (detail) {
+      closeHistory();                                            // visual close: keeps the history entry for Back
+      try { playInMainPlayer(detail, a.getAttribute('data-title') || 'Video'); } catch (err) { console.error('[history]', err); }
+    }
   }
   hp.querySelector('#hpBody').addEventListener('click', histAct);
   hp.querySelector('#hpBody').addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target.closest('.hist-x')) histAct(e); });
-  // the player pushes / pops history entries: only a Back press with the history on screen closes it
-  window.addEventListener('popstate', () => {
-    if (!histOpen || playerActive() || Date.now() - lastPlayerChange < 900) return;
-    closeHistory();
+
+  // =====================================================================================
+  //  Favorites panel: a categorized overlay (Networks-style horizontal cards) opened from
+  //  the Favorites bar button. Replaces the old "toggle page filter on click" behavior.
+  // =====================================================================================
+  let favPanelOpen = false, panelScrollTop = 0;
+  /* ---- History API integration for overlays ----
+     Opening an overlay pushes one `panel`-tagged entry onto the Back stack (same URL,
+     so it's invisible to the address bar). Selecting an item pushes another entry on top,
+     so Back returns to the open overlay, and Back again leaves it. Esc / ✕ / backdrop
+     Back-out the entry; popstate (below) closes/opens the overlay on the way. */
+  function pushPanelEntry(type) {
+    const base = history.state || {};
+    try { history.pushState({ ...base, panel: type, panelScrollY: window.scrollY, ts: Date.now() }, '', location.href); return true; }
+    catch (_) { return false; }
+  }
+  function replacePanelEntry(type) {                          // swap one overlay for another in the same Back slot (no new entry)
+    const st = history.state || {};
+    if (st && st.panel) try { history.replaceState({ ...st, panel: type, panelScrollY: window.scrollY, ts: Date.now() }, '', location.href); } catch (_) {}
+  }
+  function dismissPanel(type) {                               // UI close (Esc / ✕ / backdrop): Back-pops the entry; popstate hides the panel
+    const st = history.state || {};
+    if (st.panel === type) { try { history.back(); } catch (_) { if (type === 'fav') closeFavoritesPanel(); else closeHistory(); } }
+    else if (type === 'fav') closeFavoritesPanel();
+    else closeHistory();
+  }
+  function showFavoritesPanel() {                             // visual reveal only (a Back entry is already live on the stack)
+    if (favPanelOpen) return;
+    favPanelOpen = true;
+    panel.setAttribute('aria-hidden', 'false'); panel.classList.add('show');
+    document.body.classList.add('fav-panel-open');
+    renderFavoritesPanel(); syncPanelFilterToggle();
+    if (panelBody) panelBody.scrollTop = panelScrollTop;
+    updateBar();
+  }
+  function showHistoryPanel() {                               // visual reveal only (a Back entry is already live on the stack)
+    if (histOpen) return;
+    histOpen = true;
+    hp.hidden = false; document.body.classList.add('hist-open');
+    renderHistory(); hp.querySelector('#hpScroll').scrollTop = 0;
+    updateBar();
+  }
+  const panel = document.createElement('div');
+  panel.id = 'favPanel';
+  panel.setAttribute('role', 'dialog');
+  panel.setAttribute('aria-modal', 'true');
+  panel.setAttribute('aria-label', 'Your favorites');
+  panel.setAttribute('aria-hidden', 'true');
+  panel.innerHTML = `<div class="fav-handle"></div>
+    <div class="fav-panel-head">
+      <span class="fav-panel-title">Your favorites</span>
+      <div class="fav-panel-actions">
+        <button type="button" class="fav-filter-toggle" id="favPanelFilterToggle" title="Show only favorites on the current page">♥ Show favorites on page</button>
+        <button type="button" class="fav-close" id="favPanelClose" title="Close (Esc)">✕</button>
+      </div>
+    </div>
+    <div class="fav-panel-body" id="favPanelBody"></div>`;
+  document.body.appendChild(panel);
+  const panelBody = panel.querySelector('#favPanelBody');
+  const panelFilterToggle = panel.querySelector('#favPanelFilterToggle');
+  const panelClose = panel.querySelector('#favPanelClose');
+
+  function favCardHtml(rec) {
+    const thumb = (rec.thumbs && rec.thumbs[0]) || '';
+    const t = TYPES[rec.type] || { icon: '?' };
+    const img = thumb && !/^data:/i.test(thumb)
+      ? `<img class="fav-card-img" src="${esc(thumb)}" alt="">`
+      : `<span class="fav-card-ph">${t.icon || esc((rec.name || '').charAt(0) || '★')}</span>`;
+    return `<a href="#" class="fav-card" data-favid="${esc(idOf(rec.type, rec.key))}">${img}<span class="fav-card-name" title="${esc(rec.name || '')}">${esc(rec.name || '')}</span></a>`;
+  }
+  function navigateFav(rec) {
+    const link = (rec && rec.link) || '';
+    const name = rec.name || '';
+    try {
+      switch (rec.type) {
+        case 'video':
+        case 'cam':
+        case 'channel':
+          if (link && typeof playInMainPlayer === 'function') playInMainPlayer(link, name); break;
+        case 'star':
+        case 'series':
+        case 'network':
+        case 'category':
+          if (link && typeof openMetaLink === 'function') openMetaLink(link, name);          // internal feed; handles source resolution + chan-cat
+          else if (link && typeof openCategoryFeed === 'function') openCategoryFeed(link, name);
+          else if (link) toast('Open this link in the browser');
+          break;
+        case 'camnet':
+          if (typeof openLiveCams === 'function') openLiveCams();                           // show all cams so the user can pick a provider
+          break;
+      }
+    } catch (e) { console.error('[favPanel] navigate', e); }
+    closeFavoritesPanel();
+  }
+  function renderFavoritesPanel() {
+    if (!panelBody) return;
+    const items = Object.values(db.items);
+    if (!items.length) {
+      panelBody.innerHTML = '<div class="fav-empty">♥ Nothing favorited yet. Tap a heart on any card to add it here.</div>';
+      return;
+    }
+    const byType = {}; ORDER.forEach((t) => (byType[t] = []));
+    items.forEach((r) => { if (byType[r.type]) byType[r.type].push(r); });
+    let html = '';
+    ORDER.forEach((t) => {
+      const arr = byType[t].sort((a, b) => (b.ts || 0) - (a.ts || 0));
+      if (!arr.length) return;
+      html += `<div class="fav-section"><div class="fav-section-title">${TYPES[t].icon} ${TYPES[t].label}</div><div class="fav-card-row">${arr.map(favCardHtml).join('')}</div></div>`;
+    });
+    panelBody.innerHTML = html;
+    panelBody.querySelectorAll('a.fav-card').forEach((a) => {
+      const rec = db.items[a.getAttribute('data-favid')];
+      if (!rec) return;
+      a.title = rec.name || '';
+      a.setAttribute('aria-label', rec.name || (TYPES[rec.type] ? TYPES[rec.type].label : 'Open'));
+      a.addEventListener('click', (e) => { e.preventDefault(); navigateFav(rec); });
+    });
+  }
+  function syncPanelFilterToggle() {
+    if (!panelFilterToggle) return;
+    panelFilterToggle.classList.toggle('active', filterOn);
+    panelFilterToggle.setAttribute('aria-pressed', filterOn ? 'true' : 'false');
+    panelFilterToggle.textContent = filterOn ? '✕ Showing favorites only' : '♥ Show favorites on page';
+  }
+  function openFavoritesPanel() {
+    if (favPanelOpen) return;
+    if (histOpen) { closeHistory(); replacePanelEntry('fav'); }   // swap the live History entry → Favorites entry
+    else { pushPanelEntry('fav'); }                                  // own a fresh Back entry
+    showFavoritesPanel();
+  }
+  function closeFavoritesPanel() {                                 // visual only: keeps the entry so Back returns here
+    if (!favPanelOpen) return;
+    panelScrollTop = panelBody ? panelBody.scrollTop : 0;
+    favPanelOpen = false;
+    panel.setAttribute('aria-hidden', 'true');
+    panel.classList.remove('show');
+    document.body.classList.remove('fav-panel-open');
+    updateBar();
+  }
+  panelClose.addEventListener('click', () => dismissPanel('fav'));
+  panelFilterToggle.addEventListener('click', () => { setFilter(!filterOn); syncPanelFilterToggle(); });
+  panel.addEventListener('click', (e) => { if (e.target === panel) dismissPanel('fav'); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && favPanelOpen && !playerActive()) { e.stopPropagation(); dismissPanel('fav'); }
+  }, true);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && histOpen && !playerActive()) { e.stopPropagation(); dismissPanel('hist'); }
+  }, true);
+
+  // ---- Back handlers for the Favorites & History overlays (two listeners) ----
+  // Capture (runs BEFORE the app's main popstate handler):
+  //   When Back/Forward leaves an open overlay's entry — the page underneath is already on
+  //   screen, so just close the overlay and stop here. This keeps dismissing a panel from
+  //   the Home page from accidentally tripping the "Where to?" guard.
+  window.addEventListener('popstate', (e) => {
+    if (!favPanelOpen && !histOpen) return;               // nothing overlay-open to close here
+    const mode = (e.state || {}).panel;
+    if (mode) return;                                    // landing ON an overlay entry is handled by the reopen listener below
+    if (typeof (e.state || {}).idx === 'number' && typeof window.__setNavIdx === 'function') window.__setNavIdx(e.state.idx);
+    e.stopImmediatePropagation();
+    if (favPanelOpen) closeFavoritesPanel(); else closeHistory();
+  }, true);
+
+  // Bubble (runs AFTER the app's main popstate handler):
+  //   When Back/Forward lands ON an overlay entry, the main handler has already restored the
+  //   underlying page (or re-rendered it), so (re)open the overlay on top.
+  window.addEventListener('popstate', (e) => {
+    const mode = (e.state || {}).panel;
+    if (!mode || favPanelOpen || histOpen) return;        // plain page, or overlay already open: nothing to do
+    if (mode === 'fav') showFavoritesPanel();
+    else if (mode === 'hist') showHistoryPanel();
   });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && histOpen && !playerActive()) { e.stopPropagation(); closeHistory(); } }, true);
+
 
   // ---- boot
   load();
@@ -8074,6 +8245,7 @@ document.addEventListener('keydown', (e) => {
     requestAnimationFrame(() => {
       const batch = pending; pending = new Set(); scheduled = false;
       batch.forEach(scan);
+      if (filterOn) applyFilter();                          // cards rendered later (new tab, scrolling) obey the filter too
     });
   }).observe(document.body, { childList: true, subtree: true });
   const mp = document.getElementById('mainPlayer');
@@ -8117,7 +8289,7 @@ document.addEventListener('keydown', (e) => {
       refreshHearts();
     },
   };
-  window.Favorites = { toggle, filter: setFilter, all: () => Object.values(db.items), history: () => hist.slice(), openHistory, closeHistory, count, toast, onChange: (f) => listeners.push(f), sync: syncApi };
+   window.Favorites = { toggle, filter: setFilter, all: () => Object.values(db.items), history: () => hist.slice(), openHistory, closeHistory, openFavoritesPanel, closeFavoritesPanel, dismissPanel, renderFavoritesPanel, isPanelOpen: () => favPanelOpen, count, toast, onChange: (f) => listeners.push(f), sync: syncApi };
 })();
 </script>
 <script>
