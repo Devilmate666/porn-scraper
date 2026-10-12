@@ -1895,6 +1895,7 @@ function viewAlreadyShown(state) {
     case 'livechannels':  return activeTab === LIVECHANNELS_TAB && has(LIVECHANNELS_TAB);
     case 'websearch':     return activeTab === WEBSEARCH_TAB && has(WEBSEARCH_TAB) && (state.query || '') === webSearchQuery && scopeKeyOf(state.scope) === scopeKeyOf(webSearchScope);
     case 'feed':          return !!state.feedUrl && activeTab === state.feedUrl && (state.feedId || activeFeedId) === activeFeedId && has(state.feedUrl);
+    case 'tag-feed':      return !!state.feedUrl && activeTab === state.feedUrl && has(state.feedUrl);
   }
   return false;
 }
@@ -2010,6 +2011,17 @@ async function applyNavStateInner(state) {
       scheduleRecheck(state.feedUrl);
     } else {
       await openCategoryFeed(state.feedUrl, state.categoryName || 'Category', { skipPush: true });
+    }
+    return;
+  }
+  if (state.view === 'tag-feed' && state.feedUrl) {
+    // A combined tag feed: render from cache, or rebuild it from the tag name.
+    const ss = mixStateFor(state.feedUrl);
+    if (ss) {
+      activeTab = state.feedUrl;
+      renderMixedFeed(state.feedUrl.slice(MIX_PREFIX.length));
+    } else if (state.tag) {
+      await openTagFeed(state.tag, [], { skipPush: true, force: true });
     }
     return;
   }
@@ -3248,7 +3260,7 @@ function mixChipsHtml(ss, opts = {}) {
   };
   const filterActive = id => (id || null) === flt;
   const websiteActive = id => id === flt;
-  const filterRow = `<div class="mix-filter-row"><span class="mix-filter-label">Filters</span>${chip('', 'All', '', filterActive(''))}${FEEDS.map(f => chip(f.id, f.name, 'chip-' + f.id, filterActive(f.id))).join('')}</div>`;
+  const filterRow = (ss && ss.tag) ? '' : `<div class="mix-filter-row"><span class="mix-filter-label">Filters</span>${chip('', 'All', '', filterActive(''))}${FEEDS.map(f => chip(f.id, f.name, 'chip-' + f.id, filterActive(f.id))).join('')}</div>`;
   const websiteRow = `<div class="mix-filter-row"><span class="mix-filter-label">Websites</span>${SOURCES.map(s => chip(s.id, s.name, 'chip-source', websiteActive(s.id))).join('')}</div>`;
   return `<div class="mix-filters">${filterRow}</div>`;
 }
@@ -3264,15 +3276,15 @@ function bindChips() {
   });
 }
 
-/** One filter state: All, General, BDSM, or one individual website. */
+/** One filter state per mixed feed: the Home feed uses the global homeFilter,
+ *  a tag feed keeps its own (All / each website that has the tag). */
 function setMixFilter(filterKey) {
-  homeFilter = filterKey || null;
-  const home = mixStates.get(ALL_FEED.id);
-  if (home) home.filter = homeFilter;
-
-  const tabKey = mixKey(ALL_FEED.id);
-  const ss = home;
-  const feed = results.querySelector(`.feed[data-site="${tabKey}"]`);
+  const tabKey = activeTab;
+  const fkey = filterKey || null;
+  if (tabKey === mixKey(ALL_FEED.id)) homeFilter = fkey;
+  const ss = mixStateFor(tabKey);
+  if (ss) ss.filter = fkey;
+  const feed = results.querySelector(`.feed[data-site="${CSS.escape(tabKey)}"]`);
   const grid = feed && feed.querySelector('.videos');
   if (!ss || !grid) return;
 
@@ -3323,7 +3335,8 @@ function renderMixedFeed(feedId, opts = {}) {
   activeTab = key;
   setTimeout(updateNetworkBarActive, 0);
   const ss = mixStates.get(feedId);
-  ss.filter = homeFilter;
+  // Home shares the global homeFilter; every other mixed feed (a tag feed) keeps its own.
+  ss.filter = (feedId === ALL_FEED.id) ? homeFilter : (ss.filter || null);
   const FIRST = 48;
   const chunked = !!opts.chunk && ss.items.length > FIRST * 1.5;
   const cards = ss.items.slice(0, chunked ? FIRST : ss.items.length).map((it, i) => cardHtml(it, `m-${i}`)).join('');
@@ -9006,9 +9019,12 @@ document.addEventListener('keydown', (e) => {
       refreshHearts();
     },
   };
-   window.Favorites = { toggle, filter: setFilter, all: () => Object.values(db.items), history: () => hist.slice(), openHistory, closeHistory, openFavoritesPanel, openMix: () => openLibrary('mix'),
-     hasCategory: (link) => has(idOf('category', normLink(link))),
-     toggleCategory: (link, name, sub, thumb) => toggle({ type: 'category', key: normLink(link), link, name: name || 'Untitled', sub: sub || '', thumbs: thumb ? [thumb] : [] }), closeFavoritesPanel, dismissPanel, renderFavoritesPanel, isPanelOpen: () => favPanelOpen, count, toast, onChange: (f) => listeners.push(f), sync: syncApi };
+window.Favorites = { toggle, filter: setFilter, all: () => Object.values(db.items), history: () => hist.slice(), openHistory, closeHistory, openFavoritesPanel, openMix: () => openLibrary('mix'),
+      hasCategory: (link) => has(idOf('category', normLink(link))),
+      toggleCategory: (link, name, sub, thumb) => toggle({ type: 'category', key: normLink(link), link, name: name || 'Untitled', sub: sub || '', thumbs: thumb ? [thumb] : [] }),
+      hasTag: (name) => has(idOf('tag', name.toLowerCase())),
+      toggleTag: (name, links) => toggle({ type: 'tag', key: name.toLowerCase(), name, links: (links || []).map(l => ({ sid: l.sid, link: l.link })) }),
+      closeFavoritesPanel, dismissPanel, renderFavoritesPanel, isPanelOpen: () => favPanelOpen, count, toast, onChange: (f) => listeners.push(f), sync: syncApi };
 })();
 </script>
 <script>
@@ -9232,13 +9248,94 @@ function render() {
 })();
 </script>
 <script>
+/* ===================== Combined TAG feed =====================
+   A tag pill in Tags & Genres can appear on several websites at once (e.g. "Orgy" on
+   Superporn, FreeSexVideos and PornVideoBB). Tapping it opens ONE feed that mixes the
+   videos from every website that has that tag — same machinery as the Home mixed feed
+   (renderMixedFeed / loadMoreMixed), with its own filter state and its own scrollback. */
+(function () {
+  'use strict';
+  const F = () => window.Favorites;
+  const tagKey = (name) => '__tag_' + name.toLowerCase();
+  const tagStateFor = (key) => mixStates.get(key.slice(MIX_PREFIX.length));
+
+  /** Build the mixed feed for one tag name across the given source links. */
+  async function openTagFeed(name, links, opts = {}) {
+    if (busy) return;
+    // Restoring from history: look the tag's source links up in the Tags & Genres list
+    if (!links.length) {
+      const it = (data && data.items.find(i => i.name === name)) || null;
+      links = it ? it.links : [];
+    }
+    const key = tagKey(name);
+    const ss = mixStates.get(key);
+    if (ss && !opts.force) {
+      activeTab = mixKey(key);
+      renderMixedFeed(key);
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+      if (!opts.skipPush) pushNav({ view: 'tag-feed', tag: name, feedUrl: activeTab });
+      setStatus(`"${name}" — ${ss.items.length} previews`, false);
+      return;
+    }
+    busy = true;
+    setStatus(`Scraping "${name}"…`, true);
+    showSectionLoading(`"${name}"`);
+    try {
+      const srcs = links.map(l => ({ id: l.sid, name: SITE_NAMES[l.sid] || l.sid, url: l.link }));
+      const res = await fetch('/api/scrape', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ urls: srcs.map(x => x.url) }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      if (json.error) throw new Error(json.error);
+      const raw = json.results || [];
+      const seen = new Set();
+      const pages = new Map();
+      const groups = srcs.map((src, i) => {
+        const data = raw[i] || {};
+        const site = data.page || src.url;
+        const items = [];
+        (data.items || []).forEach(it => {
+          const k = (it.link || '').split('?')[0];
+          if (!k || seen.has(k)) return;
+          seen.add(k);
+          items.push({ ...it, _host: hostOf(site), _label: src.name, _sourceId: src.id, _feed: 'tag' });
+        });
+        pages.set(site, {
+          next_page: items.length ? (data.next_page || guessNextUrl(site, 2) || '') : '',
+          page_num: data.page_num || 1,
+          exhausted: !items.length || !data.next_page,
+          emptyCount: 0, retryCount: 0,
+        });
+        return { site, name: src.name, sourceId: src.id, feedId: 'tag', label: src.name, error: data.error, items };
+      });
+      const merged = groups.flatMap(g => g.items);
+      mixStates.set(key, {
+        feedId: key, groups, pages, seen, loading: false, filter: null, noun: 'preview',
+        tag: name, items: shuffleArray(merged),
+      });
+      activeTab = mixKey(key);
+      renderMixedFeed(key);
+      if (!opts.skipPush) pushNav({ view: 'tag-feed', tag: name, feedUrl: activeTab });
+      setStatus(`"${name}" — ${merged.length} previews`, false);
+    } catch (err) {
+      rescueSearchBar(); results.innerHTML = `<div class="empty">⚠️ ${escapeHtml(err.message)}</div>`;
+      setStatus(`${name} load error`, false);
+    } finally { busy = false; }
+  }
+  window.openTagFeed = openTagFeed;
+})();
+
+<script>
 /* ===================== Categories: "Tags & Genres" view =====================
-   One separate A-Z list with every category + tag from all websites (Superporn, BDSMHole, FreeSexVideos),
-   each with a heart so it can be added to the favorites (type "category", same ids as the category tiles). */
+   One separate A-Z list with every tag from all websites (Superporn, BDSMHole,
+   FreeSexVideos, PornVideoBB). The SAME tag name on several websites is ONE pill:
+   tapping it opens a combined feed of videos from every website that has it. */
 (function () {
   'use strict';
   const VKEY = 'pa_cat_view_v1';
-  const SITE_NAMES = { superporn: 'Superporn', bdsmhole: 'BDSMHole', fullporno: 'FreeSexVideos', pornvideobb: 'PornVideoBB' };
+  const SITE_NAMES = { superporn: 'Superporn', BDSMhole: 'BDSMHole', fullporno: 'FreeSexVideos', pornvideobb: 'PornVideoBB' };
   const HEART = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>';
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const F = () => window.Favorites;
@@ -9254,16 +9351,18 @@ function render() {
   };
   async function loadAll(force) {
     if (!force && data && (data.loading || (data.done && Date.now() - data.at < 15 * 60000))) return;
-    const d = data = { at: Date.now(), items: [], seen: new Set(), pending: 0, loading: true, done: false, failed: 0 };
+    const d = data = { at: Date.now(), items: [], seen: new Map(), pending: 0, loading: true, done: false, failed: 0 };
+    // One entry per TAG NAME across all sites (the same word on two sites = one pill that
+    // opens a combined feed). `links` keeps every source URL + thumb so the pill can show
+    // every site badge and the combined feed can fetch from all of them.
     const add = (list, sid) => (list || []).forEach((c) => {
-      // key = full link minus hash: some sites carry the tag identity in the
-      // query string (pornvideobb /zone_video/?cat=<name>), the path alone would
-      // collapse all of them into one entry
-      const link = c && c.link || '', key = link.split('#')[0], name = c && c.name ? String(c.name).trim() : '';
-      if (!key || !name || d.seen.has(key)) return;
-      try { if (typeof isAllVideosLink === 'function' && isAllVideosLink(key)) return; } catch (e) {}
-      d.seen.add(key);
-      d.items.push({ name, link, sid, thumb: c.thumbnail || '', letter: letterOf(name) });
+      const link = c && c.link || '', name = c && c.name ? String(c.name).trim() : '';
+      if (!link || !name) return;
+      const key = name.toLowerCase();
+      try { if (typeof isAllVideosLink === 'function' && isAllVideosLink(link.split('#')[0])) return; } catch (e) {}
+      const e = d.seen.get(key);
+      if (e) { if (!e.links.some(l => l.sid === sid)) e.links.push({ sid, link, thumb: c.thumbnail || '' }); return; }
+      d.seen.set(key, { name, links: [{ sid, link, thumb: c.thumbnail || '' }], letter: letterOf(name) });
     });
     const job = async (sid, startUrl, extra) => {
       try {
@@ -9274,16 +9373,15 @@ function render() {
           if (!res.ok) { if (!i) throw new Error('HTTP ' + res.status); break; }
           const j = await res.json();
           if (j.error) { if (!i) throw new Error(j.error); break; }
-          const before = d.items.length;
           add(j.categories, sid);
-          if (i > 0 && d.items.length === before) break;           // a page with nothing new = the end
           schedule();
           url = j.next_page || (!extra && typeof guessNextUrl === 'function' ? guessNextUrl(url, i + 2) : '') || '';
         }
       } catch (e) { d.failed++; }
       d.pending--;
       if (d.pending <= 0) { d.loading = false; d.done = true; }
-      d.items.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }) || a.sid.localeCompare(b.sid));
+      d.items = [...d.seen.values()];
+      d.items.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }) || a.links[0].sid.localeCompare(b.links[0].sid));
       schedule();
     };
     const jobs = [];
@@ -9296,11 +9394,14 @@ function render() {
 
   // ---------------------------------------------------------------- view
   const viewEl = () => document.getElementById('tgView');
-  const isFav = (it) => !!(F() && F().hasCategory(it.link));
+  const isFav = (it) => !!(F() && F().hasTag(it.name));
+  /** A tag pill is favourited if ANY of its source links is saved. */
+  const anyFav = (it) => it.links.some(l => !!(F() && F().hasCategory(l.link)));
   function pillHtml(it) {
-    const on = isFav(it), site = SITE_NAMES[it.sid] || it.sid;
-    return `<a href="#" class="tg-pill${on ? ' is-fav' : ''}" data-link="${esc(it.link)}" data-name="${esc(it.name)}" data-sid="${esc(it.sid)}" data-thumb="${esc(it.thumb)}" title="${esc(it.name)} · ${esc(site)}">` +
-      `<span class="tg-name">${esc(it.name)}</span><span class="tg-site tg-s-${esc(it.sid)}">${esc(site)}</span>` +
+    const on = anyFav(it);
+    const badges = it.links.map(l => `<span class="tg-site tg-s-${esc(l.sid)}" title="${esc(SITE_NAMES[l.sid] || l.sid)}">${esc(SITE_NAMES[l.sid] || l.sid)}</span>`).join('');
+    return `<a href="#" class="tg-pill${on ? ' is-fav' : ''}" data-name="${esc(it.name)}" data-links="${esc(JSON.stringify(it.links))}" data-sid="${esc(it.links[0].sid)}" data-thumb="${esc(it.links[0].thumb || '')}" title="${esc(it.name)} · ${it.links.length} site${it.links.length === 1 ? '' : 's'}">` +
+      `<span class="tg-name">${esc(it.name)}</span><span class="tg-sites">${badges}</span>` +
       `<span class="tg-heart" role="button" tabindex="0" aria-pressed="${on}" aria-label="${on ? 'Remove from favorites' : 'Add to favorites'}">${HEART}</span></a>`;
   }
   function build() {
@@ -9338,8 +9439,10 @@ function render() {
       e.preventDefault();
       if (h) {
         e.stopPropagation();
-        const name = p.dataset.name, added = F().toggleCategory(p.dataset.link, name, SITE_NAMES[p.dataset.sid] || '', p.dataset.thumb);
-        F().toast(added ? `♥ Added “${name}” to Tags & genres` : `Removed “${name}”`);
+        const it = data && data.items.find(i => i.name === p.dataset.name);
+        const links = it ? it.links : (JSON.parse(p.dataset.links || '[]'));
+        const added = F().toggleTag(p.dataset.name, links);
+        F().toast(added ? `♥ Added “${p.dataset.name}” to Tags & genres` : `Removed “${p.dataset.name}”`);
         paint(p);
         if (tg.saved) render(); else updateChips();
         return;
@@ -9351,13 +9454,14 @@ function render() {
   function openPill(p) {
     try {
       if (activeTab === CATEGORIES_TAB) { categoriesState.scrollY = window.scrollY; saveCategoryCache(COMBINED_CAT_CACHE_KEY); }
-      const sid = p.dataset.sid;
-      if (sid && sid !== activeSourceId) { activeSourceId = sid; activeFeedId = feedOfSource(sid).id; renderSiteTabs(); }
-      openCategoryFeed(p.dataset.link, p.dataset.name);
+      const links = JSON.parse(p.dataset.links || '[]');
+      const name = p.dataset.name;
+      openTagFeed(name, links);
     } catch (e) { console.error('[tags&genres] open', e); }
   }
   function paint(p) {
-    const on = !!(F() && F().hasCategory(p.dataset.link));
+    const it = data && data.items.find(i => i.name === p.dataset.name);
+    const on = it ? anyFav(it) : !!(F() && F().hasTag(p.dataset.name));
     p.classList.toggle('is-fav', on);
     const h = p.querySelector('.tg-heart');
     if (h) { h.setAttribute('aria-pressed', String(on)); h.setAttribute('aria-label', on ? 'Remove from favorites' : 'Add to favorites'); }
@@ -9365,7 +9469,7 @@ function render() {
   function updateChips() {
     const v = viewEl(); if (!v || !data) return;
     const counts = { all: data.items.length, saved: 0 };
-    data.items.forEach((it) => { counts[it.sid] = (counts[it.sid] || 0) + 1; if (isFav(it)) counts.saved++; });
+    data.items.forEach((it) => { counts.all++; if (anyFav(it)) counts.saved++; });
     let h = `<button type="button" class="tg-chip${tg.site === 'all' ? ' on' : ''}" data-tgs="all">All <span class="n">${counts.all}</span></button>`;
     Object.keys(SITE_NAMES).forEach((sid) => { if (counts[sid]) h += `<button type="button" class="tg-chip${tg.site === sid ? ' on' : ''}" data-tgs="${sid}">${SITE_NAMES[sid]} <span class="n">${counts[sid]}</span></button>`; });
     h += `<button type="button" class="tg-chip tg-chip-fav${tg.saved ? ' on' : ''}" data-tgs="saved">♥ Saved <span class="n">${counts.saved}</span></button>`;
@@ -9376,7 +9480,7 @@ function render() {
     if (!data) { loadAll(false); return; }
     updateChips();
     const q = tg.q.trim().toLowerCase().split(/\s+/).filter(Boolean);
-    const items = data.items.filter((it) => (tg.site === 'all' || it.sid === tg.site) && (!tg.saved || isFav(it)) && q.every((w) => it.name.toLowerCase().includes(w)));
+    const items = data.items.filter((it) => (tg.site === 'all' || it.links.some(l => l.sid === tg.site)) && (!tg.saved || anyFav(it)) && q.every((w) => it.name.toLowerCase().includes(w)));
     const groups = new Map();
     items.forEach((it) => { if (!groups.has(it.letter)) groups.set(it.letter, []); groups.get(it.letter).push(it); });
     const letters = [...groups.keys()].sort((a, b) => (a === '#' ? -1 : b === '#' ? 1 : a.localeCompare(b)));
