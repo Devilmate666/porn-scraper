@@ -236,6 +236,21 @@
                 font-weight: 700; letter-spacing: .02em; color: #fff;
                 background: #4f46e5; box-shadow: 0 2px 8px #000000aa;
                 pointer-events: none; backdrop-filter: blur(4px); }
+  /* video cards: network tag (replaces the website tag) + star names at the bottom */
+  .site-label.card-net { max-width: calc(100% - 3.4rem); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: #4f46e5; }
+  .site-label.card-net[data-meta-link] { pointer-events: auto; cursor: pointer; }
+  .site-label.card-net[data-meta-link]:hover { filter: brightness(1.18); }
+  .site-label.card-net.k-star { background: #b45309; }
+  .site-label.card-net.k-category { background: #be123c; }
+  .card-bnet { color: #a5b4fc; }
+  .card-bgenre { color: #fda4af; }
+  .card-bgenre[data-meta-link] { cursor: pointer; }
+  .card-bgenre[data-meta-link]:hover { color: #fecdd3; text-decoration: underline; }
+  .card-bnet[data-meta-link] { cursor: pointer; }
+  .card-bnet[data-meta-link]:hover { color: #c7d2fe; text-decoration: underline; }
+  .card-stars { margin-top: .32rem; font-size: .72rem; line-height: 1.25; color: #fcd34d; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card-star[data-meta-link] { cursor: pointer; }
+  .card-star[data-meta-link]:hover { color: #fde68a; text-decoration: underline; }
   .site-label.s-general { background: #e11d48; }
   .site-label.s-bdsm    { background: #7c3aed; }
   .site-label.s-superporn     { background: #e11d48; }
@@ -1143,6 +1158,7 @@ body.fav-panel-open { overflow: hidden; }
 #favPanel .lib-meta { min-width: 0; display: flex; flex-direction: column; gap: .12rem; }
 #favPanel .t-star .lib-meta, #favPanel .t-category .lib-meta { text-align: center; }
 #favPanel .fav-card-name { font-size: .85rem; font-weight: 600; color: #eaf0fc; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+#favPanel .lib-stars { font-size: .7rem; color: #fcd34d; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #favPanel .lib-subtxt { font-size: .72rem; color: #7f91b2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #favPanel .lib-added { display: none; font-size: .68rem; color: #5f7091; }
 
@@ -1415,6 +1431,9 @@ let homeFilter = null;            // null = All | 'general' | 'bdsm'
 function getFeed(id) { return id === ALL_FEED.id ? ALL_FEED : (FEEDS.find(f => f.id === id) || FEEDS[0]); }
 function feedOfSource(siteId) { return FEEDS.find(f => f.siteIds.includes(siteId)) || FEEDS[0]; }
 function mixKey(feedId) { return MIX_PREFIX + feedId; }
+// Combined tag / genre feed = ONE regular feed (siteData/siteState) whose pages are pulled from every website that has the tag.
+const TAGMIX_PREFIX = '__tagmix_';
+const tagMixes = new Map();   // key -> { name, members: [{ link, sid, label, host, next_page, page_num, exhausted, emptyCount, retryCount }] }
 
 // Combined Categories = Superporn (/categories) + BDSMHole index pages + direct feed URL patterns
 // Browse-tab source pages (the backend can override them via window.__CATALOG_URLS__)
@@ -2008,6 +2027,10 @@ async function applyNavStateInner(state) {
       activeTab = state.feedUrl;
       renderFeed(state.feedUrl);
       scheduleRecheck(state.feedUrl);
+    } else if (state.feedUrl.startsWith(TAGMIX_PREFIX)) {
+      const mix = tagMixes.get(state.feedUrl);
+      if (mix) await openTagMix(state.feedUrl, mix.name, mix.members, { skipPush: true });
+      else await loadFeed(activeFeedId, { force: false, skipPush: true });
     } else {
       await openCategoryFeed(state.feedUrl, state.categoryName || 'Category', { skipPush: true });
     }
@@ -2202,22 +2225,225 @@ function insertSearchSkeletons(grid, count = 6) {
   grid.insertBefore(skeletons, slot || null);
 }
 
+/* ---------- video card tags: NETWORK (top-left, replaces the website tag) + STAR names (bottom) ----------
+   Read from what the listing carried; when a card has neither, they are fetched once from /api/metadata while the
+   card is on screen (3 at a time) and remembered (also across visits). */
+const CARD_META_KEY = 'pa_card_meta_v4';          // v4: every website's cards carry a genre
+const isSuperLink = (l) => /superporn\./i.test(String(l || ''));
+const cardMetaCache = new Map();         // video link -> { network: {name, link}|null, stars: [{name, link}], done: true }
+const cardMetaPending = new Set();       // links being fetched / queued
+const cardMetaFailed = new Set();        // links that failed this session (not retried until reload)
+const cardMetaQueue = [];
+let cardMetaActive = 0, cardMetaSaveT = 0;
+try { const o = JSON.parse(localStorage.getItem(CARD_META_KEY) || '{}'); Object.keys(o).forEach(k => cardMetaCache.set(k, o[k])); } catch (e) {}
+function saveCardMeta() {
+  clearTimeout(cardMetaSaveT);
+  cardMetaSaveT = setTimeout(() => {
+    try {
+      const o = {};
+      [...cardMetaCache.keys()].slice(-3000).forEach(k => { o[k] = cardMetaCache.get(k); });
+      localStorage.setItem(CARD_META_KEY, JSON.stringify(o));
+    } catch (e) {}
+  }, 1500);
+}
+function cardNm(x) {
+  if (typeof x === 'string') return x.trim() ? { name: x.trim(), link: '' } : null;
+  const n = x && (x.name || x.label);
+  return n ? { name: String(n).trim(), link: x.link || x.url || '' } : null;
+}
+function cardMetaFromItem(item) {
+  const stars = [], seen = new Set();
+  const addStar = (x) => { const s = cardNm(x); if (!s || !s.name || seen.has(s.name.toLowerCase())) return; seen.add(s.name.toLowerCase()); stars.push(s); };
+  for (const k of ['pornstars', 'models', 'performers', 'stars']) {
+    const v = item[k];
+    if (Array.isArray(v)) v.forEach(addStar); else if (typeof v === 'string' && v) v.split(',').forEach(addStar);
+  }
+  let network = null;
+  const ml = item.meta_links || [];
+  for (const m of ml) {
+    if (!m || !m.label) continue;
+    if (m.type === 'pornstar') addStar({ name: m.label, link: m.link });
+    else if (m.type === 'studio' && !network) network = { name: m.label, link: m.link || '' };
+  }
+  if (!network) { const m = ml.find(x => x && x.type === 'series' && x.label); if (m) network = { name: m.label, link: m.link || '' }; }
+  const sup = isSuperLink(item.link);                         // Superporn: network = studio only (never the uploader), plus a genre
+  if (!network) { const v = item.network || item.studio || (sup ? null : item.channel); network = cardNm(Array.isArray(v) ? v[0] : v); }
+  let genre = null;
+  {
+    const gm = ml.find(x => x && x.type === 'genre' && x.label);
+    genre = gm ? { name: gm.label, link: gm.link || '' } : null;
+    if (!genre) for (const k of ['categories', 'genres']) { const v = item[k]; if (Array.isArray(v) && v.length) { genre = cardNm(v[0]); if (genre) break; } }
+    if (genre && !genre.name) genre = null;
+  }
+  return { network, stars, genre };
+}
+function cardMetaFromPage(page, link) {
+  const g = {};
+  ((page && page.groups) || []).forEach(x => { if (x && x.items && x.items.length) g[x.kind] = x.items; });
+  const pick = (arr) => (arr && arr[0] && arr[0].name) ? { name: arr[0].name, link: arr[0].link || '' } : null;
+  if (isSuperLink(link)) {                                      // Superporn: studio (never the uploader), stars and the genre
+    return { network: pick(g.studios) || pick(g.platform), genre: pick(g.categories), stars: (g.models || []).filter(x => x && x.name).map(x => ({ name: x.name, link: x.link || '' })) };
+  }
+  return {
+    genre: pick(g.categories) || (/pornvideobb\./i.test(String(link || '')) ? pick(g.tags) : null),   // PornVideoBB lists its genres as tags
+    network: pick(g.studios) || pick(g.platform) || pick(g.uploaders),
+    stars: (g.models || []).filter(x => x && x.name).map(x => ({ name: x.name, link: x.link || '' })),
+  };
+}
+/** What a video card shows: the listing's own data first, then what was learned from the video's page. */
+function cardMetaFor(item) {
+  const own = cardMetaFromItem(item || {});
+  const c = item && item.link ? cardMetaCache.get(item.link) : null;
+  return {
+    network: own.network || (c && c.network) || null,
+    stars: own.stars.length ? own.stars : ((c && c.stars) || []),
+    genre: own.genre || (c && c.genre) || null,
+    done: !!(c && c.done) || (!!own.network && own.stars.length > 0 && !!own.genre),
+  };
+}
+function cardMetaOf(link) {
+  const it = cardItemByLink.get(link);
+  if (it) return cardMetaFor(it);
+  const c = cardMetaCache.get(link);
+  return c ? { network: c.network || null, stars: c.stars || [], genre: c.genre || null, done: !!c.done } : null;
+}
+function cardNetHtml(n, kind) {
+  if (!n || !n.name) return '';
+  const nm = escapeHtml(n.name);
+  return `<span class="site-label card-net${kind ? ' k-' + escapeHtml(kind) : ''}"${n.link ? ` role="link" tabindex="0" data-meta-link="${escapeHtml(n.link)}" data-meta-name="${nm}"` : ''} title="${nm}">${nm}</span>`;
+}
+const cardNameKey = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+function cardChipsHtml(stars) {
+  return '⭐ ' + stars.slice(0, 6).map(s => {
+    const nm = escapeHtml(s.name);
+    return s.link ? `<span class="card-star" role="link" tabindex="0" data-meta-link="${escapeHtml(s.link)}" data-meta-name="${nm}">${nm}</span>` : `<span class="card-star">${nm}</span>`;
+  }).join(', ');
+}
+function cardGenreChipHtml(g) {
+  const nm = escapeHtml(g.name);
+  return g.link ? `<span class="card-bgenre" role="link" tabindex="0" data-meta-link="${escapeHtml(g.link)}" data-meta-name="${nm}">🏷️ ${nm}</span>` : `<span class="card-bgenre">🏷️ ${nm}</span>`;
+}
+function cardNetChipHtml(n) {
+  const nm = escapeHtml(n.name), ic = '🌐';
+  return n.link ? `<span class="card-bnet" role="link" tabindex="0" data-meta-link="${escapeHtml(n.link)}" data-meta-name="${nm}">${ic} ${nm}</span>` : `<span class="card-bnet">${ic} ${nm}</span>`;
+}
+/** Bottom line of a card. Normal card: the stars. My Mix card from a saved STAR: network, then the other stars.
+ *  My Mix card from a saved TAG / GENRE: stars, then network. `main` = { kind, name, link } or null. */
+function cardBottomHtml(meta, main) {
+  const kind = main && main.kind;
+  let stars = (meta && meta.stars) || [];
+  if (kind === 'star') { const k = cardNameKey(main.name); stars = stars.filter(x => cardNameKey(x.name) !== k); }
+  const starsH = stars.length ? cardChipsHtml(stars) : '';
+  const g = meta && meta.genre && meta.genre.name && !(kind === 'category' && cardNameKey(main.name) === cardNameKey(meta.genre.name)) ? meta.genre : null;
+  const genreH = g ? cardGenreChipHtml(g) : '';                // every website: the genre sits at the bottom with the stars
+  const netH = kind && meta && meta.network && meta.network.name ? cardNetChipHtml(meta.network) : '';
+  const parts = (kind === 'star' ? [netH, starsH, genreH] : [starsH, netH, genreH]).filter(Boolean);
+  return parts.length ? `<div class="card-stars"${kind ? '' : ' title="Stars"'}>${parts.join(' · ')}</div>` : '';
+}
+const cardStarsHtml = (stars) => cardBottomHtml({ stars }, null);
+function cardMainOf(card) {
+  const kind = card.getAttribute('data-main-kind');
+  return kind ? { kind, name: card.getAttribute('data-main-name') || '', link: card.getAttribute('data-main-link') || '' } : null;
+}
+function applyCardMeta(link, meta) {
+  let list;
+  try { list = document.querySelectorAll(`a.card[data-detail="${CSS.escape(link)}"]`); } catch (e) { return; }
+  list.forEach(card => {
+    const thumb = card.querySelector('.thumb'), info = card.querySelector('.info'), main = cardMainOf(card);
+    if (thumb && !thumb.querySelector('.card-net')) { const h = cardNetHtml(main || meta.network, main && main.kind); if (h) thumb.insertAdjacentHTML('beforeend', h); }
+    if (info) {
+      const h = cardBottomHtml(meta, main), old = info.querySelector('.card-stars');
+      if (h) { if (old) old.outerHTML = h; else info.insertAdjacentHTML('beforeend', h); }
+    }
+  });
+}
+async function fetchCardMeta(link) {
+  try {
+    const res = await fetch('/api/metadata', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: link }) });
+    if (res.ok) {
+      const page = await res.json();
+      if (page && !page.error) {
+        try { rememberPageMeta(link, page); } catch (e) {}
+        const pm = cardMetaFromPage(page, link);
+        const own = cardMetaFromItem(cardItemByLink.get(link) || {});
+        const meta = { network: own.network || pm.network || null, stars: own.stars.length ? own.stars : (pm.stars || []), genre: own.genre || pm.genre || null, done: true };
+        cardMetaCache.set(link, meta);
+        saveCardMeta();
+        applyCardMeta(link, meta);
+        try { window.dispatchEvent(new CustomEvent('cardmeta', { detail: { link } })); } catch (e) {}
+        return;
+      }
+    }
+  } catch (e) { /* fall through */ }
+  cardMetaFailed.add(link);
+}
+function pumpCardMeta() {
+  while (cardMetaActive < 3 && cardMetaQueue.length) {
+    const job = cardMetaQueue.shift();
+    if (job.card && !job.card.isConnected) { cardMetaPending.delete(job.link); continue; }
+    cardMetaActive++;
+    fetchCardMeta(job.link).finally(() => { cardMetaActive--; cardMetaPending.delete(job.link); pumpCardMeta(); });
+  }
+}
+function ensureCardMeta(link, card) {
+  if (!link || cardMetaPending.has(link) || cardMetaFailed.has(link)) return;
+  const it = cardItemByLink.get(link) || { link };
+  if (it._cam || it._chan || cardMetaFor(it).done) return;
+  cardMetaPending.add(link);
+  cardMetaQueue.push({ link, card });
+  pumpCardMeta();
+}
+(function () {
+  if (!('IntersectionObserver' in window) || !document.body) return;
+  const io = new IntersectionObserver((entries) => entries.forEach(en => {
+    if (!en.isIntersecting) return;
+    io.unobserve(en.target);
+    ensureCardMeta(en.target.getAttribute('data-detail'), en.target);
+  }), { rootMargin: '300px' });
+  const watch = (card) => {
+    if (card._cmWatch || card.classList.contains('category-card')) return;
+    card._cmWatch = true;
+    const link = card.getAttribute('data-detail');
+    const it = cardItemByLink.get(link) || { link };
+    if (!cardMetaFor(it).done) io.observe(card);
+  };
+  const scan = (root) => { if (root.querySelectorAll) root.querySelectorAll('a.card[data-detail]').forEach(watch); };
+  new MutationObserver(muts => muts.forEach(m => m.addedNodes.forEach(n => {
+    if (n.nodeType !== 1) return;
+    if (n.matches && n.matches('a.card[data-detail]')) watch(n);
+    scan(n);
+  }))).observe(document.body, { childList: true, subtree: true });
+  scan(document);
+})();
+/* network / star tags on a card open their feed (the card itself plays the video) */
+function cardTagActivate(e) {
+  const t = e.target.closest && e.target.closest('a.card [data-meta-link]');
+  if (!t || typeof results === 'undefined' || !results.contains(t)) return false;
+  e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+  closePlayerAndOpen(t.getAttribute('data-meta-link'), t.getAttribute('data-meta-name'));
+  return true;
+}
+document.addEventListener('click', cardTagActivate, true);
+document.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') cardTagActivate(e); }, true);
+
 function cardHtml(item, si) {
   if (item && item.link) cardItemByLink.set(item.link, item);
   const title = escapeHtml(item.title || 'Untitled');
   const poster = item.thumbnail ? escapeHtml(item.thumbnail) : '';
   const id = `v-${si}-${Math.random().toString(36).slice(2,10)}`;
+  const cm = cardMetaFor(item);
+  const main = item._main && item._main.name ? item._main : null;      // My Mix: the saved star / tag this video came from
   const placeholder = poster ||
     'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
 
-  return `<a class="card" href="#" data-host="${escapeHtml(item._host || '')}" data-feed="${escapeHtml(item._feed || '')}" data-source-id="${escapeHtml(item._sourceId || '')}" data-detail="${escapeHtml(item.link)}"
+  return `<a class="card" href="#" data-host="${escapeHtml(item._host || '')}" data-feed="${escapeHtml(item._feed || '')}" data-source-id="${escapeHtml(item._sourceId || '')}" data-detail="${escapeHtml(item.link)}"${main ? ` data-main-kind="${escapeHtml(main.kind)}" data-main-name="${escapeHtml(main.name)}" data-main-link="${escapeHtml(main.link || '')}"` : ''}
              data-title="${title}" data-search="${escapeHtml(searchTextOf(item))}" title="Play in main player">
     <div class="thumb${poster ? ' poster-loading' : ''}" id="${id}">
       <img src="${placeholder}" loading="lazy"
            data-poster="${poster}" alt=""
            onload="this.parentElement.classList.remove('poster-loading')"
            onerror="this.style.opacity=0;this.parentElement.classList.remove('poster-loading')">
-      ${item._label ? `<span class="site-label s-${escapeHtml(item._sourceId || '')}">${escapeHtml(item._label)}</span>` : ''}
+      ${cardNetHtml(main || cm.network, main && main.kind)}
       ${item.duration ? `<span class="dur-badge">${escapeHtml(item.duration)}</span>` : ''}
     </div>
     <div class="info">
@@ -2226,6 +2452,7 @@ function cardHtml(item, si) {
       <div class="meta">
         <span style="opacity:.6;margin-left:auto;">Play ▶</span>
       </div>
+      ${cardBottomHtml(cm, main)}
     </div>
   </a>`;
 }
@@ -2240,7 +2467,7 @@ function renderFeed(siteUrl) {
   }
   const host = hostOf(siteUrl);
   const siteName = nameFor(siteUrl);
-  const items = (data.items || []).map(it => ({ ...it, _host: host }));
+  const items = (data.items || []).map(it => ({ ...it, _host: it._host || host }));
   const cards = items.map((it, idx) => cardHtml(it, idx)).join('');
   const idx = sites.findIndex(s => s.url === siteUrl);
   const hasCats = (categoriesState.sourceId === activeSourceId && categoriesState.categories.length)
@@ -3145,6 +3372,167 @@ async function openCategoryFeed(link, name, opts = {}) {
   }
 }
 
+/* --------------------------------------------------------------
+   COMBINED TAG / GENRE FEED
+   A tag that exists on several websites opens as ONE feed: the first page of every website's tag page is
+   shuffled together, and every scroll step pulls the next page from each website that still has more.
+-------------------------------------------------------------- */
+async function openTagMix(key, name, members, opts = {}) {
+  if (busy) return;
+  if (activeTab === CATEGORIES_TAB) { categoriesState.scrollY = window.scrollY; saveCategoryCache(COMBINED_CAT_CACHE_KEY); }
+  saveCatalogScroll();
+  if (!opts.skipPush && history.state && ['categories', 'networks', 'pornsites', 'pornstars'].includes(history.state.view)) {
+    try { history.replaceState({ ...history.state, scrollY: window.scrollY }, '', location.href); } catch {}
+  }
+  const labels = [...new Set(members.map(m => m.label))];
+  const shownName = `${name} · ${labels.join(' + ')}`;
+
+  const have = tagMixes.get(key);
+  if (!opts.force && have && have.members.length === members.length && siteData.has(key) && siteState.has(key)) {
+    sites = sites.filter(s => s.url !== key);
+    sites.unshift({ name: shownName, url: key, sourceId: activeSourceId });
+    activeTab = key;
+    renderFeed(key);
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    if (!opts.skipPush) pushNav({ view: 'category-feed', sourceId: activeSourceId, feedUrl: key, categoryName: shownName });
+    const n = siteData.get(key).items.length;
+    setStatus(`"${name}" — ${n} preview${n !== 1 ? 's' : ''}`, false);
+    scheduleRecheck(key);
+    return;
+  }
+
+  busy = true;
+  setStatus(`Scraping "${name}" from ${labels.length} website${labels.length !== 1 ? 's' : ''}…`, true);
+  showSectionLoading(`"${name}"`);
+  try {
+    const res = await fetch('/api/scrape', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ urls: members.map(m => m.link) })
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    if (json.error) throw new Error(json.error);
+    const raw = json.results || [];
+
+    const seen = new Set();
+    const batch = [];
+    const mem = members.map((m, i) => {
+      const data = raw[i] || {};
+      const base = data.page || m.link;
+      const ms = { link: base, sid: m.sid, label: m.label, host: hostOf(base), next_page: '', page_num: data.page_num || 1, exhausted: true, emptyCount: 0, retryCount: 0 };
+      const fresh = [];
+      (data.items || []).forEach(it => {
+        const k = (it.link || '').split('?')[0];
+        if (!k || seen.has(k)) return;
+        seen.add(k);
+        fresh.push({ ...it, _host: ms.host, _label: ms.label, _sourceId: ms.sid });
+      });
+      if (fresh.length) {
+        ms.next_page = data.next_page || guessNextUrl(base, 2) || '';
+        ms.exhausted = !ms.next_page;
+      }
+      batch.push(...fresh);
+      return ms;
+    });
+    if (!batch.length) throw new Error(`No videos found for "${name}".`);
+
+    const more = mem.some(m => !m.exhausted && m.next_page);
+    tagMixes.set(key, { name, members: mem });
+    sites = sites.filter(s => s.url !== key);
+    sites.unshift({ name: shownName, url: key, sourceId: activeSourceId });
+    siteData.set(key, { page: key, page_title: name, error: '', items: shuffleArray(batch) });
+    siteState.set(key, { next_page: more ? 'tagmix' : '', page_num: 1, loading: false, exhausted: !more, emptyCount: 0, retryCount: 0, error: false });
+
+    activeTab = key;
+    renderFeed(key);
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    if (!opts.skipPush) pushNav({ view: 'category-feed', sourceId: activeSourceId, feedUrl: key, categoryName: shownName });
+    setStatus(`"${name}" — ${batch.length} preview${batch.length !== 1 ? 's' : ''}`, false);
+    scheduleRecheck(key);
+  } catch (err) {
+    rescueSearchBar(); results.innerHTML = `<div class="empty">⚠️ ${escapeHtml(err.message)}
+      <div style="margin-top:1rem;"><button class="back-btn" id="backToCategoriesBtn2" type="button">← Categories</button></div>
+    </div>`;
+    const b = document.getElementById('backToCategoriesBtn2');
+    if (b) b.addEventListener('click', () => {
+      if (history.state && history.state.view === 'category-feed') history.back();
+      else restoreCategoriesView();
+    });
+    setStatus('Category feed error', false);
+  } finally {
+    busy = false;
+  }
+}
+
+/** Next page(s) of a combined tag feed: one request per website that still has more, all mixed into the same grid. */
+async function loadTagMixPages(key, depth, opts = {}) {
+  const st = ensureState(key);
+  const mix = tagMixes.get(key), store = siteData.get(key);
+  if (!mix || !store) { st.exhausted = true; return; }
+  if (st.loading || st.exhausted) return;
+  const active = mix.members.filter(m => !m.exhausted && m.next_page);
+  if (!active.length) { st.exhausted = true; st.next_page = ''; return; }
+
+  const grid0 = activeTab === key ? gridOf(key) : null;
+  const slot0 = grid0 && grid0.querySelector('.loading-row-slot');
+  let loader = null;
+  if (grid0 && slot0 && !opts.search) {
+    loader = document.createElement('div');
+    loader.className = 'loading-row';
+    loader.innerHTML = '<div class="mini-spinner"></div><div>Loading more previews…</div>';
+    grid0.insertBefore(loader, slot0);
+  }
+  st.loading = true;
+  try {
+    const settled = await Promise.allSettled(active.map(m => fetchPagesBatch(m.next_page, (m.page_num || 1) + 1, depth)));
+    const seen = new Set(store.items.map(it => (it.link || '').split('?')[0]).filter(Boolean));
+    const added = [];
+    settled.forEach((r, i) => {
+      const m = active[i];
+      if (r.status === 'rejected') { m.retryCount++; if (m.retryCount >= MAX_RETRY) m.exhausted = true; return; }
+      m.retryCount = 0;
+      for (const e of r.value) {
+        const fresh = [];
+        ((e.data && e.data.items) || []).forEach(it => {
+          const k = (it.link || '').split('?')[0];
+          if (!k || seen.has(k)) return;
+          seen.add(k);
+          fresh.push({ ...it, _host: m.host, _label: m.label, _sourceId: m.sid });
+        });
+        m.page_num = e.num;
+        if (!fresh.length) { m.exhausted = true; m.next_page = ''; break; }
+        added.push(...fresh);
+        m.next_page = (e.data && e.data.next_page) || guessNextUrl(e.url, e.num + 1) || '';
+        if (!m.next_page) { m.exhausted = true; break; }
+      }
+    });
+    const more = mix.members.some(m => !m.exhausted && m.next_page);
+    st.next_page = more ? 'tagmix' : '';
+    st.exhausted = !more;
+    if (added.length) {
+      const mixed = shuffleArray(added);
+      store.items.push(...mixed);
+      const grid = activeTab === key ? gridOf(key) : null;
+      if (grid) {
+        const ref = (loader && loader.parentNode === grid) ? loader : grid.querySelector('.loading-row-slot');
+        const temp = document.createElement('div');
+        temp.innerHTML = mixed.map(it => cardHtml(it, Math.floor(Math.random() * 1e6))).join('');
+        [...temp.children].forEach(n => grid.insertBefore(n, ref));
+        const badge = feedEl(key) && feedEl(key).querySelector('.count-badge');
+        if (badge) { const n = grid.querySelectorAll('.card').length; badge.textContent = `🎬 ${n} preview${n !== 1 ? 's' : ''}`; }
+      }
+    }
+  } catch (err) {
+    st.retryCount++;
+    if (st.retryCount >= MAX_RETRY) st.exhausted = true;
+  } finally {
+    if (loader) loader.remove();
+    st.loading = false;
+  }
+  if (opts.recheck && activeTab === key) scheduleRecheck(key);
+}
+
 function restoreCategoriesView() {
   // Prefer browser Back when history knows we came from categories
   if (history.state && (history.state.view === 'category-feed' || history.state.view === 'player')) {
@@ -3527,6 +3915,7 @@ function playerMetaFromItem(item) {
   for (const m of (item.meta_links || [])) {
     const kind = PM_KIND_OF_TYPE[m.type];
     if (!kind || !m.link || !m.label) continue;
+    if (kind === 'uploaders' && isSuperLink(item.link)) continue;
     (groups[kind] = groups[kind] || []).push({ name: m.label, link: m.link });
   }
   return {
@@ -3589,6 +3978,7 @@ function updateDescMore() {
 /** PornVideoBB lists the same words as Genres and Tags: show them once, as Genres (also fixes cached answers). */
 function cleanPageMeta(detail, m) {
   try {
+    if (m && Array.isArray(m.groups) && isSuperLink(detail)) m.groups = m.groups.filter(g => g.kind !== 'uploaders');
     if (!m || !Array.isArray(m.groups) || !/pornvideobb\./i.test(new URL(detail).hostname)) return m;
     const has = k => m.groups.some(g => g.kind === k && g.items && g.items.length);
     m.groups = has('categories')
@@ -3814,6 +4204,7 @@ async function loadNextPageForSite(siteUrl) {
   if (siteUrl === WEBSEARCH_TAB) return loadMoreWebSearch();
   if (feedQueries.get(siteUrl)) return;      // searching: the scroll handler / button in the search module loads more
   if (siteUrl.startsWith(MIX_PREFIX)) return loadMoreMixed(siteUrl);
+  if (siteUrl.startsWith(TAGMIX_PREFIX)) return loadTagMixPages(siteUrl, 1, { recheck: true });
   const st = ensureState(siteUrl);
   if (st.loading || st.exhausted) return;
 
@@ -6258,6 +6649,7 @@ async function fetchPagesBatch(nextUrl, pageNum, depth) {
 /** Load `depth` pages of an ordinary feed (website / category / studio). The data always goes into the feed's
  *  store (even if you already left it, so nothing is fetched twice); cards are drawn only if it is on screen. */
 async function loadSitePagesBatch(key, depth, opts = {}) {
+  if (key.startsWith(TAGMIX_PREFIX)) return loadTagMixPages(key, depth, opts);
   const st = ensureState(key);
   if (st.loading || st.exhausted) return;
   if (!st.next_page) { st.exhausted = true; return; }
@@ -7847,9 +8239,11 @@ document.addEventListener('keydown', (e) => {
       const link = el.getAttribute('data-detail');
       if (!link) return null;
       const it = gItems().get(link) || {};
+      const cm = (typeof cardMetaOf === 'function') ? cardMetaOf(link) : null;     // network + stars shown on the card
       return { type: 'video', key: normLink(link, false), link, name: el.getAttribute('data-title') || 'Video',
-        sub: siteLabel(el) || el.getAttribute('data-host') || '', thumbs: [posterOf(el)].filter(Boolean),
-        extra: { duration: it.duration || ((el.querySelector('.dur-badge') || {}).textContent || '') || null, views: it.views || null, rating: it.rating || null } };
+        sub: (cm && cm.network && cm.network.name) || '', thumbs: [posterOf(el)].filter(Boolean),
+        extra: { duration: it.duration || ((el.querySelector('.dur-badge') || {}).textContent || '') || null, views: it.views || null, rating: it.rating || null,
+                 network: (cm && cm.network) || null, stars: cm ? cm.stars.map((x) => x.name) : [] } };
     }
     // category / pornstar / studio tiles
     if (el.matches('a.category-card[data-link]')) {
@@ -7933,6 +8327,8 @@ document.addEventListener('keydown', (e) => {
     b.setAttribute('aria-pressed', on ? 'true' : 'false');
     b.title = on ? 'Remove from favorites' : 'Add to favorites';
   }
+  let cardMetaT = 0;                                   // a saved video's network / stars finished loading: redraw the panel
+  window.addEventListener('cardmeta', () => { clearTimeout(cardMetaT); cardMetaT = setTimeout(() => { try { if (favPanelOpen) renderFavoritesPanel(); } catch (e) {} }, 400); });
   function refreshHearts() {
     document.querySelectorAll('.fav-btn[data-fav]').forEach(paint);
     syncPlayerBtn();
@@ -8425,12 +8821,21 @@ document.addEventListener('keydown', (e) => {
       else if (st === 'off') { badge = '<span class="lib-badge off">OFFLINE</span>'; off = true; subTxt = 'Not live now' + (rec.sub ? ' · ' + rec.sub : ''); }
     }
     else if (rec.type === 'video') { const d = fmtDur(rec.extra && rec.extra.duration); if (d) badge = `<span class="lib-badge">${esc(d)}</span>`; }
+    let starsLine = '';
+    if (rec.type === 'video') {                       // saved videos: network tag + star names (other saved items keep their own tag)
+      const cm = (typeof cardMetaOf === 'function') ? cardMetaOf(rec.link) : null, ex = rec.extra || {};
+      const net = (ex.network && ex.network.name) || (cm && cm.network && cm.network.name) || '';
+      const stars = (ex.stars && ex.stars.length) ? ex.stars : (cm ? cm.stars.map((x) => x.name) : []);
+      if (!net && !stars.length && !(cm && cm.done) && typeof ensureCardMeta === 'function') ensureCardMeta(rec.link);
+      subTxt = net || t.one;
+      starsLine = stars.length ? `<span class="lib-stars">⭐ ${esc(stars.slice(0, 4).join(', '))}</span>` : '';
+    }
     const name = rec.name || t.one || 'Open';
     const added = ago(rec.ts);
     const on = sel.has(id);
     return `<a href="#" class="fav-card lib-card t-${esc(rec.type)}${off ? ' is-off' : ''}${on ? ' sel' : ''}" data-favid="${esc(id)}" title="${esc(name)}" aria-label="${esc(name)}"${selecting ? ` aria-pressed="${on}"` : ''}>` +
       `<span class="lib-thumb">${img}${badge}<span class="lib-check">${IC.check}</span><span class="lib-play">${IC.play}</span></span>` +
-      `<span class="lib-meta"><span class="fav-card-name">${esc(name)}</span><span class="lib-subtxt">${esc(subTxt)}</span>${added ? `<span class="lib-added">Added ${esc(added)}</span>` : ''}</span>` +
+      `<span class="lib-meta"><span class="fav-card-name">${esc(name)}</span><span class="lib-subtxt">${esc(subTxt)}</span>${starsLine}${added ? `<span class="lib-added">Added ${esc(added)}</span>` : ''}</span>` +
       `<span class="fav-x" role="button" tabindex="0" title="Remove from library" aria-label="Remove ${esc(name)} from library">${HEART}</span></a>`;
   }
   function navigateFav(rec) {
@@ -8737,9 +9142,14 @@ document.addEventListener('keydown', (e) => {
     items.forEach((it) => {
       if (!it || !it.link) return;
       const k = normLink(it.link, false), ex = m.map.get(k);
-      if (ex) { if (!ex._o.includes(origin.type)) ex._o.push(origin.type); return; }
+      const mainOf = (origin.type === 'star' || origin.type === 'category') && origin.name ? { kind: origin.type, name: origin.name, link: origin.link || '' } : null;
+      if (ex) {
+        if (!ex._o.includes(origin.type)) ex._o.push(origin.type);
+        if (mainOf && (!ex._main || (mainOf.kind === 'star' && ex._main.kind !== 'star'))) ex._main = mainOf;     // a star beats a tag
+        return;
+      }
       let src = null; try { src = typeof sourceForUrl === 'function' ? sourceForUrl(it.link) : null; } catch (e) {}
-      const item = { ...it, _label: it._label || origin.name, _o: [origin.type], _host: hostOfLink(it.link), _sourceId: src ? src.id : '' };
+      const item = { ...it, _label: it._label || origin.name, _o: [origin.type], _host: hostOfLink(it.link), _sourceId: src ? src.id : '', _main: mainOf };
       m.map.set(k, item); fresh.push(item);
     });
     fresh.forEach((it) => {                                   // new videos land at random spots BELOW what is already on screen
@@ -9233,8 +9643,9 @@ function render() {
 </script>
 <script>
 /* ===================== Categories: "Tags & Genres" view =====================
-   One separate A-Z list with every category + tag from all websites (Superporn, BDSMHole, FreeSexVideos),
-   each with a heart so it can be added to the favorites (type "category", same ids as the category tiles). */
+   One separate A-Z list with every category + tag from all websites (Superporn, BDSMHole, FreeSexVideos, PornVideoBB).
+   A tag that exists on several websites is ONE entry (one badge per website) and opens ONE combined feed;
+   its heart saves/unsaves the per-website category favorites (type "category"). */
 (function () {
   'use strict';
   const VKEY = 'pa_cat_view_v1';
@@ -9252,6 +9663,21 @@ function render() {
     const c = String(name || '?').normalize('NFD').replace(/[\u0300-\u036f]/g, '').charAt(0).toUpperCase();
     return /[A-Z]/.test(c) ? c : '#';
   };
+  // one tag / genre per NORMALIZED name: "Big Tits" on Superporn + "big-tits" on BDSMHole = one entry with two sources
+  const normKey = (name) => String(name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ').trim();
+  let groupMap = new Map();
+  function buildGroups() {
+    const map = new Map();
+    ((data && data.items) || []).forEach((it) => {
+      const k = normKey(it.name) || it.link;
+      let g = map.get(k);
+      if (!g) { g = { key: k, name: it.name, letter: it.letter, members: [], sids: [] }; map.set(k, g); }
+      g.members.push(it);
+      if (!g.sids.includes(it.sid)) g.sids.push(it.sid);
+    });
+    groupMap = map;
+    return [...map.values()];
+  }
   async function loadAll(force) {
     if (!force && data && (data.loading || (data.done && Date.now() - data.at < 15 * 60000))) return;
     const d = data = { at: Date.now(), items: [], seen: new Set(), pending: 0, loading: true, done: false, failed: 0 };
@@ -9297,10 +9723,13 @@ function render() {
   // ---------------------------------------------------------------- view
   const viewEl = () => document.getElementById('tgView');
   const isFav = (it) => !!(F() && F().hasCategory(it.link));
-  function pillHtml(it) {
-    const on = isFav(it), site = SITE_NAMES[it.sid] || it.sid;
-    return `<a href="#" class="tg-pill${on ? ' is-fav' : ''}" data-link="${esc(it.link)}" data-name="${esc(it.name)}" data-sid="${esc(it.sid)}" data-thumb="${esc(it.thumb)}" title="${esc(it.name)} · ${esc(site)}">` +
-      `<span class="tg-name">${esc(it.name)}</span><span class="tg-site tg-s-${esc(it.sid)}">${esc(site)}</span>` +
+  const favCount = (g) => g.members.filter(isFav).length;
+  const anyFav = (g) => favCount(g) > 0;
+  const allFav = (g) => favCount(g) === g.members.length;
+  function pillHtml(g) {
+    const on = anyFav(g);
+    return `<a href="#" class="tg-pill${on ? ' is-fav' : ''}" data-key="${esc(g.key)}" title="${esc(g.name)}">` +
+      `<span class="tg-name">${esc(g.name)}</span>` +
       `<span class="tg-heart" role="button" tabindex="0" aria-pressed="${on}" aria-label="${on ? 'Remove from favorites' : 'Add to favorites'}">${HEART}</span></a>`;
   }
   function build() {
@@ -9336,49 +9765,52 @@ function render() {
       const h = e.target.closest('.tg-heart');
       const p = e.target.closest('.tg-pill'); if (!p) return;
       e.preventDefault();
+      const g = groupMap.get(p.dataset.key); if (!g) return;
       if (h) {
         e.stopPropagation();
-        const name = p.dataset.name, added = F().toggleCategory(p.dataset.link, name, SITE_NAMES[p.dataset.sid] || '', p.dataset.thumb);
-        F().toast(added ? `♥ Added “${name}” to Tags & genres` : `Removed “${name}”`);
+        const remove = allFav(g);                                   // all of its sources saved -> unsave them, otherwise save the missing ones
+        g.members.forEach((m) => { if (remove ? isFav(m) : !isFav(m)) F().toggleCategory(m.link, g.name, SITE_NAMES[m.sid] || '', m.thumb); });
+        F().toast(!remove ? `♥ Added “${g.name}” to Tags & genres` : `Removed “${g.name}”`);
         paint(p);
         if (tg.saved) render(); else updateChips();
         return;
       }
-      openPill(p);
+      openGroup(g);
     });
     list.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target.closest('.tg-heart')) { e.preventDefault(); e.target.closest('.tg-heart').click(); } });
   }
-  function openPill(p) {
+  function openGroup(g) {
     try {
       if (activeTab === CATEGORIES_TAB) { categoriesState.scrollY = window.scrollY; saveCategoryCache(COMBINED_CAT_CACHE_KEY); }
-      const sid = p.dataset.sid;
-      if (sid && sid !== activeSourceId) { activeSourceId = sid; activeFeedId = feedOfSource(sid).id; renderSiteTabs(); }
-      openCategoryFeed(p.dataset.link, p.dataset.name);
+      const first = g.members[0];
+      if (first.sid && first.sid !== activeSourceId) { activeSourceId = first.sid; activeFeedId = feedOfSource(first.sid).id; renderSiteTabs(); }
+      if (g.members.length === 1) { openCategoryFeed(first.link, g.name); return; }
+      // shared tag: ONE combined feed from every website that has it
+      openTagMix(TAGMIX_PREFIX + g.key.replace(/\s+/g, '-'), g.name, g.members.map((m) => ({ link: m.link, sid: m.sid, label: SITE_NAMES[m.sid] || m.sid })));
     } catch (e) { console.error('[tags&genres] open', e); }
   }
   function paint(p) {
-    const on = !!(F() && F().hasCategory(p.dataset.link));
+    const g = groupMap.get(p.dataset.key); if (!g) return;
+    const on = anyFav(g);
     p.classList.toggle('is-fav', on);
     const h = p.querySelector('.tg-heart');
     if (h) { h.setAttribute('aria-pressed', String(on)); h.setAttribute('aria-label', on ? 'Remove from favorites' : 'Add to favorites'); }
   }
   function updateChips() {
     const v = viewEl(); if (!v || !data) return;
-    const counts = { all: data.items.length, saved: 0 };
-    data.items.forEach((it) => { counts[it.sid] = (counts[it.sid] || 0) + 1; if (isFav(it)) counts.saved++; });
-    let h = `<button type="button" class="tg-chip${tg.site === 'all' ? ' on' : ''}" data-tgs="all">All <span class="n">${counts.all}</span></button>`;
-    Object.keys(SITE_NAMES).forEach((sid) => { if (counts[sid]) h += `<button type="button" class="tg-chip${tg.site === sid ? ' on' : ''}" data-tgs="${sid}">${SITE_NAMES[sid]} <span class="n">${counts[sid]}</span></button>`; });
-    h += `<button type="button" class="tg-chip tg-chip-fav${tg.saved ? ' on' : ''}" data-tgs="saved">♥ Saved <span class="n">${counts.saved}</span></button>`;
+    const groups = buildGroups();
+    const saved = groups.filter(anyFav).length;
+    const h = `<button type="button" class="tg-chip tg-chip-fav${tg.saved ? ' on' : ''}" data-tgs="saved">♥ Saved <span class="n">${saved}</span></button>`;
     v.querySelector('#tgChips').innerHTML = h;
   }
   function render() {
     const v = viewEl(); if (!v) return;
     if (!data) { loadAll(false); return; }
-    updateChips();
+    updateChips();                                                  // also rebuilds groupMap
     const q = tg.q.trim().toLowerCase().split(/\s+/).filter(Boolean);
-    const items = data.items.filter((it) => (tg.site === 'all' || it.sid === tg.site) && (!tg.saved || isFav(it)) && q.every((w) => it.name.toLowerCase().includes(w)));
+    const items = [...groupMap.values()].filter((g) => (!tg.saved || anyFav(g)) && q.every((w) => g.name.toLowerCase().includes(w)));
     const groups = new Map();
-    items.forEach((it) => { if (!groups.has(it.letter)) groups.set(it.letter, []); groups.get(it.letter).push(it); });
+    items.forEach((g) => { if (!groups.has(g.letter)) groups.set(g.letter, []); groups.get(g.letter).push(g); });
     const letters = [...groups.keys()].sort((a, b) => (a === '#' ? -1 : b === '#' ? 1 : a.localeCompare(b)));
     v.querySelector('#tgList').innerHTML = letters.map((L) => `<div class="tag-row" data-letter="${esc(L)}"><div class="tag-letter">${esc(L)}</div><div class="tag-list">${groups.get(L).map(pillHtml).join('')}</div></div>`).join('');
     v.querySelector('#tgAz').innerHTML = letters.map((L) => `<button type="button" data-l="${esc(L)}">${esc(L)}</button>`).join('');
