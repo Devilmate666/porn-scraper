@@ -2238,9 +2238,20 @@ function statsHtml(item) {
 }
 
 /** Open a metadata link (genre / pornstar / series / uploader ...) exactly like a category tile. */
-function openMetaLink(link, name) {
+const isTagGenreEl = (el) => !!el && !!el.classList && (el.classList.contains('card-bgenre') || el.classList.contains('tag-genre') || el.classList.contains('k-category')
+  || (el.classList.contains('tag-chip') && !/\btag-(pornstar|series|studio|uploader)\b/.test(el.className)));
+function openMetaLink(link, name, opts) {
   if (!link) return;
   if (link.startsWith('chan-cat:')) { openLiveChannels(false, { category: link.slice(9) }); return; }
+  if (opts && opts.tag && name && typeof window.tgSharedMembers === 'function') {
+    // a tag / genre shared by several General sites opens ONE mixed feed (same as the Categories tiles); BDSMHole stays separate
+    try { setStatus(`Opening "${name}"…`, true); } catch (e) {}
+    window.tgSharedMembers(name, link).then((ms) => {
+      if (ms) openTagMix(TAGMIX_PREFIX + 'gen-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), name, ms);
+      else openMetaLink(link, name);
+    }).catch(() => openMetaLink(link, name));
+    return;
+  }
   const src = sourceForUrl(link);
   if (src) {
     activeSourceId = src.id;
@@ -2507,7 +2518,7 @@ function cardTagActivate(e) {
   const t = e.target.closest && e.target.closest('a.card [data-meta-link]');
   if (!t || typeof results === 'undefined' || !results.contains(t)) return false;
   e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
-  closePlayerAndOpen(t.getAttribute('data-meta-link'), t.getAttribute('data-meta-name'));
+  closePlayerAndOpen(t.getAttribute('data-meta-link'), t.getAttribute('data-meta-name'), { tag: isTagGenreEl(t) });
   return true;
 }
 document.addEventListener('click', cardTagActivate, true);
@@ -3148,6 +3159,7 @@ function bindCategoryCards() {
     card._catBound = true;
     card.addEventListener('click', e => {
       e.preventDefault();
+      const fromCategories = activeTab === CATEGORIES_TAB;
       // Save scroll position before navigating to category feed
       if (activeTab === CATEGORIES_TAB) {
         categoriesState.scrollY = window.scrollY;
@@ -3166,7 +3178,16 @@ function bindCategoryCards() {
         activeFeedId = feedOfSource(sid).id;
         renderSiteTabs();
       }
-      if (link) openCategoryFeed(link, name);
+      if (link) {
+        if (sid === 'superporn' && fromCategories && typeof window.tgSharedMembers === 'function') {
+          // same name is also a tag on FreeSexVideos / PornVideoBB -> ONE feed mixing all three (BDSMHole stays separate)
+          try { setStatus(`Opening "${name}"…`, true); } catch (e) {}
+          window.tgSharedMembers(name, link).then((ms) => {
+            if (ms) openTagMix(TAGMIX_PREFIX + 'gen-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), name, ms);
+            else openCategoryFeed(link, name);
+          }).catch(() => openCategoryFeed(link, name));
+        } else openCategoryFeed(link, name);
+      }
     });
   });
 }
@@ -4094,11 +4115,11 @@ async function loadPlayerMeta(detail) {
   } catch { /* the seed (if any) stays; metadata is a bonus */ }
 }
 
-function closePlayerAndOpen(link, name) {
+function closePlayerAndOpen(link, name, opts) {
   try { if (document.fullscreenElement) document.exitFullscreen(); } catch {}
   resetMainPlayer();
   mainPlayer.classList.remove('active');
-  openMetaLink(link, name);
+  openMetaLink(link, name, opts);
 }
 
 if (mainPlayerMeta) {
@@ -4120,14 +4141,14 @@ if (mainPlayerMeta) {
       return;
     }
     const chip = e.target.closest('.tag-chip[data-meta-link]');
-    if (chip) closePlayerAndOpen(chip.getAttribute('data-meta-link'), chip.getAttribute('data-meta-name'));
+    if (chip) closePlayerAndOpen(chip.getAttribute('data-meta-link'), chip.getAttribute('data-meta-name'), { tag: isTagGenreEl(chip) });
   });
   mainPlayerMeta.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' && e.key !== ' ') return;
     const chip = e.target.closest && e.target.closest('.tag-chip[data-meta-link]');
     if (!chip) return;
     e.preventDefault();
-    closePlayerAndOpen(chip.getAttribute('data-meta-link'), chip.getAttribute('data-meta-name'));
+    closePlayerAndOpen(chip.getAttribute('data-meta-link'), chip.getAttribute('data-meta-name'), { tag: isTagGenreEl(chip) });
   });
 }
 
@@ -8933,7 +8954,7 @@ document.addEventListener('keydown', (e) => {
         case 'series':
         case 'network':
         case 'category':
-          if (link && typeof openMetaLink === 'function') openMetaLink(link, name);          // internal feed; handles source resolution + chan-cat
+          if (link && typeof openMetaLink === 'function') openMetaLink(link, name, { tag: rec.type === 'category' });          // internal feed; handles source resolution + chan-cat
           else if (link && typeof openCategoryFeed === 'function') openCategoryFeed(link, name);
           else if (link) toast('Open this link in the browser');
           break;
@@ -9772,10 +9793,26 @@ function render() {
   // one tag / genre per NORMALIZED name: "Big Tits" on Superporn + "big-tits" on BDSMHole = one entry with two sources
   const normKey = (name) => String(name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ').trim();
   let groupMap = new Map();
-  function buildGroups() {
+  /** Every item grouped by name (unfiltered) - used to find which General sites share a tag. */
+  function allGroups() {
     const map = new Map();
     ((data && data.items) || []).forEach((it) => {
       const k = normKey(it.name) || it.link;
+      let g = map.get(k);
+      if (!g) { g = { key: k, name: it.name, members: [] }; map.set(k, g); }
+      g.members.push(it);
+    });
+    return map;
+  }
+  /** The Tags & Genres list = tags that are NOT already a category tile (Superporn / BDSMHole categories live in Categories, mixed there). */
+  function buildGroups() {
+    const items = (data && data.items) || [];
+    const catKeys = new Set(items.filter((it) => it.sid === 'superporn' || it.sid === 'bdsmhole').map((it) => normKey(it.name)));   // names that are already category tiles (General or BDSM)
+    const map = new Map();
+    items.forEach((it) => {
+      if (it.sid === 'superporn' || it.sid === 'bdsmhole') return;      // those are the Categories tiles
+      const k = normKey(it.name) || it.link;
+      if (catKeys.has(k)) return;                                       // same name already exists in Categories
       let g = map.get(k);
       if (!g) { g = { key: k, name: it.name, letter: it.letter, members: [], sids: [] }; map.set(k, g); }
       g.members.push(it);
@@ -9825,6 +9862,28 @@ function render() {
     d.pending = jobs.length;
     jobs.forEach((j) => job(j[0], j[1], j[2]));
   }
+
+  /** A tag / genre / category link from a General site -> the same name on the other General sites (Superporn, FreeSexVideos,
+   *  PornVideoBB), or null when it is not shared. BDSMHole is never mixed in. */
+  window.tgSharedMembers = async function (name, link) {
+    try {
+      let host = ''; try { host = new URL(link).hostname; } catch (e) {}
+      const sid = /superporn\./i.test(host) ? 'superporn' : /freesexvideos\./i.test(host) ? 'fullporno' : /pornvideobb\./i.test(host) ? 'pornvideobb' : '';
+      if (!sid) return null;
+      loadAll(false);
+      const k = normKey(name), sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const GEN = { superporn: 'Superporn', fullporno: 'FreeSexVideos', pornvideobb: 'PornVideoBB' };
+      const find = () => {
+        const g = allGroups().get(k); if (!g) return null;
+        const by = {}; g.members.forEach((m) => { if (GEN[m.sid] && !by[m.sid]) by[m.sid] = m.link; });
+        by[sid] = link;
+        return Object.keys(by).length > 1 ? by : null;
+      };
+      let by = find();
+      for (const t0 = Date.now(); !by && data && data.loading && Date.now() - t0 < 4000;) { await sleep(200); by = find(); }
+      return by ? Object.keys(GEN).filter((x) => by[x]).map((x) => ({ link: by[x], sid: x, label: GEN[x] })) : null;
+    } catch (e) { return null; }
+  };
 
   // ---------------------------------------------------------------- view
   const viewEl = () => document.getElementById('tgView');
@@ -9937,6 +9996,7 @@ function render() {
   window.tgOnCategoriesRendered = function () {                // called by renderCategories() every time the Categories page is drawn
     const feed = document.querySelector(`.feed[data-site="${CATEGORIES_TAB}"]`);
     if (!feed) return;
+    setTimeout(() => { try { loadAll(false); } catch (e) {} }, 1500);   // so shared tags are already known when a category is tapped
     if (!feed.querySelector('.cat-view-switch')) {
       const hdr = feed.querySelector('.feed-header'); if (!hdr) return;
       hdr.insertAdjacentHTML('afterend', `<div class="cat-view-switch" role="tablist" aria-label="Categories view">
