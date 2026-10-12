@@ -9022,8 +9022,6 @@ document.addEventListener('keydown', (e) => {
 window.Favorites = { toggle, filter: setFilter, all: () => Object.values(db.items), history: () => hist.slice(), openHistory, closeHistory, openFavoritesPanel, openMix: () => openLibrary('mix'),
       hasCategory: (link) => has(idOf('category', normLink(link))),
       toggleCategory: (link, name, sub, thumb) => toggle({ type: 'category', key: normLink(link), link, name: name || 'Untitled', sub: sub || '', thumbs: thumb ? [thumb] : [] }),
-      hasTag: (name) => has(idOf('tag', name.toLowerCase())),
-      toggleTag: (name, links) => toggle({ type: 'tag', key: name.toLowerCase(), name, links: (links || []).map(l => ({ sid: l.sid, link: l.link })) }),
       closeFavoritesPanel, dismissPanel, renderFavoritesPanel, isPanelOpen: () => favPanelOpen, count, toast, onChange: (f) => listeners.push(f), sync: syncApi };
 })();
 </script>
