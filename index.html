@@ -193,9 +193,10 @@
   .cams-error details { margin: .8rem auto 0; max-width: 40rem; text-align: left; color: #8ea0bd; font-size: .68rem; }
   .cams-error pre { white-space: pre-wrap; word-break: break-word; background: #0f1420; border: 1px solid #232b3b; border-radius: .5rem; padding: .6rem .8rem; }
 
-  .card { background: #171d28; border: 1px solid #232b3b; border-radius: .8rem;
+.card { background: #171d28; border: 1px solid #232b3b; border-radius: .8rem;
           overflow: hidden; transition: .15s; display: block; cursor: pointer;
-          text-decoration: none; color: inherit; }
+          text-decoration: none; color: inherit; 
+          content-visibility: auto; contain-intrinsic-size: auto 320px; }
   .card:hover { transform: translateY(-2px); border-color: #4a5b7d;
                 box-shadow: 0 8px 16px -8px #000000aa; }
 
@@ -1533,33 +1534,666 @@ img { image-rendering: auto; }
 </style>
 <script>
 (function () {
-  /* API calls: at most 10 at a time, and a failed/rate-limited call (network error, 429, 5xx) is retried twice before giving up,
-     so a burst of page loads can never leave a section stuck on shimmer. */
-  var nf = window.fetch.bind(window), active = 0, queue = [];
-  function pump() { while (active < 10 && queue.length) { active++; queue.shift()(); } }
-  function report(msg) { window.__lastApiError = msg; try { setStatus('⚠ ' + msg, false); } catch (e) {} }
-  window.fetch = function (u, o) {
-    var url = typeof u === 'string' ? u : (u && u.url) || '';
-    if (url.indexOf('/api/') < 0) return nf(u, o);
-    return new Promise(function (res, rej) {
-      queue.push(function () {
-        function done() { active--; pump(); }
-        function attempt(n) {
-          nf(u, o).then(function (r) {
-            if ((r.status === 429 || r.status >= 500) && n < 2) { setTimeout(function () { attempt(n + 1); }, 700 * (n + 1)); return; }
-            done(); if (!r.ok) report('Server answered HTTP ' + r.status + ' for ' + url.replace(/^https?:\/\/[^/]+/, '').split('?')[0]); res(r);
-          }, function (e) {
-            if (n < 2 && !(o && o.signal && o.signal.aborted)) { setTimeout(function () { attempt(n + 1); }, 700 * (n + 1)); return; }
-            done(); report('Cannot reach the server (' + (e && e.message || 'network error') + ')'); rej(e);
-          });
-        }
-        attempt(0);
+  /* ===== Enhanced Fetch Layer: Deduplication, Caching, Prefetching, Priority Queue ===== */
+  const nf = window.fetch.bind(window);
+  
+  // Request deduplication cache - prevents duplicate in-flight requests for same URL
+  const inflightCache = new Map();
+  const responseCache = new Map();  // Simple in-memory response cache
+  const CACHE_TTL = 5 * 60 * 1000;  // 5 minutes
+  
+  // Priority queue for API requests
+  const PRIORITY = { HIGH: 0, NORMAL: 1, LOW: 2 };
+  const requestQueue = { [PRIORITY.HIGH]: [], [PRIORITY.NORMAL]: [], [PRIORITY.LOW]: [] };
+  let activeRequests = 0;
+  const MAX_CONCURRENT = 10;
+  const MAX_CONCURRENT_HIGH = 6;  // Reserve slots for high priority
+  
+  // Performance metrics
+  window.__perfMetrics = {
+    requests: 0,
+    cacheHits: 0,
+    cacheMisses: 0,
+    deduplicated: 0,
+    errors: 0,
+    totalLatency: 0,
+    startTime: Date.now()
+  };
+  
+  function report(msg) { 
+    window.__lastApiError = msg; 
+    try { setStatus('⚠ ' + msg, false); } catch (e) {} 
+  }
+  
+  function getCacheKey(url, options) {
+    const body = options?.body ? JSON.stringify(options.body) : '';
+    return url + '|' + body;
+  }
+  
+  function isCacheable(url, options) {
+    return options?.method !== 'POST' || (options?.body && JSON.parse(options.body).url?.includes('/api/scrape-categories'));
+  }
+  
+  function processQueue() {
+    // Process high priority first, then normal, then low
+    for (const p of [PRIORITY.HIGH, PRIORITY.NORMAL, PRIORITY.LOW]) {
+      const queue = requestQueue[p];
+      const maxConcurrent = p === PRIORITY.HIGH ? MAX_CONCURRENT_HIGH : MAX_CONCURRENT;
+      while (activeRequests < maxConcurrent && queue.length) {
+        const { execute, resolve, reject } = queue.shift();
+        activeRequests++;
+        execute().then(resolve, reject).finally(() => {
+          activeRequests--;
+          processQueue();
+        });
+      }
+    }
+  }
+  
+  function enqueueRequest(url, options, priority = PRIORITY.NORMAL) {
+    return new Promise((resolve, reject) => {
+      requestQueue[priority].push({
+        execute: () => nf(url, options),
+        resolve,
+        reject
       });
-      pump();
+      processQueue();
+    });
+  }
+  
+  // Prefetch queue - low priority background requests
+  const prefetchQueue = [];
+  let prefetchActive = 0;
+  const MAX_PREFETCH_CONCURRENT = 3;
+  
+  function processPrefetchQueue() {
+    while (prefetchActive < MAX_PREFETCH_CONCURRENT && prefetchQueue.length) {
+      const { url, options, resolve, reject } = prefetchQueue.shift();
+      prefetchActive++;
+      nf(url, options).then(resolve, reject).finally(() => {
+        prefetchActive--;
+        processPrefetchQueue();
+      });
+    }
+  }
+  
+  window.prefetch = function(url, options = {}) {
+    const key = getCacheKey(url, options);
+    if (responseCache.has(key) || inflightCache.has(key)) return Promise.resolve(responseCache.get(key));
+    
+    return new Promise((resolve, reject) => {
+      prefetchQueue.push({ url, options, resolve, reject });
+      processPrefetchQueue();
     });
   };
+  
+  window.clearResponseCache = function(pattern) {
+    if (!pattern) { responseCache.clear(); return; }
+    for (const key of responseCache.keys()) {
+      if (key.includes(pattern)) responseCache.delete(key);
+    }
+  };
+  
+  window.getPerfMetrics = function() {
+    const m = window.__perfMetrics;
+    return {
+      ...m,
+      uptime: Date.now() - m.startTime,
+      avgLatency: m.requests > 0 ? m.totalLatency / m.requests : 0,
+      cacheHitRate: m.requests > 0 ? (m.cacheHits / (m.cacheHits + m.cacheMisses) * 100).toFixed(1) + '%' : '0%'
+    };
+  };
+  
+  window.fetch = function (u, o) {
+    const url = typeof u === 'string' ? u : (u && u.url) || '';
+    if (url.indexOf('/api/') < 0) return nf(u, o);
+    
+    const options = o || {};
+    const cacheKey = getCacheKey(url, options);
+    const startTime = Date.now();
+    
+    window.__perfMetrics.requests++;
+    
+    // Check response cache for GET requests or cacheable POSTs
+    if (isCacheable(url, options)) {
+      const cached = responseCache.get(cacheKey);
+      if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+        window.__perfMetrics.cacheHits++;
+        return Promise.resolve(cached.response.clone());
+      }
+      window.__perfMetrics.cacheMisses++;
+    }
+    
+    // Check in-flight deduplication
+    if (inflightCache.has(cacheKey)) {
+      window.__perfMetrics.deduplicated++;
+      return inflightCache.get(cacheKey);
+    }
+    
+    // Determine priority
+    let priority = PRIORITY.NORMAL;
+    if (url.includes('/api/scrape') && !options.body) priority = PRIORITY.HIGH;  // Initial page loads
+    if (url.includes('/api/livecams')) priority = PRIORITY.HIGH;
+    if (options.signal?.priority === 'low') priority = PRIORITY.LOW;
+    
+    const promise = enqueueRequest(url, options, priority).then(async (r) => {
+      window.__perfMetrics.totalLatency += Date.now() - startTime;
+      
+      if ((r.status === 429 || r.status >= 500) && !options._retryCount) {
+        // Retry with exponential backoff
+        await new Promise(res => setTimeout(res, 700));
+        return nf(url, { ...options, _retryCount: 1 });
+      }
+      
+      if (!r.ok) {
+        window.__perfMetrics.errors++;
+        report('Server answered HTTP ' + r.status + ' for ' + url.replace(/^https?:\/\/[^/]+/, '').split('?')[0]);
+      }
+      
+      // Cache successful responses
+      if (isCacheable(url, options) && r.ok) {
+        const cloned = r.clone();
+        responseCache.set(cacheKey, { response: cloned, timestamp: Date.now() });
+        // Limit cache size
+        if (responseCache.size > 100) {
+          const firstKey = responseCache.keys().next().value;
+          responseCache.delete(firstKey);
+        }
+      }
+      
+      return r;
+    }, (e) => {
+      window.__perfMetrics.errors++;
+      window.__perfMetrics.totalLatency += Date.now() - startTime;
+      if (e.name !== 'AbortError') {
+        report('Cannot reach the server (' + (e && e.message || 'network error') + ')');
+      }
+      throw e;
+    }).finally(() => {
+      inflightCache.delete(cacheKey);
+    });
+    
+    // Store in inflight cache for deduplication
+    inflightCache.set(cacheKey, promise);
+    return promise;
+  };
 })();
+
+/* ===== Unified Infinite Scroll Manager ===== */
+(function () {
+  const sentinelObservers = new Map();
+  const scrollCallbacks = new Map();
+  const DEFAULT_ROOT_MARGIN = '300px 0px';
+  const DEFAULT_THRESHOLD = 0;
+  
+  // Track which sentinels are currently being observed
+  const observedSentinels = new WeakSet();
+  
+  window.InfiniteScrollManager = {
+    /**
+     * Register an infinite scroll handler for a sentinel element
+     * @param {string} key - Unique identifier for this scroll context
+     * @param {Element} sentinel - The sentinel element to observe
+     * @param {Function} callback - Function to call when sentinel intersects
+     * @param {Object} options - IntersectionObserver options
+     */
+    register(key, sentinel, callback, options = {}) {
+      if (!sentinel) return;
+      
+      const rootMargin = options.rootMargin || DEFAULT_ROOT_MARGIN;
+      const threshold = options.threshold || DEFAULT_THRESHOLD;
+      
+      // Create or reuse observer for this rootMargin/threshold combination
+      const observerKey = `${rootMargin}|${threshold}`;
+      let observer = sentinelObservers.get(observerKey);
+      
+      if (!observer) {
+        observer = new IntersectionObserver((entries) => {
+          entries.forEach(entry => {
+            if (!entry.isIntersecting) return;
+            const target = entry.target;
+            // Find all callbacks registered for this sentinel
+            for (const [k, cb] of scrollCallbacks.entries()) {
+              const s = document.querySelector(`.sentinel[data-scroll-key="${k}"]`);
+              if (s === target || (s && s.contains(target))) {
+                cb(entry);
+              }
+            }
+          });
+        }, { rootMargin, threshold });
+        sentinelObservers.set(observerKey, observer);
+      }
+      
+      // Mark sentinel with scroll key for identification
+      sentinel.setAttribute('data-scroll-key', key);
+      scrollCallbacks.set(key, callback);
+      observer.observe(sentinel);
+      observedSentinels.add(sentinel);
+    },
+    
+    /**
+     * Unregister a scroll handler
+     */
+    unregister(key) {
+      const sentinel = document.querySelector(`.sentinel[data-scroll-key="${key}"]`);
+      if (sentinel) {
+        for (const observer of sentinelObservers.values()) {
+          observer.unobserve(sentinel);
+        }
+        sentinel.removeAttribute('data-scroll-key');
+      }
+      scrollCallbacks.delete(key);
+    },
+    
+    /**
+     * Re-arm a sentinel (useful after content is appended)
+     */
+    rearm(key) {
+      const sentinel = document.querySelector(`.sentinel[data-scroll-key="${key}"]`);
+      if (sentinel) {
+        for (const observer of sentinelObservers.values()) {
+          observer.unobserve(sentinel);
+          observer.observe(sentinel);
+        }
+      }
+    },
+    
+    /**
+     * Check if a scroll context is exhausted
+     */
+    isExhausted(key) {
+      const sentinel = document.querySelector(`.sentinel[data-scroll-key="${key}"]`);
+      return sentinel?.classList.contains('end-of-list') || false;
+    },
+    
+    /**
+     * Mark a scroll context as exhausted
+     */
+    markExhausted(key) {
+      const sentinel = document.querySelector(`.sentinel[data-scroll-key="${key}"]`);
+      if (sentinel) {
+        sentinel.className = 'sentinel end-of-list';
+        sentinel.textContent = 'End of list';
+        this.unregister(key);
+      }
+    },
+    
+    /**
+     * Cleanup all observers
+     */
+    destroy() {
+      for (const observer of sentinelObservers.values()) {
+        observer.disconnect();
+      }
+      sentinelObservers.clear();
+      scrollCallbacks.clear();
+    }
+  };
+  
+  // Cleanup on page unload
+  window.addEventListener('beforeunload', () => {
+    window.InfiniteScrollManager.destroy();
+  });
+})();
+
+/* ===== Virtual Scrolling Helper (for very long lists) ===== */
+(function () {
+  window.VirtualScroll = {
+    /**
+     * Create a virtualized list renderer
+     * @param {Object} config - Configuration object
+     * @param {Element} config.container - Container element
+     * @param {number} config.itemHeight - Approximate height of each item
+     * @param {Function} config.renderItem - Function(index) => HTML string
+     * @param {number} config.totalItems - Total number of items
+     * @param {number} config.buffer - Number of items to render outside viewport
+     */
+    create(config) {
+      const { container, itemHeight, renderItem, totalItems, buffer = 5 } = config;
+      let scrollTop = 0;
+      let visibleStart = 0;
+      let visibleEnd = 0;
+      
+      const viewportHeight = container.clientHeight;
+      const overscan = buffer * itemHeight;
+      
+      // Create spacer elements
+      const topSpacer = document.createElement('div');
+      topSpacer.style.height = '0px';
+      topSpacer.className = 'virtual-scroll-spacer';
+      
+      const bottomSpacer = document.createElement('div');
+      bottomSpacer.style.height = '0px';
+      bottomSpacer.className = 'virtual-scroll-spacer';
+      
+      const content = document.createElement('div');
+      content.className = 'virtual-scroll-content';
+      
+      container.innerHTML = '';
+      container.appendChild(topSpacer);
+      container.appendChild(content);
+      container.appendChild(bottomSpacer);
+      
+      function update() {
+        const scrollTop = container.scrollTop;
+        visibleStart = Math.max(0, Math.floor((scrollTop - overscan) / itemHeight));
+        visibleEnd = Math.min(totalItems, Math.ceil((scrollTop + viewportHeight + overscan) / itemHeight));
+        
+        topSpacer.style.height = `${visibleStart * itemHeight}px`;
+        bottomSpacer.style.height = `${(totalItems - visibleEnd) * itemHeight}px`;
+        
+        // Render visible items
+        const html = [];
+        for (let i = visibleStart; i < visibleEnd; i++) {
+          html.push(renderItem(i));
+        }
+        content.innerHTML = html.join('');
+      }
+      
+      container.addEventListener('scroll', update, { passive: true });
+      update();
+      
+      return {
+        updateTotal(newTotal) {
+          totalItems = newTotal;
+          update();
+        },
+        scrollToIndex(index) {
+          container.scrollTop = index * itemHeight;
+        },
+        destroy() {
+          container.removeEventListener('scroll', update);
+        }
+      };
+    }
+  };
+})();
+})();
+
+/* ===== Batch DOM Update Utility ===== */
+(function () {
+  // Batch multiple DOM operations into a single reflow
+  window.batchDOMUpdates = function(operations) {
+    // Use requestAnimationFrame to batch writes
+    return new Promise(resolve => {
+      requestAnimationFrame(() => {
+        // Read phase - collect all measurements first
+        const reads = operations.filter(op => op.type === 'read');
+        const writes = operations.filter(op => op.type === 'write');
+        
+        // Execute all reads first
+        const readResults = reads.map(op => op.fn());
+        
+        // Then execute all writes
+        writes.forEach((op, i) => {
+          if (op.fn.length > 0) {
+            op.fn(readResults[i] || readResults);
+          } else {
+            op.fn();
+          }
+        });
+        
+        // Force a single reflow
+        void document.body.offsetHeight;
+        resolve();
+      });
+    });
+  };
+  
+  // Append multiple elements efficiently using DocumentFragment
+  window.appendFragment = function(container, elements) {
+    const fragment = document.createDocumentFragment();
+    elements.forEach(el => fragment.appendChild(el));
+    container.appendChild(fragment);
+  };
+  
+  // Insert multiple elements before a reference node
+  window.insertFragmentBefore = function(container, elements, referenceNode) {
+    const fragment = document.createDocumentFragment();
+    elements.forEach(el => fragment.appendChild(el));
+    container.insertBefore(fragment, referenceNode);
+  };
+  
+  // Create elements from HTML strings efficiently
+  window.createElementsFromHTML = function(htmlStrings) {
+    const template = document.createElement('template');
+    template.innerHTML = htmlStrings.join('');
+    return Array.from(template.content.children);
+  };
+})();
+</script>
+<style>
+/* ===== Virtual Scrolling Styles ===== */
+.virtual-scroll-spacer { flex-shrink: 0; }
+.virtual-scroll-content { will-change: transform; }
+
+/* ===== Performance Monitor Panel ===== */
+#perfMonitor {
+  position: fixed;
+  bottom: 10px;
+  right: 10px;
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: #e2e8f0;
+  z-index: 10000;
+  min-width: 220px;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+}
+#perfMonitor.hidden { display: none; }
+#perfMonitor h4 { margin: 0 0 8px; font-size: 12px; color: #60a5fa; }
+#perfMonitor .metric { display: flex; justify-content: space-between; padding: 2px 0; border-bottom: 1px solid #1e293b; }
+#perfMonitor .metric:last-child { border-bottom: none; }
+#perfMonitor .metric .label { color: #94a3b8; }
+#perfMonitor .metric .value { color: #60a5fa; font-weight: 600; }
+#perfMonitor .metric.warning .value { color: #f87171; }
+#perfMonitor .metric.good .value { color: #4ade80; }
+#perfMonitor button { 
+  background: #1e293b; border: 1px solid #334155; color: #e2e8f0; 
+  padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 10px; margin-top: 8px; width: 100%;
+}
+#perfMonitor button:hover { background: #334155; }
+</style>
+<script>
+/* ===== Performance Monitor UI ===== */
+(function () {
+  let perfPanel = null;
+  let updateInterval = null;
+  
+  function createPerfPanel() {
+    if (perfPanel) return;
+    perfPanel = document.createElement('div');
+    perfPanel.id = 'perfMonitor';
+    perfPanel.className = 'hidden';
+    perfPanel.innerHTML = `
+      <h4>⚡ Performance Metrics</h4>
+      <div class="metric"><span class="label">Requests</span><span class="value" id="pm-requests">0</span></div>
+      <div class="metric"><span class="label">Cache Hits</span><span class="value" id="pm-cacheHits">0</span></div>
+      <div class="metric"><span class="label">Cache Misses</span><span class="value" id="pm-cacheMisses">0</span></div>
+      <div class="metric"><span class="label">Hit Rate</span><span class="value" id="pm-hitRate">0%</span></div>
+      <div class="metric"><span class="label">Deduplicated</span><span class="value" id="pm-deduped">0</span></div>
+      <div class="metric"><span class="label">Avg Latency</span><span class="value" id="pm-avgLatency">0ms</span></div>
+      <div class="metric"><span class="label">Errors</span><span class="value" id="pm-errors">0</span></div>
+      <div class="metric"><span class="label">Uptime</span><span class="value" id="pm-uptime">0s</span></div>
+      <div class="metric"><span class="label">Network</span><span class="value" id="pm-networkStatus">🟢 Online</span></div>
+      <div class="metric"><span class="label">Pending</span><span class="value" id="pm-pending">0</span></div>
+      <button id="pm-toggle">Hide</button>
+      <button id="pm-clearCache">Clear Cache</button>
+    `;
+    document.body.appendChild(perfPanel);
+    
+    document.getElementById('pm-toggle').addEventListener('click', togglePerfPanel);
+    document.getElementById('pm-clearCache').addEventListener('click', () => {
+      window.clearResponseCache();
+      updatePerfPanel();
+    });
+  }
+  
+  function updatePerfPanel() {
+    if (!perfPanel || perfPanel.classList.contains('hidden')) return;
+    const m = window.getPerfMetrics ? window.getPerfMetrics() : window.__perfMetrics;
+    if (!m) return;
+    
+    document.getElementById('pm-requests').textContent = m.requests || 0;
+    document.getElementById('pm-cacheHits').textContent = m.cacheHits || 0;
+    document.getElementById('pm-cacheMisses').textContent = m.cacheMisses || 0;
+    document.getElementById('pm-hitRate').textContent = m.cacheHitRate || '0%';
+    document.getElementById('pm-deduped').textContent = m.deduplicated || 0;
+    document.getElementById('pm-avgLatency').textContent = Math.round(m.avgLatency || 0) + 'ms';
+    document.getElementById('pm-errors').textContent = m.errors || 0;
+    document.getElementById('pm-uptime').textContent = Math.round((m.uptime || 0) / 1000) + 's';
+    
+    // Network status
+    const nr = window.NetworkResilience;
+    if (nr) {
+      document.getElementById('pm-networkStatus').textContent = nr.isOnline() ? '🟢 Online' : '🔴 Offline';
+      document.getElementById('pm-networkStatus').className = 'value ' + (nr.isOnline() ? 'good' : 'warning');
+      document.getElementById('pm-pending').textContent = nr.getPendingCount();
+      document.getElementById('pm-pending').className = 'value ' + (nr.getPendingCount() > 0 ? 'warning' : 'good');
+    }
+    
+    // Color code
+    const hitRate = parseFloat((m.cacheHitRate || '0%').replace('%', ''));
+    document.getElementById('pm-hitRate').className = 'value ' + (hitRate > 50 ? 'good' : 'warning');
+    document.getElementById('pm-errors').className = 'value ' + ((m.errors || 0) > 0 ? 'warning' : 'good');
+    document.getElementById('pm-avgLatency').className = 'value ' + ((m.avgLatency || 0) > 500 ? 'warning' : 'good');
+  }
+  
+  function togglePerfPanel() {
+    createPerfPanel();
+    const isHidden = perfPanel.classList.toggle('hidden');
+    document.getElementById('pm-toggle').textContent = isHidden ? 'Show Metrics' : 'Hide';
+    if (!isHidden) {
+      updatePerfPanel();
+      updateInterval = setInterval(updatePerfPanel, 1000);
+    } else {
+      clearInterval(updateInterval);
+    }
+  }
+  
+  // Keyboard shortcut: Ctrl+Shift+P to toggle
+  document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.shiftKey && e.key === 'P') {
+      e.preventDefault();
+      togglePerfPanel();
+    }
+  });
+  
+  // Auto-show in development
+  if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+    setTimeout(() => {
+      createPerfPanel();
+      perfPanel.classList.remove('hidden');
+      document.getElementById('pm-toggle').textContent = 'Hide';
+      updateInterval = setInterval(updatePerfPanel, 1000);
+    }, 2000);
+  }
+})();
+</script>
+<script>
+/* ===== Error Recovery & Network Resilience ===== */
+(function () {
+  // Network status tracking
+  let isOnline = navigator.onLine;
+  let pendingRequests = [];
+  let retryTimeouts = new Map();
+  
+  function updateNetworkStatus() {
+    const wasOnline = isOnline;
+    isOnline = navigator.onLine;
+    
+    if (!wasOnline && isOnline) {
+      // Came back online - retry pending requests
+      console.log('[Network] Back online, retrying pending requests');
+      try { setStatus('🌐 Connection restored', false); } catch (e) {}
+      processPendingRequests();
+    } else if (wasOnline && !isOnline) {
+      console.log('[Network] Gone offline');
+      try { setStatus('⚠️ Offline - changes will sync when reconnected', true); } catch (e) {}
+    }
+    
+    // Update performance monitor if visible
+    const pmStatus = document.getElementById('pm-networkStatus');
+    if (pmStatus) {
+      pmStatus.textContent = isOnline ? '🟢 Online' : '🔴 Offline';
+      pmStatus.className = 'value ' + (isOnline ? 'good' : 'warning');
+    }
+  }
+  
+  function processPendingRequests() {
+    const toRetry = [...pendingRequests];
+    pendingRequests = [];
+    toRetry.forEach(({ url, options, resolve, reject }) => {
+      window.fetch(url, options).then(resolve, reject);
+    });
+  }
+  
+  // Wrap fetch to handle offline scenarios
+  const originalFetch = window.fetch;
+  window.fetch = function(url, options) {
+    if (!isOnline && options?.method !== 'GET') {
+      // Queue non-GET requests for when we're back online
+      return new Promise((resolve, reject) => {
+        pendingRequests.push({ url, options, resolve, reject });
+        try { setStatus('📦 Request queued (offline)', true); } catch (e) {}
+      });
+    }
+    return originalFetch.apply(this, arguments);
+  };
+  
+  // Listen for online/offline events
+  window.addEventListener('online', updateNetworkStatus);
+  window.addEventListener('offline', updateNetworkStatus);
+  
+  // Periodic health check
+  let healthCheckInterval = null;
+  function startHealthCheck() {
+    healthCheckInterval = setInterval(async () => {
+      if (!isOnline) return;
+      try {
+        const res = await originalFetch('/api/health', { method: 'GET', cache: 'no-cache' });
+        if (!res.ok) throw new Error('Health check failed');
+      } catch (e) {
+        console.warn('[Health] API health check failed:', e.message);
+      }
+    }, 60000); // Every minute
+  }
+  
+  // Expose utilities
+  window.NetworkResilience = {
+    isOnline: () => isOnline,
+    getPendingCount: () => pendingRequests.length,
+    forceHealthCheck: async () => {
+      try {
+        const res = await originalFetch('/api/health', { method: 'GET', cache: 'no-cache' });
+        return res.ok;
+      } catch { return false; }
+    },
+    clearPending: () => { pendingRequests = []; }
+  };
+  
+  // Start health check after initial load
+  if (document.readyState === 'complete') {
+    startHealthCheck();
+  } else {
+    window.addEventListener('load', startHealthCheck);
+  }
+  
+  // Cleanup
+  window.addEventListener('beforeunload', () => {
+    if (healthCheckInterval) clearInterval(healthCheckInterval);
+    retryTimeouts.forEach(t => clearTimeout(t));
+  });
+})();
+</script>
+<script>
 /* ===== Override layer: fixed columns, scroll-driven page-by-page loading, hard stop at end of list ===== */
+</script>
+<script>
 (function () {
     var w = screen.width || 1200;
   var cols = w < 700 ? 2 : w < 1100 ? 3 : w < 1600 ? 4 : 5;
@@ -1881,6 +2515,91 @@ window.resetBackend = function () { try { localStorage.removeItem('api_base'); }
     });
   };
 })();
+</script>
+<script>
+// Safety: ensure InfiniteScrollManager exists even if early script failed
+if (typeof window.InfiniteScrollManager === 'undefined') {
+  window.InfiniteScrollManager = {
+    _observers: new Map(),
+    _callbacks: new Map(),
+    register(key, sentinel, callback, options = {}) {
+      if (!sentinel) return;
+      const rootMargin = options.rootMargin || '300px 0px';
+      const threshold = options.threshold || 0;
+      const observerKey = `${rootMargin}|${threshold}`;
+      let observer = this._observers.get(observerKey);
+      if (!observer) {
+        observer = new IntersectionObserver((entries) => {
+          entries.forEach(entry => {
+            if (!entry.isIntersecting) return;
+            const cb = this._callbacks.get(key);
+            if (cb) cb(entry);
+          });
+        }, { rootMargin, threshold });
+        this._observers.set(observerKey, observer);
+      }
+      sentinel.setAttribute('data-scroll-key', key);
+      this._callbacks.set(key, callback);
+      observer.observe(sentinel);
+    },
+    unregister(key) {
+      const sentinel = document.querySelector(`.sentinel[data-scroll-key="${key}"]`);
+      if (sentinel) {
+        for (const observer of this._observers.values()) {
+          observer.unobserve(sentinel);
+        }
+        sentinel.removeAttribute('data-scroll-key');
+      }
+      this._callbacks.delete(key);
+    },
+    rearm(key) {
+      const sentinel = document.querySelector(`.sentinel[data-scroll-key="${key}"]`);
+      if (sentinel) {
+        for (const observer of this._observers.values()) {
+          observer.unobserve(sentinel);
+          observer.observe(sentinel);
+        }
+      }
+    },
+    isExhausted(key) {
+      const sentinel = document.querySelector(`.sentinel[data-scroll-key="${key}"]`);
+      return sentinel?.classList.contains('end-of-list') || false;
+    },
+    markExhausted(key) {
+      const sentinel = document.querySelector(`.sentinel[data-scroll-key="${key}"]`);
+      if (sentinel) {
+        sentinel.className = 'sentinel end-of-list';
+        sentinel.textContent = 'End of list';
+        this.unregister(key);
+      }
+    },
+    destroy() {
+      for (const observer of this._observers.values()) {
+        observer.disconnect();
+      }
+      this._observers.clear();
+      this._callbacks.clear();
+    }
+  };
+  console.warn('[InfiniteScrollManager] Fallback implementation loaded (early script may have failed)');
+}
+
+// Safety: ensure prefetch exists
+if (typeof window.prefetch !== 'function') {
+  window.prefetch = function(url, options) {
+    return fetch(url, { ...options, priority: 'low' }).catch(() => {});
+  };
+}
+
+// Safety: ensure clearResponseCache exists
+if (typeof window.clearResponseCache !== 'function') {
+  window.clearResponseCache = function() {};
+}
+
+// Safety: ensure getPerfMetrics exists
+if (typeof window.getPerfMetrics !== 'function') {
+  window.getPerfMetrics = function() { return { requests: 0, cacheHits: 0, cacheMisses: 0, deduplicated: 0, errors: 0, avgLatency: 0, uptime: 0, cacheHitRate: '0%' }; };
+}
 </script>
 <script>
 // Superporn is the default main feed.
@@ -3040,11 +3759,15 @@ function cardHtml(item, si) {
   const main = item._main && item._main.name ? item._main : null;      // My Mix: the saved star / tag this video came from
   const placeholder = poster ||
     'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
+  // Use eager loading for first 8 cards, lazy for the rest
+  const isPriority = si < 8;
+  const loadingAttr = isPriority ? 'eager' : 'lazy';
+  const fetchPriority = isPriority ? 'high' : 'low';
 
   return `<a class="card" href="#" data-host="${escapeHtml(item._host || '')}" data-feed="${escapeHtml(item._feed || '')}" data-source-id="${escapeHtml(item._sourceId || '')}" data-detail="${escapeHtml(item.link)}"${main ? ` data-main-kind="${escapeHtml(main.kind)}" data-main-name="${escapeHtml(main.name)}" data-main-link="${escapeHtml(main.link || '')}"` : ''}
              data-title="${title}" data-search="${escapeHtml(searchTextOf(item))}" title="Play in main player">
     <div class="thumb${poster ? ' poster-loading' : ''}" id="${id}">
-      <img src="${placeholder}" loading="lazy" decoding="async"
+      <img src="${placeholder}" loading="${loadingAttr}" decoding="async" fetchpriority="${fetchPriority}"
            data-poster="${poster}" alt=""
            onload="this.parentElement.classList.remove('poster-loading')"
            onerror="this.style.opacity=0;this.parentElement.classList.remove('poster-loading')">
@@ -3173,7 +3896,7 @@ function sortCategoriesAZ(list) {
   return list.sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base', numeric: true }));
 }
 
-function categoryCardHtml(cat) {
+function categoryCardHtml(cat, index = 0) {
   const name = escapeHtml(cat.name || 'Untitled');
   const poster = cat.thumbnail ? escapeHtml(cat.thumbnail) : '';
   const placeholder = poster ||
@@ -3182,12 +3905,16 @@ function categoryCardHtml(cat) {
   const catFeed = feedOfSource(sourceId);
   const nameAttr = escapeHtml(cat.name || '');
   const showBadge = sourceId !== 'fullporno' || !isFpKind(cat.kind);
+  // Use eager loading for first 12 cards, lazy for the rest
+  const isPriority = index < 12;
+  const loadingAttr = isPriority ? 'eager' : 'lazy';
+  const fetchPriority = isPriority ? 'high' : 'low';
 
   return `<a class="card category-card" href="#" data-link="${escapeHtml(cat.link)}"
              data-name="${nameAttr}" data-source-id="${escapeHtml(sourceId)}"${cat.bdsmAll ? ' data-bdsm-all="1"' : ''}${cat.tag ? ` data-tagkey="${escapeHtml(cat.tagKey || '')}"${cat.thumbnail ? '' : ' data-snap="1"'}` : ''}
              title="${name}">
-    <div class="thumb"${poster ? ` style="--bg:url(&quot;${poster}&quot;)"` : ''}>
-      <img src="${placeholder}" loading="lazy" decoding="async" alt="${name}"
+    <div class="thumb"${poster ? ` style="--bg:url("${poster}")"` : ''}>
+      <img src="${placeholder}" loading="${loadingAttr}" decoding="async" fetchpriority="${fetchPriority}" alt="${name}"
            referrerpolicy="no-referrer"
            onerror="this.style.opacity=0">
       ${showBadge && !isFpKind(categoriesState.kind) ? `<span class="site-label s-${catFeed.id}">${escapeHtml(catFeed.name)}</span>` : ''}
@@ -3270,7 +3997,7 @@ function renderCategories(data, append = false, opts = {}) {
       return;
     }
 
-    const cards = categories.map(categoryCardHtml).join('');
+    const cards = categories.map((cat, i) => categoryCardHtml(cat, i)).join('');
     const filterBar = isPornSites ? '' : categoryFilterChipsHtml();
     const searchBar = isPornSites ? '' : `
         <div class="cat-search-bar">
@@ -3328,9 +4055,10 @@ function renderCategories(data, append = false, opts = {}) {
     // Only sort on initial load, not on scroll append
     // if (!isPornSites) sortCategoriesAZ(categoriesState.categories);
     
-    // Append new cards at the bottom without rebuilding entire grid
+// Append new cards at the bottom without rebuilding entire grid
     const temp = document.createElement('div');
-    temp.innerHTML = newCats.map(categoryCardHtml).join('');
+    const startIdx = categoriesState.categories.length - newCats.length;
+    temp.innerHTML = newCats.map((cat, i) => categoryCardHtml(cat, startIdx + i)).join('');
     while (temp.firstElementChild) {
       grid.insertBefore(temp.firstElementChild, slot);
     }
@@ -3781,20 +4509,77 @@ function bindCategoryCards() {
 
 let categorySentinelObserver = null;
 function observeCategorySentinel() {
-  if (!categorySentinelObserver) {
-    categorySentinelObserver = new IntersectionObserver((entries) => {
-      entries.forEach(entry => {
+  // Use unified InfiniteScrollManager for categories, pornsites, networks, porntags
+  // Fallback to legacy observer if InfiniteScrollManager not ready
+  const useInfiniteScrollManager = typeof window.InfiniteScrollManager !== 'undefined';
+  
+  const tabs = [CATEGORIES_TAB, PORN_SITES_TAB, NETWORKS_TAB, PORN_TAGS_TAB];
+  
+  if (useInfiniteScrollManager) {
+    tabs.forEach(tab => {
+      const sentinel = results.querySelector(`.sentinel[data-site="${tab}"]`);
+      if (!sentinel) return;
+      
+      const key = `category-${tab}`;
+      
+      window.InfiniteScrollManager.register(key, sentinel, (entry) => {
         if (!entry.isIntersecting) return;
-        const url = entry.target.getAttribute('data-site');
-        if (!((isListTab(url) || url === NETWORKS_TAB) && url === activeTab)) return;
-        if (url === PORN_SITES_TAB || url === NETWORKS_TAB) loadNextStudioPage();
-        else loadNextCategoriesPage();
-      });
-    }, { rootMargin: '250px 0px', threshold: 0 });
+        if (tab !== activeTab) return;
+        
+        if (tab === PORN_SITES_TAB || tab === NETWORKS_TAB) {
+          loadNextStudioPage();
+          // Prefetch next page
+          if (studioState.next_page) {
+            const url = studioState.next_page;
+            window.prefetch('/api/scrape-categories', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ url, mode: tab === NETWORKS_TAB ? 'networks' : 'sites' })
+            });
+          }
+        } else {
+          loadNextCategoriesPage();
+          // Prefetch next page for categories
+          const kind = categoriesState.kind || kindOfTab(activeTab);
+          if (kind === 'categories' && categoriesState.nextBySource) {
+            for (const src of COMBINED_CATEGORY_SOURCES) {
+              const next = categoriesState.nextBySource[src.id];
+              if (next) {
+                window.prefetch('/api/scrape-categories', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ url: next })
+                });
+              }
+            }
+          } else if (categoriesState.next_page) {
+            window.prefetch('/api/scrape-categories', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ url: categoriesState.next_page })
+            });
+          }
+        }
+      }, { rootMargin: '300px 0px', threshold: 0 });
+    });
+  } else {
+    // Legacy fallback
+    if (!categorySentinelObserver) {
+      categorySentinelObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          if (!entry.isIntersecting) return;
+          const url = entry.target.getAttribute('data-site');
+          if (!((isListTab(url) || url === NETWORKS_TAB) && url === activeTab)) return;
+          if (url === PORN_SITES_TAB || url === NETWORKS_TAB) loadNextStudioPage();
+          else loadNextCategoriesPage();
+        });
+      }, { rootMargin: '250px 0px', threshold: 0 });
+    }
+    tabs.forEach(tab => {
+      const sentinel = results.querySelector(`.sentinel[data-site="${tab}"]`);
+      if (sentinel) categorySentinelObserver.observe(sentinel);
+    });
   }
-  document.querySelectorAll(`.sentinel[data-site="${CATEGORIES_TAB}"], .sentinel[data-site="${PORN_SITES_TAB}"], .sentinel[data-site="${NETWORKS_TAB}"], .sentinel[data-site="${PORN_TAGS_TAB}"]`).forEach(s => {
-    categorySentinelObserver.observe(s);
-  });
 }
 
 async function loadNextCategoriesPage() {
@@ -3908,9 +4693,10 @@ async function loadNextCategoriesPage() {
     if (!isFpKind(kind)) sortCategoriesAZ(st.categories);
     if (st === categoriesState) {
       refreshCategoryGridFromState();
-    } else {
+} else {
       const temp = document.createElement('div');
-      temp.innerHTML = uniqueNew.map(categoryCardHtml).join('');
+      const startIdx = st.categories.length - uniqueNew.length;
+      temp.innerHTML = uniqueNew.map((cat, i) => categoryCardHtml(cat, startIdx + i)).join('');
       while (temp.firstElementChild) {
         grid.insertBefore(temp.firstElementChild, slot);
       }
@@ -3939,8 +4725,14 @@ async function loadNextCategoriesPage() {
     // Only keep rechecking when we actually added new items AND there are more pages.
     if (!anyNext && !st.next_page) st.exhausted = true;
 
-    saveCategoryCache(cacheKeyOfKind(kind));
-    if (!st.exhausted) scheduleCategoryRecheck();
+saveCategoryCache(cacheKeyOfKind(kind));
+    if (!st.exhausted) {
+      scheduleCategoryRecheck();
+      // Re-arm the sentinel for next intersection
+      window.InfiniteScrollManager.rearm(`category-${activeTab}`);
+    } else {
+      window.InfiniteScrollManager.markExhausted(`category-${activeTab}`);
+    }
   } catch (err) {
     st.retryCount = (st.retryCount || 0) + 1;
     loader.innerHTML = `<div style="color:#f87171;">Retrying… (${st.retryCount}/4)</div>`;
@@ -3966,6 +4758,8 @@ function scheduleCategoryRecheck() {
     // Don't auto-load while a name search filter is showing a subset
     if ((categoriesState.nameQuery || '').trim()) return;
     if (categoriesState.loading || categoriesState.exhausted) return;
+    // The InfiniteScrollManager handles intersection detection, but we keep this
+    // as a fallback for cases where the sentinel might not trigger
     const s = results.querySelector(`.sentinel[data-site="${CSS.escape(activeTab)}"]`);
     if (!s) return;
     const rect = s.getBoundingClientRect();
@@ -4241,12 +5035,18 @@ async function loadTagMixPages(key, depth, opts = {}) {
         if (badge) { const n = grid.querySelectorAll('.card').length; badge.textContent = `🎬 ${n} preview${n !== 1 ? 's' : ''}`; }
       }
     }
-  } catch (err) {
+} catch (err) {
     st.retryCount++;
     if (st.retryCount >= MAX_RETRY) st.exhausted = true;
   } finally {
     if (loader) loader.remove();
     st.loading = false;
+  }
+  // Re-arm sentinel
+  if (!st.exhausted) {
+    window.InfiniteScrollManager.rearm(key);
+  } else {
+    window.InfiniteScrollManager.markExhausted(key);
   }
   if (opts.recheck && activeTab === key) scheduleRecheck(key);
 }
@@ -4406,6 +5206,7 @@ function scheduleMixRecheck(tabKey) {
   setTimeout(() => {
     if (activeTab !== tabKey) return;
     if (feedQueries.get(tabKey)) return;                  // searching: pages load on scroll only
+    // Fallback - InfiniteScrollManager handles intersection detection
     const sn = results.querySelector(`.sentinel[data-site="${tabKey}"]`);
     if (!sn) return;
     const vh = window.innerHeight || document.documentElement.clientHeight;
@@ -4925,6 +5726,53 @@ mainPlayerClose.addEventListener('click', () => {
 
 let sentinelObserver = null;
 function observeSentinel(siteUrl) {
+  // Use InfiniteScrollManager for mixed feeds and tag mixes
+  if (siteUrl.startsWith(MIX_PREFIX) || siteUrl.startsWith(TAGMIX_PREFIX)) {
+    const sentinel = results.querySelector(`.sentinel[data-site="${siteUrl}"]`);
+    if (!sentinel) return;
+    
+    const key = siteUrl;
+    window.InfiniteScrollManager.register(key, sentinel, (entry) => {
+      if (!entry.isIntersecting) return;
+      if (siteUrl !== activeTab) return;
+      
+      if (siteUrl.startsWith(MIX_PREFIX)) {
+        loadMoreMixed(siteUrl);
+        // Prefetch next pages for all active sources
+        const ss = mixStateFor(siteUrl);
+        if (ss) {
+          for (const g of mixScope(ss)) {
+            const st = ss.pages.get(g.site);
+            if (st && st.next_page) {
+              window.prefetch('/api/scrape', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ urls: [st.next_page] })
+              });
+            }
+          }
+        }
+      } else if (siteUrl.startsWith(TAGMIX_PREFIX)) {
+        loadTagMixPages(siteUrl, 1, { recheck: true });
+        // Prefetch next pages for all members
+        const mix = tagMixes.get(siteUrl);
+        if (mix) {
+          for (const m of mix.members) {
+            if (m.next_page) {
+              window.prefetch('/api/scrape', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ urls: [m.next_page] })
+              });
+            }
+          }
+        }
+      }
+    }, { rootMargin: '300px 0px', threshold: 0 });
+    return;
+  }
+  
+  // Original logic for single-site feeds
   if (!sentinelObserver) {
     sentinelObserver = new IntersectionObserver((entries) => {
       entries.forEach(entry => {
@@ -5637,7 +6485,7 @@ async function loadNextStudioPage() {
     }
     if (isNet) st.next_page = Object.values(st.nexts).find(Boolean) || null;
 
-    st.page_num = (st.page_num || 1) + 1;
+st.page_num = (st.page_num || 1) + 1;
     st.exhausted = !st.next_page || (!isNet && !uniqueNew.length);
 
     if (uniqueNew.length) {
@@ -5655,6 +6503,27 @@ async function loadNextStudioPage() {
       loader.remove();
       renderStudioSections({ sections: uniqueNew, next_page: st.next_page }, true);
       applyStudioFilter();
+      // Prefetch next page
+      if (st.next_page) {
+        const isNet = studioTab === NETWORKS_TAB;
+        if (isNet && st.nexts) {
+          for (const [group, url] of Object.entries(st.nexts)) {
+            if (url) {
+              window.prefetch('/api/scrape-categories', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url, mode: 'networks', group })
+              });
+            }
+          }
+        } else if (!isNet) {
+          window.prefetch('/api/scrape-categories', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: st.next_page, mode: 'sites' })
+          });
+        }
+      }
     } else {
       loader.remove();
       // Stop after 2 consecutive pages with no new items (avoids infinite loops on
@@ -5679,6 +6548,12 @@ async function loadNextStudioPage() {
     }
   } finally {
     st.loading = false;
+    // Re-arm sentinel
+    if (!st.exhausted) {
+      window.InfiniteScrollManager.rearm(`category-${studioTab}`);
+    } else {
+      window.InfiniteScrollManager.markExhausted(`category-${studioTab}`);
+    }
   }
 }
 
@@ -5692,6 +6567,7 @@ function scheduleStudioRecheck() {
       if (!shown && !studioState.searchExhausted) searchStudioDeeper();
       return;
     }
+    // Fallback - InfiniteScrollManager handles intersection detection
     const s = results.querySelector(`.sentinel[data-site="${studioTab}"]`);
     if (!s) return;
     const rect = s.getBoundingClientRect();
@@ -5939,11 +6815,11 @@ function refreshCategoryGridFromState() {
   // Check if this is initial load or append
   const isInitialLoad = !grid.querySelector('.category-card');
   
-  if (isInitialLoad) {
+if (isInitialLoad) {
     // Initial load: show everything sorted
     grid.querySelectorAll('.category-card, .cat-filter-empty').forEach(el => el.remove());
     const temp = document.createElement('div');
-    temp.innerHTML = cats.map(categoryCardHtml).join('') ||
+    temp.innerHTML = cats.map((cat, i) => categoryCardHtml(cat, i)).join('') ||
       '<div class="cat-filter-empty" style="grid-column:1/-1;padding:2rem;text-align:center;color:#7a8aaa;">No categories found.</div>';
     while (temp.firstElementChild) {
       grid.insertBefore(temp.firstElementChild, slot);
@@ -5954,9 +6830,10 @@ function refreshCategoryGridFromState() {
     grid.querySelectorAll('.category-card').forEach(el => {
       existingLinks.add(el.getAttribute('data-link'));
     });
-    const newCats = cats.filter(c => !existingLinks.has(c.link));
+const newCats = cats.filter(c => !existingLinks.has(c.link));
     const temp = document.createElement('div');
-    temp.innerHTML = newCats.map(categoryCardHtml).join('');
+    const startIdx = grid.querySelectorAll('.category-card').length;
+    temp.innerHTML = newCats.map((cat, i) => categoryCardHtml(cat, startIdx + i)).join('');
     while (temp.firstElementChild) {
       grid.insertBefore(temp.firstElementChild, slot);
     }
@@ -6762,17 +7639,29 @@ function bindCatalogControls(kind) {
 
 let catalogObserver = null;
 function observeCatalogSentinel(kind) {
-  if (!catalogObserver) {
-    catalogObserver = new IntersectionObserver((entries) => {
-      entries.forEach(en => {
-        if (!en.isIntersecting) return;
-        const k = kindOfCatalogTab(en.target.getAttribute('data-site'));
-        if (k && CATALOGS[k].tab === activeTab) loadMoreCatalog(k);
-      });
-    }, { rootMargin: '250px 0px', threshold: 0 });
-  }
-  const sent = results.querySelector(`.sentinel[data-site="${CATALOGS[kind].tab}"]`);
-  if (sent) { catalogObserver.unobserve(sent); catalogObserver.observe(sent); }   // re-arm after each load
+  const sentinel = results.querySelector(`.sentinel[data-site="${CATALOGS[kind].tab}"]`);
+  if (!sentinel) return;
+  
+  const key = `catalog-${kind}`;
+  
+  window.InfiniteScrollManager.register(key, sentinel, (entry) => {
+    if (!entry.isIntersecting) return;
+    if (CATALOGS[kind].tab !== activeTab) return;
+    loadMoreCatalog(kind);
+    // Prefetch next pages for all sources
+    const st = catalogState[kind];
+    if (st) {
+      for (const [i, url] of Object.entries(st.next)) {
+        if (url) {
+          window.prefetch('/api/scrape-categories', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url, catalogSource: i, kind })
+          });
+        }
+      }
+    }
+  }, { rootMargin: '300px 0px', threshold: 0 });
 }
 
 async function loadMoreCatalog(kind) {
@@ -6788,6 +7677,12 @@ async function loadMoreCatalog(kind) {
   } finally { st.loading = false; }
   if (!Object.values(st.next).some(Boolean)) st.done = true;
   if (activeTab === CATALOGS[kind].tab) refreshCatalogGrid(kind);
+  // Re-arm sentinel
+  if (!st.done) {
+    window.InfiniteScrollManager.rearm(`catalog-${kind}`);
+  } else {
+    window.InfiniteScrollManager.markExhausted(`catalog-${kind}`);
+  }
   return added;
 }
 
@@ -7008,15 +7903,12 @@ function camsObserveSentinel(feed) {
     if (b) b.addEventListener('click', () => renderCamBatch(feed));
     return;
   }
-  if (!camsScrollObs) {
-    camsScrollObs = new IntersectionObserver((entries) => {
-      if (!entries.some(e => e.isIntersecting) || activeTab !== LIVECAMS_TAB) return;
-      const f = results.querySelector('.feed[data-site="' + LIVECAMS_TAB + '"]');
-      if (f) renderCamBatch(f);
-    }, { rootMargin: '1000px 0px', threshold: 0 });
-  }
-  camsScrollObs.disconnect();
-  camsScrollObs.observe(sentinel);        // observing again re-reports: keeps loading while the sentinel is still near
+  // Use InfiniteScrollManager for live cams
+  window.InfiniteScrollManager.register('livecams', sentinel, (entry) => {
+    if (!entry.isIntersecting) return;
+    if (activeTab !== LIVECAMS_TAB) return;
+    renderCamBatch(feed);
+  }, { rootMargin: '1000px 0px', threshold: 0 });
 }
 
 function renderCamBatch(feed) {
@@ -7277,13 +8169,12 @@ function chanObserveSentinel(feed) {
     if (b) b.addEventListener('click', () => chanLoadMore());
     return;
   }
-  if (!chansScrollObs) {
-    chansScrollObs = new IntersectionObserver((entries) => {
-      if (entries.some(e => e.isIntersecting) && activeTab === LIVECHANNELS_TAB) chanLoadMore();
-    }, { rootMargin: '900px 0px', threshold: 0 });
-  }
-  chansScrollObs.disconnect();
-  chansScrollObs.observe(sentinel);      // re-observing re-reports: keeps loading while the sentinel is still near
+  // Use InfiniteScrollManager for live channels
+  window.InfiniteScrollManager.register('livechannels', sentinel, (entry) => {
+    if (!entry.isIntersecting) return;
+    if (activeTab !== LIVECHANNELS_TAB) return;
+    chanLoadMore();
+  }, { rootMargin: '900px 0px', threshold: 0 });
 }
 
 function chanAppend(list) {
@@ -7316,6 +8207,12 @@ async function chanLoadMore() {
     st.error = null;
     chanAppend(fresh);
     if (st.nextPage) chanFetchPage(st.nextPage, st.category).catch(() => {});   // prefetch one page ahead
+    // Re-arm sentinel
+    if (!st.done) {
+      window.InfiniteScrollManager.rearm('livechannels');
+    } else {
+      window.InfiniteScrollManager.markExhausted('livechannels');
+    }
   } catch (err) {
     if (chanState !== st) return;
     st.error = err;
@@ -7831,12 +8728,16 @@ async function loadMoreMixed(tabKey, opts = {}) {
       if (!opts.quiet) setStatus(`${getFeed(ss.feedId).name} — ${ss.items.length} previews`, false);
     }
   }
-  if (activeTab !== tabKey) return;
-  if (!mixScope(ss).some(hasMore)) { const g2 = gridOf(tabKey); if (g2) showMixEnd(g2); return; }
+if (activeTab !== tabKey) return;
+  if (!mixScope(ss).some(hasMore)) { const g2 = gridOf(tabKey); if (g2) showMixEnd(g2); 
+    window.InfiniteScrollManager.markExhausted(tabKey);
+    return; 
+  }
   if (retryLater && !batch.length) {
     setTimeout(() => { if (mixStateFor(tabKey) === ss && activeTab === tabKey) loadMoreMixed(tabKey); }, 1500);
   } else {
     scheduleMixRecheck(tabKey);
+    window.InfiniteScrollManager.rearm(tabKey);
   }
 }
 
