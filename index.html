@@ -6519,9 +6519,11 @@ function renderCatalog(kind, opts = {}) {
       grid.classList.remove('loading-hidden');
       grid.classList.add('loading-visible');
     }
-    requestAnimationFrame(() => {
-      window.scrollTo({ top: savedScrollY, left: 0, behavior: 'instant' });
-    });
+    if (!opts.noScrollRestore) {
+      requestAnimationFrame(() => {
+        window.scrollTo({ top: savedScrollY, left: 0, behavior: 'instant' });
+      });
+    }
     return;
   }
   
@@ -6547,9 +6549,11 @@ function renderCatalog(kind, opts = {}) {
   bindCatalogControls(kind);
   
   // Restore scroll position after rendering
-  requestAnimationFrame(() => {
-    window.scrollTo({ top: savedScrollY, left: 0, behavior: 'instant' });
-  });
+  if (!opts.noScrollRestore) {
+    requestAnimationFrame(() => {
+      window.scrollTo({ top: savedScrollY, left: 0, behavior: 'instant' });
+    });
+  }
   
   // Reveal cards after they're rendered
   requestAnimationFrame(() => {
@@ -6762,7 +6766,7 @@ async function openCatalog(kind, opts = {}) {
   if (!cfg) return;
   const have = catalogState[kind];
   if (!opts.force && have && have.items.length) {
-    renderCatalog(kind, { isRestore: true });
+    renderCatalog(kind, { isRestore: true, noScrollRestore: opts.skipPush });
     if (!opts.skipPush) pushNav({ view: cfg.view });
     return;
   }
