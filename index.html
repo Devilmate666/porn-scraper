@@ -1646,21 +1646,21 @@ img { image-rendering: auto; }
     })();
   });
 
-  /* Search box: typing creates one history step, so Back #1 only clears the keyword and Back #2 reaches "Where to?" */
-  document.addEventListener('input', function (e) {
-    var el = e.target;
-    if (!el.matches || !el.matches('#catalogSearchInput,#categorySearchInput,#tagSearchInput,#studioSearchInput')) return;
-    if (el.value.trim() && !el._hist) { el._hist = true; try { history.pushState(Object.assign({}, history.state, { kwEntry: true }), '', location.href); } catch (_) {} }
-    if (!el.value.trim()) el._hist = false;
-  });
-  window.addEventListener('popstate', function (e) {
-    var el = document.querySelector('#catalogSearchInput,#categorySearchInput,#tagSearchInput,#studioSearchInput');
-    if (el && el._hist && el.value.trim() && !(e.state && e.state.kwEntry)) {
-      el.value = ''; el._hist = false; el.dispatchEvent(new Event('input'));
-      el._hist = false;
-      e.stopImmediatePropagation();
-    }
-  }, true);
+/* Search box: typing creates one history step, so Back #1 only clears the keyword and Back #2 reaches "Where to?" */
+document.addEventListener('input', function (e) {
+  var el = e.target;
+  if (!el.matches || !el.matches('#catalogSearchInput,#categorySearchInput,#tagSearchInput,#studioSearchInput')) return;
+  if (el.value.trim() && !el._hadText) { el._hadText = true; try { history.pushState(Object.assign({}, history.state, { kwEntry: true }), '', location.href); } catch (_) {} }
+  if (!el.value.trim()) el._hadText = false;
+});
+window.addEventListener('popstate', function (e) {
+  var el = document.querySelector('#catalogSearchInput,#categorySearchInput,#tagSearchInput,#studioSearchInput');
+  if (el && el._hadText && el.value.trim() && !(e.state && e.state.kwEntry)) {
+    el.value = ''; el._hadText = false; el.dispatchEvent(new Event('input'));
+    el._hadText = false;
+    e.stopImmediatePropagation();
+  }
+}, true);
 
   /* ===== Pornstars A-Z through every website: load every page of every source once, merge same-name stars, sort, letter headings ===== */
   window.addEventListener('DOMContentLoaded', function () {
@@ -2290,6 +2290,11 @@ const entryView = new Map();            // history entry idx -> which view that 
 const sectionListMemory = {
   categories: { y: 0, anchor: null },
   pornstars: { y: 0, anchor: null },
+  networks: { y: 0, anchor: null },
+  pornsites: { y: 0, anchor: null },
+  porntags: { y: 0, anchor: null },
+  livecams: { y: 0, anchor: null },
+  livechannels: { y: 0, anchor: null },
 };
 let scrollFreezeUntil = 0;              // right after a tap the page is being rebuilt: its scroll events are not the user's
 let scrollRestoring = false;            // a restore is running: its intermediate scroll positions must not be recorded
@@ -2345,7 +2350,7 @@ window.addEventListener('scroll', () => {
 function captureSectionListPosition() {
   try {
     const st = history.state;
-    if (!st || st.sid !== NAV_SID || !['categories', 'pornstars'].includes(st.view)) return;
+    if (!st || st.sid !== NAV_SID || !['categories', 'pornstars', 'networks', 'pornsites', 'porntags', 'livecams', 'livechannels'].includes(st.view)) return;
     const pos = Math.max(0, Math.round(window.scrollY || 0));
     // Capture an anchor only from the visible parent index, immediately before
     // it is replaced by a nested feed.
@@ -2356,14 +2361,16 @@ function captureSectionListPosition() {
       name: anchorCard.getAttribute('data-name') || '',
       offset: Math.round(anchorCard.getBoundingClientRect().top)
     } : null;
-    sectionListMemory[st.view] = { y: pos, anchor };
+    if (sectionListMemory[st.view]) {
+      sectionListMemory[st.view] = { y: pos, anchor };
+    }
     const next = { ...st, scrollY: pos, scrollAnchor: anchor };
     history.replaceState(next, '', location.href);
     if (typeof next.idx === 'number') {
       entryScroll.set(next.idx, pos);
       entryView.set(next.idx, navViewKey(next));
     }
-    if (st.view === 'categories' && categoriesState) categoriesState.scrollY = pos;
+    // Also update catalogState for pornstars
     if (st.view === 'pornstars' && catalogState.pornstars) catalogState.pornstars.scrollY = pos;
   } catch (_) {}
 }
@@ -2473,9 +2480,10 @@ function postRestore(state) {
 }
 
 async function applyNavState(state) {
-  // For these two indexes, their own memory is authoritative. Do not derive
+  // For section indexes, their own memory is authoritative. Do not derive
   // their position from the nested feed's current scroll or a stale history map.
-  if (state && (state.view === 'categories' || state.view === 'pornstars')) {
+  const sectionViews = ['categories', 'pornstars', 'networks', 'pornsites', 'porntags', 'livecams', 'livechannels'];
+  if (state && sectionViews.includes(state.view)) {
     const mem = sectionListMemory[state.view];
     if (mem) {
       state = { ...state, scrollY: mem.y, scrollAnchor: mem.anchor || state.scrollAnchor };
@@ -2524,20 +2532,23 @@ async function applyNavStateInner(state) {
     return;
   }
 
-  if (state.view === 'categories') {
+if (state.view === 'categories') {
     categoriesState.scrollY = sectionListMemory.categories.y;
     await openCategories(false, { skipPush: true });
     return;
   }
   if (state.view === 'pornsites') {
+    studioState.scrollY = sectionListMemory.pornsites.y;
     await openPornSites(false, { skipPush: true });
     return;
   }
   if (state.view === 'porntags') {
+    categoriesState.scrollY = sectionListMemory.porntags.y;
     await openPornTags(false, { skipPush: true });
     return;
   }
   if (state.view === 'networks') {
+    studioState.scrollY = sectionListMemory.networks.y;
     await openNetworks(false, { skipPush: true });
     return;
   }
@@ -2547,6 +2558,7 @@ async function applyNavStateInner(state) {
     return;
   }
   if (state.view === 'livecams') {
+    // livecams doesn't have a scroll position in the same way, but we can track it
     await openLiveCams(false, { skipPush: true });
     return;
   }
@@ -2634,7 +2646,7 @@ window.addEventListener('popstate', (e) => {
   if (exiting) return;                                            // Exit was chosen: the browser is leaving the app
   const fromIdx = navIdx;
   const goingBack = to === -1 || to < fromIdx;
-  if (goingBack && !(mainPlayer && mainPlayer.classList.contains('active')) && (sectionMenuOpen || isSectionRootState(currentNavState(true)))) {
+if (goingBack && !(mainPlayer && mainPlayer.classList.contains('active')) && (sectionMenuOpen || isSectionRootState(currentNavState(true)))) {
     // Back on a section's main page does not walk through the history: it asks where to go (other sections, or Exit).
     // The Back is undone by putting the same page on top of the history again - nothing is re-rendered, nothing moves.
     
@@ -2644,10 +2656,10 @@ window.addEventListener('popstate', (e) => {
     const tagInput = document.getElementById('tagSearchInput');
     const studioInput = document.getElementById('studioSearchInput');
     
-    const hasSearch = (catalogInput && catalogInput.value.trim()) ||
-                      (categoryInput && categoryInput.value.trim()) ||
-                      (tagInput && tagInput.value.trim()) ||
-                      (studioInput && studioInput.value.trim());
+    const hasSearch = (catalogInput && catalogInput._hadText) ||
+                      (categoryInput && categoryInput._hadText) ||
+                      (tagInput && tagInput._hadText) ||
+                      (studioInput && studioInput._hadText);
     
     if (hasSearch) {
       // First back press: clear search and push new state without showing menu
@@ -3690,6 +3702,10 @@ function saveCatalogScroll(y = window.scrollY) {
   const st = history.state;
   if (!st || st.sid !== NAV_SID || st.view !== CATALOGS[k].view) return;
   catalogState[k].scrollY = Math.max(0, Math.round(y || 0));
+  // Also update sectionListMemory for consistent restoration
+  if (sectionListMemory[k]) {
+    sectionListMemory[k].y = catalogState[k].scrollY;
+  }
 }
 
 // Keep the parent index's position separate from the scroll position of any
@@ -3703,16 +3719,18 @@ function rememberSectionListScroll(y = window.scrollY) {
   // During the async transition to a nested feed, activeTab/history.state can
   // briefly still say "pornstars" while the index DOM has already been replaced
   // by a loading screen. Only save while actual index cards are still rendered.
-  if (activeTab === CATEGORIES_TAB && st.view === 'categories' && categoriesState &&
-      results.querySelector(`.feed[data-site="${CATEGORIES_TAB}"] .category-card[data-link]`)) {
-    sectionListMemory.categories.y = pos;
-    categoriesState.scrollY = pos;
-  }
-  const k = kindOfCatalogTab(activeTab);
-  if (k && st.view === CATALOGS[k].view && catalogState[k] &&
-      results.querySelector(`.feed[data-site="${CATALOGS[k].tab}"] .category-card[data-link]`)) {
-    if (k === 'pornstars') sectionListMemory.pornstars.y = pos;
-    catalogState[k].scrollY = pos;
+  const sectionViews = ['categories', 'pornstars', 'networks', 'pornsites', 'porntags', 'livecams', 'livechannels'];
+  for (const view of sectionViews) {
+    if (activeTab === CATALOGS[view]?.tab && st.view === view &&
+        results.querySelector(`.feed[data-site="${CATALOGS[view]?.tab}"] .category-card[data-link]`)) {
+      if (sectionListMemory[view]) {
+        sectionListMemory[view].y = pos;
+      }
+      if (catalogState[view]) {
+        catalogState[view].scrollY = pos;
+      }
+      break;
+    }
   }
 }
 
@@ -4913,7 +4931,10 @@ function observeSentinel(siteUrl) {
         if (!entry.isIntersecting) return;
         const url = entry.target.getAttribute('data-site');
         if (url === WEBSEARCH_TAB) return;
-        if (url && url === activeTab) loadNextPageForSite(url);
+        if (url && url === activeTab) {
+          const st = siteState.get(url);
+          if (!st || !st.loading) loadNextPageForSite(url);
+        }
       });
     }, { rootMargin: '250px 0px', threshold: 0 });
   }
@@ -5076,6 +5097,8 @@ function scheduleRecheck(siteUrl) {
   setTimeout(() => {
     if (siteUrl !== activeTab) return;
     if (feedQueries.get(siteUrl)) return;                 // searching: pages load on scroll only
+    const st = siteState.get(siteUrl);
+    if (st && st.loading) return;                         // already loading, skip
     const s = results.querySelector(`.sentinel[data-site="${CSS.escape(siteUrl)}"]`);
     if (!s) return;
     const rect = s.getBoundingClientRect();
@@ -5098,7 +5121,8 @@ async function openCategories(forceRefresh = false, opts = {}) {
     categoriesState.scrollY = window.scrollY;
     saveCategoryCache(COMBINED_CAT_CACHE_KEY);
   }
-  if (!forceRefresh && loadCategoryCache(COMBINED_CAT_CACHE_KEY)) {
+  const isRestore = !forceRefresh && loadCategoryCache(COMBINED_CAT_CACHE_KEY);
+  if (isRestore) {
     const data = {
       ...(lastCategoriesData || {}),
       categories: categoriesState.categories.slice(),
@@ -5111,6 +5135,11 @@ async function openCategories(forceRefresh = false, opts = {}) {
     if (!opts.skipPush) pushNav({ view: 'categories' });
     setStatus(`Categories — ${categoriesState.categories.length}`, false);
     scheduleCategoryRecheck();
+    // Restore scroll position for cached view
+    const savedY = categoriesState.scrollY || 0;
+    if (savedY > 0) {
+      requestAnimationFrame(() => restoreScrollRobust(savedY));
+    }
     return;
   }
 
@@ -5706,6 +5735,11 @@ async function openStudioView(tab, forceRefresh = false, opts = {}) {
     }
     if (!opts.skipPush) pushNav({ view: V.navView });
     setStatus(`${V.title} — ${studioState.sections.length}`, false);
+    // Restore scroll position for cached view
+    const savedY = studioState.scrollY || 0;
+    if (savedY > 0) {
+      requestAnimationFrame(() => restoreScrollRobust(savedY));
+    }
     return;
   }
 
@@ -5721,6 +5755,11 @@ async function openStudioView(tab, forceRefresh = false, opts = {}) {
     studioState.rendered = true;
     if (!opts.skipPush) pushNav({ view: V.navView });
     setStatus(`${V.title} — ${(studioState.sections.length || lastStudioData.sections.length)}`, false);
+    // Restore scroll position for cached view
+    const savedY = studioState.scrollY || 0;
+    if (savedY > 0) {
+      requestAnimationFrame(() => restoreScrollRobust(savedY));
+    }
     return;
   }
 
@@ -5767,6 +5806,8 @@ async function openStudioView(tab, forceRefresh = false, opts = {}) {
     studioState.scrollY = 0;
     if (!opts.skipPush) pushNav({ view: V.navView });
     setStatus(`${V.title} — ${(json.sections || []).length}`, false);
+    // Fresh load: ensure we start at the top
+    requestAnimationFrame(() => window.scrollTo({ top: 0, left: 0, behavior: 'instant' }));
   } catch (err) {
     rescueSearchBar(); results.innerHTML = `<div class="empty">⚠️ ${escapeHtml(err.message)}</div>`;
     setStatus(`${V.title} load error`, false);
@@ -5792,6 +5833,11 @@ async function openPornTags(forceRefresh = false, opts = {}) {
     if (!opts.skipPush) pushNav({ view: 'porntags' });
     setStatus(`Porn Tags — ${categoriesState.categories.length}`, false);
     scheduleCategoryRecheck();
+    // Restore scroll position for cached view
+    const savedY = categoriesState.scrollY || 0;
+    if (savedY > 0) {
+      requestAnimationFrame(() => restoreScrollRobust(savedY));
+    }
     return;
   }
 
@@ -5801,7 +5847,7 @@ async function openPornTags(forceRefresh = false, opts = {}) {
   setStatus('Loading porn tags…', true);
   showSectionLoading('porn tags and categories');
 
-  try {
+try {
     const res = await fetch('/api/scrape-categories', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -5819,6 +5865,8 @@ async function openPornTags(forceRefresh = false, opts = {}) {
     if (!opts.skipPush) pushNav({ view: 'porntags' });
     setStatus(`Porn Tags — ${cats.length}`, false);
     scheduleCategoryRecheck();
+    // Fresh load: ensure we start at the top
+    requestAnimationFrame(() => window.scrollTo({ top: 0, left: 0, behavior: 'instant' }));
   } catch (err) {
     rescueSearchBar(); results.innerHTML = `<div class="empty">⚠️ ${escapeHtml(err.message)}</div>`;
     setStatus('Porn tags load error', false);
@@ -6779,12 +6827,14 @@ async function openCatalog(kind, opts = {}) {
     q: '', loading: false, done: false, errors: [], searchToken: 0,
     scrollY: kind === 'pornstars' ? sectionListMemory.pornstars.y : 0,
   };
-  try {
+try {
     await Promise.all(cfg.sources.map((src, i) => fetchCatalogPage(kind, i, src.indexUrl)));
     if (!Object.values(st.next).some(Boolean)) st.done = true;
     if (!st.items.length) throw new Error(st.errors[0] || `No ${cfg.noun}s found.`);
     renderCatalog(kind);
     if (!opts.skipPush) pushNav({ view: cfg.view });
+    // Fresh load: ensure we start at the top
+    requestAnimationFrame(() => window.scrollTo({ top: 0, left: 0, behavior: 'instant' }));
   } catch (err) {
     catalogState[kind] = null;
     rescueSearchBar(); results.innerHTML = `<div class="empty">⚠️ ${escapeHtml(err.message)}</div>`;
@@ -7075,6 +7125,11 @@ async function openLiveCams(force = false, opts = {}) {
   if (!force && liveCamsData && liveCamsData.items.length) {
     renderLiveCams();
     if (!opts.skipPush) pushNav({ view: 'livecams' });
+    // Restore scroll position for cached view
+    const savedY = sectionListMemory.livecams?.y || 0;
+    if (savedY > 0) {
+      requestAnimationFrame(() => restoreScrollRobust(savedY));
+    }
     return;
   }
   if (busy) return;
@@ -7097,6 +7152,8 @@ async function openLiveCams(force = false, opts = {}) {
     liveCamsData = json;
     renderLiveCams();
     if (!opts.skipPush) pushNav({ view: 'livecams' });
+    // Fresh load: ensure we start at the top
+    requestAnimationFrame(() => window.scrollTo({ top: 0, left: 0, behavior: 'instant' }));
   } catch (err) {
     liveCamsData = null;
     showLiveCamsError(err);
@@ -7358,6 +7415,13 @@ async function openLiveChannels(force = false, opts = {}) {
   else if (force || !chanState) chanState = chanNewState(chanState ? chanState.category : '', !!force);
   renderLiveChannels();
   if (!opts.skipPush) pushNav({ view: 'livechannels' });
+  // Fresh load: ensure we start at the top (cached views restore via sectionListMemory)
+  requestAnimationFrame(() => window.scrollTo({ top: 0, left: 0, behavior: 'instant' }));
+  // Restore scroll position for cached view
+  const savedY = sectionListMemory.livechannels?.y || 0;
+  if (savedY > 0) {
+    requestAnimationFrame(() => restoreScrollRobust(savedY));
+  }
 }
 
 function preserveSectionScrollRange(y) {
@@ -7400,6 +7464,16 @@ function enterNavSection(section, action, force = false, pressedButton = null) {
   if ((activeTab === NETWORKS_TAB || activeTab === PORN_SITES_TAB) && studioState.rendered) {
     studioState.scrollY = currentScrollY;
   }
+  if (activeTab === PORN_TAGS_TAB && categoriesState.categories.length) {
+    categoriesState.scrollY = currentScrollY;
+    saveCategoryCache(PORN_TAGS_CACHE_KEY);
+  }
+  if (activeTab === LIVECAMS_TAB) {
+    sectionListMemory.livecams.y = currentScrollY;
+  }
+  if (activeTab === LIVECHANNELS_TAB) {
+    sectionListMemory.livechannels.y = currentScrollY;
+  }
   saveCatalogScroll(currentScrollY);
 
   // Top-level sections share ONE history slot. The first section opened from Home gets a history entry; switching between
@@ -7420,11 +7494,17 @@ function enterNavSection(section, action, force = false, pressedButton = null) {
   let targetScrollY = 0;
   if (section === 'categories' && categoriesState.scrollY) targetScrollY = categoriesState.scrollY;
   else if (section === 'pornstars' && catalogState.pornstars && catalogState.pornstars.scrollY) targetScrollY = catalogState.pornstars.scrollY;
+  else if (section === 'networks' && studioState.scrollY) targetScrollY = studioState.scrollY;
+  else if (section === 'pornsites' && studioState.scrollY) targetScrollY = studioState.scrollY;
+  else if (section === 'porntags' && categoriesState.scrollY) targetScrollY = categoriesState.scrollY;
+  else if (section === 'livecams' && sectionListMemory.livecams) targetScrollY = sectionListMemory.livecams.y;
+  else if (section === 'livechannels' && sectionListMemory.livechannels) targetScrollY = sectionListMemory.livechannels.y;
   discardCurrentSection();
   studioState.scrollY = 0;
   // Don't clear the target section's scroll position - the action will restore it
   if (section !== 'categories') categoriesState.scrollY = 0;
   if (section !== 'pornstars') Object.values(catalogState).forEach(c => { if (c) c.scrollY = 0; });
+  if (section !== 'networks' && section !== 'pornsites') studioState.scrollY = 0;
   results.style.minHeight = '';
   window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
   navSection = section;
