@@ -1532,6 +1532,33 @@ img { image-rendering: auto; }
 .sentinel.end-of-list { height: auto; text-align: center; padding: 1rem; font-size: .75rem; color: #5b6a84; }
 </style>
 <script>
+(function () {
+  /* API calls: at most 10 at a time, and a failed/rate-limited call (network error, 429, 5xx) is retried twice before giving up,
+     so a burst of page loads can never leave a section stuck on shimmer. */
+  var nf = window.fetch.bind(window), active = 0, queue = [];
+  function pump() { while (active < 10 && queue.length) { active++; queue.shift()(); } }
+  function report(msg) { window.__lastApiError = msg; try { setStatus('⚠ ' + msg, false); } catch (e) {} }
+  window.fetch = function (u, o) {
+    var url = typeof u === 'string' ? u : (u && u.url) || '';
+    if (url.indexOf('/api/') < 0) return nf(u, o);
+    return new Promise(function (res, rej) {
+      queue.push(function () {
+        function done() { active--; pump(); }
+        function attempt(n) {
+          nf(u, o).then(function (r) {
+            if ((r.status === 429 || r.status >= 500) && n < 2) { setTimeout(function () { attempt(n + 1); }, 700 * (n + 1)); return; }
+            done(); if (!r.ok) report('Server answered HTTP ' + r.status + ' for ' + url.replace(/^https?:\/\/[^/]+/, '').split('?')[0]); res(r);
+          }, function (e) {
+            if (n < 2 && !(o && o.signal && o.signal.aborted)) { setTimeout(function () { attempt(n + 1); }, 700 * (n + 1)); return; }
+            done(); report('Cannot reach the server (' + (e && e.message || 'network error') + ')'); rej(e);
+          });
+        }
+        attempt(0);
+      });
+      pump();
+    });
+  };
+})();
 /* ===== Override layer: fixed columns, scroll-driven page-by-page loading, hard stop at end of list ===== */
 (function () {
     var w = screen.width || 1200;
@@ -1542,7 +1569,14 @@ img { image-rendering: auto; }
   var armed = true, lastFire = 0, depth = 0;
   function scrollable() { return document.documentElement.scrollHeight > window.innerHeight + 120; }
   window.addEventListener('scroll', function () { if (!armed && Date.now() - lastFire > 500) armed = true; }, { passive: true });
-  function allow() { if (depth > 0 || !scrollable()) return true; if (armed) { armed = false; lastFire = Date.now(); return true; } return false; }
+  /* Never gate the FIRST fill: while the page still shows placeholders (shimmer) or has hardly any real cards, loading must run. */
+  function needsFirstFill() {
+    try {
+      if (document.querySelector('#results .cat-skeleton-grid, #results .section-loading, #results .cam-skel, #results .skeleton')) return true;
+      return document.querySelectorAll('#results .card, #results .cam-card, #results .studio-card').length < 12;
+    } catch (e) { return true; }
+  }
+  function allow() { if (depth > 0 || !scrollable() || needsFirstFill()) return true; if (armed) { armed = false; lastFire = Date.now(); return true; } return false; }
   function gate(name, bypass) {
     var f = window[name]; if (typeof f !== 'function') return;
     window[name] = function () {
@@ -1559,11 +1593,11 @@ img { image-rendering: auto; }
       } catch (e) {}
       return false;
     };
-    gate('loadNextPageForSite', searching); gate('loadNextCategoriesPage', searching); gate('loadNextStudioPage', searching);
+    gate('loadNextPageForSite', searching); gate('loadNextCategoriesPage', function () { return !!window.__fullLoad || searching(); }); gate('loadNextStudioPage', searching);
     gate('loadMoreMixed', function (t, o) { return !!(o && (o.search || o.quiet)); });
     gate('loadMoreWebSearch', function (init) { return init === true; });
     gate('loadTagMixPages', function (a, b, o) { return !(o && o.recheck); });
-    gate('loadMoreCatalog', function (k) { try { return !!(catalogState[k] && catalogState[k].q) || searching(); } catch (e) { return false; } });
+    gate('loadMoreCatalog', function (k) { try { return !!window.__fullLoad || !!(catalogState[k] && catalogState[k].q) || searching(); } catch (e) { return false; } });
     gate('scheduleRecheck'); gate('scheduleCategoryRecheck');
   });
 
@@ -1627,6 +1661,175 @@ img { image-rendering: auto; }
       e.stopImmediatePropagation();
     }
   }, true);
+
+  /* ===== Pornstars A-Z through every website: load every page of every source once, merge same-name stars, sort, letter headings ===== */
+  window.addEventListener('DOMContentLoaded', function () {
+    var KIND = 'pornstars';
+    var norm = function (t) { return (t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''); };
+    var letterOf = function (n) { var c = norm(n).replace(/[^a-z0-9]/g, '').charAt(0).toUpperCase(); return /[A-Z]/.test(c) ? c : '#'; };
+    var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+
+    function fixHeads(grid) {
+      var heads = grid.querySelectorAll('.az-head');
+      heads.forEach(function (h) {
+        var any = false, n = h.nextElementSibling;
+        while (n && !n.classList.contains('az-head')) { if (n.classList.contains('category-card') && n.style.display !== 'none') { any = true; break; } n = n.nextElementSibling; }
+        h.style.display = any ? '' : 'none';
+      });
+    }
+    function organize() {
+      try {
+        var st = catalogState[KIND]; if (!st || !st.done) return;
+        var feed = results.querySelector('.feed[data-site="' + CATALOGS[KIND].tab + '"]');
+        var grid = feed && feed.querySelector('.videos'); if (!grid) return;
+        var cards = [].slice.call(grid.querySelectorAll('.category-card'));
+        if (!cards.length) return;
+        var sig = cards.length + ':' + grid.querySelectorAll('.az-head').length;
+        if (grid._azSig === sig && grid.querySelector('.az-head')) return;
+        var anchor = cards.find(function (c) { return c.getBoundingClientRect().bottom > 0; });
+        var aName = anchor && anchor.getAttribute('data-name'), aTop = anchor ? anchor.getBoundingClientRect().top : 0;
+        cards.sort(function (a, b) { return (a.getAttribute('data-name') || '').localeCompare(b.getAttribute('data-name') || '', undefined, { sensitivity: 'base', numeric: true }); });
+        grid.querySelectorAll('.az-head').forEach(function (h) { h.remove(); });
+        var slot = grid.querySelector('.loading-row-slot'), frag = document.createDocumentFragment(), last = '';
+        cards.forEach(function (c) {
+          var L = letterOf(c.getAttribute('data-name'));
+          if (L !== last) { last = L; var h = document.createElement('div'); h.className = 'az-head'; h.id = 'az-' + (L === '#' ? 'num' : L); h.textContent = L; frag.appendChild(h); }
+          frag.appendChild(c);
+        });
+        grid.insertBefore(frag, slot || null);
+        grid._azSig = cards.length + ':' + grid.querySelectorAll('.az-head').length;
+        fixHeads(grid);
+        if (aName && window.scrollY > 5) {
+          var again = cards.find(function (c) { return c.getAttribute('data-name') === aName; });
+          if (again) window.scrollTo({ top: window.scrollY + again.getBoundingClientRect().top - aTop, behavior: 'instant' });
+        }
+      } catch (e) {}
+    }
+    var st0 = document.createElement('style');
+    st0.textContent = '.az-head{grid-column:1/-1;font-size:1.1rem;font-weight:700;color:#c4b5fd;padding:.6rem .2rem .2rem;border-bottom:1px solid #252e3f;scroll-margin-top:90px}';
+    document.head.appendChild(st0);
+
+    var origRefresh = window.refreshCatalogGrid;
+    window.refreshCatalogGrid = function (kind) { var r = origRefresh.apply(this, arguments); if (kind === KIND) organize(); return r; };
+    var origFilter = window.applyCatalogFilter;
+    window.applyCatalogFilter = function (kind) { var r = origFilter.apply(this, arguments); if (kind === KIND) { var f = results.querySelector('.feed[data-site="' + CATALOGS[KIND].tab + '"] .videos'); if (f) fixHeads(f); } return r; };
+
+    async function fullLoad() {
+      var st = catalogState[KIND]; if (!st || st._full) return; st._full = true;
+      window.__fullLoad = true;
+      try {
+        for (var i = 0; i < 400 && !st.done; i++) {
+          if (!st.loading) { await loadMoreCatalog(KIND); await sleep(350); } else await sleep(150);
+          if (catalogState[KIND] !== st) return;
+          try { if (activeTab === CATALOGS[KIND].tab) setStatus('Loading Pornstars A–Z… ' + st.items.length + ' found', true); } catch (e) {}
+        }
+      } finally { window.__fullLoad = false; }
+      try { if (activeTab === CATALOGS[KIND].tab) { setStatus('Pornstars A–Z — ' + st.items.length + ' from all websites', false); } } catch (e) {}
+      organize();
+    }
+    var origOpen = window.openCatalog;
+    window.openCatalog = async function (kind) {
+      var r = await origOpen.apply(this, arguments);
+      if (kind === KIND) { fullLoad(); setTimeout(organize, 50); setTimeout(organize, 400); }
+      return r;
+    };
+  });
+
+  /* ===== Categories A-Z through every website (same treatment as Pornstars) ===== */
+  window.addEventListener('DOMContentLoaded', function () {
+    var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+    var norm = function (t) { return (t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ''); };
+    var letterOf = function (n) { var c = norm(n).charAt(0).toUpperCase(); return /[A-Z]/.test(c) ? c : '#'; };
+    var curTab = function () { return (typeof PORN_TAGS_TAB !== 'undefined' && activeTab === PORN_TAGS_TAB) ? PORN_TAGS_TAB : CATEGORIES_TAB; };
+    var gridOf = function () { var f = results.querySelector('.feed[data-site="' + curTab() + '"]'); return f && f.querySelector('.videos'); };
+    function fixHeads(grid) {
+      grid.querySelectorAll('.az-head').forEach(function (h) {
+        var any = false, n = h.nextElementSibling;
+        while (n && !n.classList.contains('az-head')) { if (n.classList.contains('category-card') && n.style.display !== 'none') { any = true; break; } n = n.nextElementSibling; }
+        h.style.display = any ? '' : 'none';
+      });
+    }
+    function organizeCats() {
+      try {
+        var grid = gridOf(); if (!grid) return;
+        var cards = [].slice.call(grid.querySelectorAll('.category-card'));
+        if (!cards.length) return;
+        /* same name on several General websites -> ONE card (one feed from all of them); BDSMHole and the combined BDSM tile stay separate */
+        var by = new Map();
+        cards.forEach(function (c) {
+          if (c.dataset.bdsmAll || c.getAttribute('data-source-id') === 'bdsmhole') return;
+          var k = norm(c.getAttribute('data-name')); if (!k) return;
+          var keep = by.get(k);
+          if (!keep) { by.set(k, c); return; }
+          var members = []; try { members = JSON.parse(keep.dataset.members || '[]'); } catch (_) {}
+          var lab = function (sid) { return ((SOURCES.find(function (x) { return x.id === sid; })) || {}).name || sid; };
+          if (!members.length) members = [{ link: keep.getAttribute('data-link'), sid: keep.getAttribute('data-source-id'), label: lab(keep.getAttribute('data-source-id')) }];
+          var sid = c.getAttribute('data-source-id');
+          if (!members.some(function (m) { return m.sid === sid; })) members.push({ link: c.getAttribute('data-link'), sid: sid, label: lab(sid) });
+          keep.dataset.members = JSON.stringify(members);
+          var l = keep.querySelector('.site-label'); if (l) l.textContent = 'General Porn';
+          if (!keep.getAttribute('data-thumb-ok') && !keep.querySelector('.thumb[style]') && c.querySelector('.thumb[style]')) { var t = c.querySelector('.thumb'), kt = keep.querySelector('.thumb'); if (t && kt) { kt.setAttribute('style', t.getAttribute('style')); var im = keep.querySelector('img'), im2 = c.querySelector('img'); if (im && im2) { im.src = im2.src; im.style.opacity = 1; } } }
+          c.remove();
+        });
+        cards = [].slice.call(grid.querySelectorAll('.category-card'));
+        var st = categoriesState;
+        if (!st.exhausted && !st._azReady) { fixHeads(grid); return; }          /* sort once every page of every website is in */
+        var sig = cards.length + ':' + grid.querySelectorAll('.az-head').length;
+        if (grid._azSig === sig && grid.querySelector('.az-head')) { fixHeads(grid); return; }
+        var anchor = cards.find(function (c) { return c.getBoundingClientRect().bottom > 0; });
+        var aLink = anchor && anchor.getAttribute('data-link'), aTop = anchor ? anchor.getBoundingClientRect().top : 0;
+        cards.sort(function (a, b) {
+          var ba = a.dataset.bdsmAll ? 1 : 0, bb = b.dataset.bdsmAll ? 1 : 0; if (ba !== bb) return 0;
+          return (a.getAttribute('data-name') || '').localeCompare(b.getAttribute('data-name') || '', undefined, { sensitivity: 'base', numeric: true });
+        });
+        grid.querySelectorAll('.az-head').forEach(function (h) { h.remove(); });
+        var slot = grid.querySelector('.loading-row-slot'), frag = document.createDocumentFragment(), last = '';
+        cards.forEach(function (c) {
+          var L = letterOf(c.getAttribute('data-name'));
+          if (L !== last) { last = L; var h = document.createElement('div'); h.className = 'az-head'; h.id = 'azc-' + (L === '#' ? 'num' : L); h.textContent = L; frag.appendChild(h); }
+          frag.appendChild(c);
+        });
+        grid.insertBefore(frag, slot || null);
+        grid._azSig = cards.length + ':' + grid.querySelectorAll('.az-head').length;
+        fixHeads(grid);
+        if (aLink && window.scrollY > 5) {
+          var again = cards.find(function (c) { return c.getAttribute('data-link') === aLink; });
+          if (again) window.scrollTo({ top: window.scrollY + again.getBoundingClientRect().top - aTop, behavior: 'instant' });
+        }
+      } catch (e) {}
+    }
+    var oRef = window.refreshCategoryGridFromState;
+    window.refreshCategoryGridFromState = function () { var r = oRef.apply(this, arguments); organizeCats(); return r; };
+    var oNF = window.applyCategoryNameFilter;
+    window.applyCategoryNameFilter = function () { var r = oNF.apply(this, arguments); var g = gridOf(); if (g) fixHeads(g); return r; };
+
+    var running = false;
+    async function fullLoadCats() {
+      var st = categoriesState; if (running || st.exhausted) { if (st.exhausted) { st._azReady = true; organizeCats(); } return; }
+      running = true; window.__fullLoad = true;
+      try {
+        for (var i = 0; i < 400 && !st.exhausted; i++) {
+          if (activeTab !== CATEGORIES_TAB && activeTab !== PORN_TAGS_TAB) break;
+          if (!st.loading) await loadNextCategoriesPage(); else await sleep(150);
+          try { setStatus('Loading ' + (activeTab === PORN_TAGS_TAB ? 'Tags' : 'Categories') + ' A–Z… ' + (st.categories || []).length + ' found', true); } catch (e) {}
+          await sleep(350);
+        }
+      } finally { window.__fullLoad = false; running = false; }
+      if (st.exhausted) { st._azReady = true; try { setStatus('Categories A–Z — ' + (st.categories || []).length + ' from all websites', false); } catch (e) {} organizeCats(); }
+    }
+    var oOpen = window.openCategories;
+    window.openCategories = async function () {
+      var r = await oOpen.apply(this, arguments);
+      fullLoadCats(); setTimeout(organizeCats, 60); setTimeout(organizeCats, 500);
+      return r;
+    };
+    var oTags = window.openPornTags;
+    if (typeof oTags === 'function') window.openPornTags = async function () {
+      var r = await oTags.apply(this, arguments);
+      fullLoadCats(); setTimeout(organizeCats, 60); setTimeout(organizeCats, 500);
+      return r;
+    };
+  });
 })();
 </script>
 <script>
@@ -5697,6 +5900,715 @@ function refreshCategoryGridFromState() {
     while (temp.firstElementChild) {
       grid.insertBefore(temp.firstElementChild, slot);
     }
+  } else {
+    // Append mode: only add new items at bottom without re-sorting
+    const existingLinks = new Set();
+    grid.querySelectorAll('.category-card').forEach(el => {
+      existingLinks.add(el.getAttribute('data-link'));
+    });
+    const newCats = cats.filter(c => !existingLinks.has(c.link));
+    const temp = document.createElement('div');
+    temp.innerHTML = newCats.map(categoryCardHtml).join('');
+    while (temp.firstElementChild) {
+      grid.insertBefore(temp.firstElementChild, slot);
+    }
+  }
+  
+  bindCategoryCards();
+  applyCategoryNameFilter();      // every rebuild keeps the active search / General-BDSM filter (otherwise all tiles flash back)
+}
+
+/** Show/hide category tiles by source filter + name search (categories only, not videos). */
+function applyCategoryNameFilter() {
+  const filter = categoriesState.filterSource || 'all';
+  const fname = filter === 'bdsm' ? 'BDSM' : filter === 'general' ? 'General' : '';
+  const q = (categoriesState.nameQuery || '').trim().toLowerCase();
+
+  const feed = results.querySelector(`.feed[data-site="${CATEGORIES_TAB}"]`);
+  if (!feed) return;
+  const cards = feed.querySelectorAll('.category-card');
+  const onlyBdsm = q.replace(/[^a-z0-9]/g, '') === 'bdsm' && !!feed.querySelector('.category-card[data-bdsm-all]');
+  let visible = 0;
+  const alnum = t => (t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
+  const fits = [];
+  cards.forEach(card => {
+    const sid = card.getAttribute('data-source-id') || '';
+    const name = card.getAttribute('data-name') || '';
+    const sourceOk = filter === 'all' || feedOfSource(sid).id === filter;
+    const nameOk = !q || searchWordsMatch(name, queryWords(q));
+    card._fit = sourceOk && nameOk && (!onlyBdsm || card.hasAttribute('data-bdsm-all'));
+    card._show = card._fit;
+    if (card._fit) fits.push(card);
+  });
+  if (q) {
+    // A search returns ONE unified card per name (per General / BDSM): an exact name beats partial matches,
+    // and the same name from several websites collapses into a single card (it opens the mixed feed).
+    const qn = alnum(q);
+    const exact = fits.filter(c => alnum(c.getAttribute('data-name')) === qn);
+    const pool = exact.length ? exact : fits;
+    const best = new Map();
+    pool.forEach(c => {
+      const key = feedOfSource(c.getAttribute('data-source-id') || '').id + '|' + alnum(c.getAttribute('data-name'));
+      const cur = best.get(key);
+      const score = x => (x.hasAttribute('data-bdsm-all') ? 2 : 0) + (x.querySelector('.thumb[style*="--bg"]') ? 1 : 0);
+      if (!cur || score(c) > score(cur)) best.set(key, c);
+    });
+    const keep = new Set(best.values());
+    cards.forEach(c => { c._show = keep.has(c); });
+  }
+  cards.forEach(card => {
+    card.style.display = card._show ? '' : 'none';
+    if (card._show) visible++;
+  });
+
+  let empty = feed.querySelector('.cat-filter-empty');
+  if (visible === 0) {
+    if (!empty) {
+      const grid = feed.querySelector('.videos');
+      empty = document.createElement('div');
+      empty.className = 'cat-filter-empty';
+      empty.style.cssText = 'grid-column:1/-1;padding:2rem;text-align:center;color:#7a8aaa;';
+      const slot = grid.querySelector('.loading-row-slot');
+      grid.insertBefore(empty, slot);
+    }
+    empty.textContent = q
+      ? `No categories matching “${q}”${fname ? ' in ' + fname : ''}.`
+      : (fname ? `No ${fname} categories loaded.` : 'No categories found.');
+  } else if (empty) {
+    empty.remove();
+  }
+
+  const countBadge = feed.querySelector('.count-badge');
+  if (countBadge) {
+    let suffix = fname ? ' · ' + fname : '';
+    if (q) suffix += ` · “${q}”`;
+    countBadge.textContent = `🗂️ ${visible} categor${visible !== 1 ? 'ies' : 'y'}${suffix}`;
+  }
+
+  setStatus(
+    q
+      ? `Categories — ${visible} match${visible !== 1 ? 'es' : ''} for “${q}”`
+      : `Categories — ${visible}`,
+    false
+  );
+}
+
+function bindCombinedCategorySearch() {
+  const input = document.getElementById('categorySearchInput');
+  if (!input) return;
+
+  // Live local filter — updates immediately as you type; clearing restores full list
+  const runLive = () => {
+    const q = (input.value || '').trim();
+    categoriesState.nameQuery = q;
+    applyCategoryNameFilter();
+    saveCategoryCache(COMBINED_CAT_CACHE_KEY);
+    if (!q) {
+      // Deleted search keyword → show all categories for current menu
+      refreshCategoryGridFromState();
+      applyCategoryNameFilter();
+      scheduleCategoryRecheck();
+      setStatus(`Categories — ${(categoriesState.categories || []).length}`, false);
+    }
+  };
+
+  // Full website search (finds categories not loaded yet). Only fires after the user
+  // stops typing for a while AND has entered a complete keyword (3+ chars) so it never
+  // interrupts typing with a network round-trip.
+  const runWebsite = () => {
+    const q = (input.value || '').trim();
+    categoriesState.nameQuery = q;
+    if (!q) {
+      runLive();
+      return;
+    }
+    searchCategoriesByName(q, ++catSearchToken);
+  };
+
+  // Typing = instant local filter. The deep website search waits for the user to pause
+  // (600ms) and only kicks in once a real keyword is on the table (3+ chars).
+  // Every new keystroke cancels any search that is still running for the previous keyword.
+  input.addEventListener('input', () => {
+    clearTimeout(input._catTimer);
+    clearTimeout(input._catDeep);
+    runLive();
+    const v = (input.value || '').trim();
+    if (v.length >= 3) {
+      input._catDeep = setTimeout(() => {
+        if ((input.value || '').trim() === v && v.length >= 3) runWebsite();
+      }, 600);
+    }
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') e.preventDefault();          // live search only
+
+    // Esc clears search and restores all
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      input.value = '';
+      clearTimeout(input._catTimer);
+      clearTimeout(input._catDeep);
+      catSearchToken++;          // abort any in-flight search
+      catSearchActive = 0;       // release the search slot so a new search can start
+      runLive();
+    }
+  });
+
+  // Sync input with state
+  if (categoriesState.nameQuery && input.value !== categoriesState.nameQuery) {
+    input.value = categoriesState.nameQuery;
+  }
+}
+
+/**
+ * Search for category *tiles* by name from the live websites
+ * (not only categories already loaded in the grid).
+ * Stays on the Categories view — does not open video results.
+ */
+async function searchCategoriesByName(query, token) {
+  if (token) catSearchActive = token;          // a new search is starting: claim the slot
+  else if (catSearchActive) return;            // no token supplied and one is already running
+  const q = (query || '').trim();
+  if (!q) { catSearchActive = 0; return; }
+  const slug = toSlug(q);
+  const filter = categoriesState.filterSource || 'all';
+
+  const sources = COMBINED_CATEGORY_SOURCES.filter(
+    s => filter === 'all' || feedOfSource(s.id).id === filter
+  );
+  if (!sources.length) { catSearchActive = 0; return; }
+
+  if (categoriesBtn) categoriesBtn.disabled = true;
+  setStatus(`Searching categories for “${q}”…`, true);
+
+  // Soft loading indicator without wiping the page. Shows per-source progress so the
+  // user sees each website's walk independently instead of one anonymous spinner.
+  const feed = results.querySelector(`.feed[data-site="${CATEGORIES_TAB}"]`);
+  let banner = feed && feed.querySelector('.cat-search-loading');
+  if (feed && !banner) {
+    banner = document.createElement('div');
+    banner.className = 'cat-search-loading';
+    banner.style.cssText = 'padding:.6rem 1.4rem;border-bottom:1px solid #1e2738;display:flex;flex-direction:column;gap:.5rem';
+    const grid = feed.querySelector('.videos');
+    if (grid) feed.insertBefore(banner, grid);
+  }
+  if (banner) {
+    banner.innerHTML = `
+      <div style="color:#9aa9c1;font-size:.82rem;display:flex;align-items:center;gap:.4rem;">
+        <span class="mini-spinner" style="display:inline-block;width:12px;height:12px;border:2px solid #3a4a63;border-top-color:#5b8cff;border-radius:50%;animation:spin .8s linear infinite;"></span>
+        Searching websites for “${escapeHtml(q)}”…
+      </div>
+      <div class="cat-src-progress" style="display:flex;gap:.4rem;flex-wrap:wrap"></div>`;
+  }
+  const progressRow = banner && banner.querySelector('.cat-src-progress');
+
+  const markSource = (src, state, detail) => {
+    if (!progressRow) return;
+    let pill = progressRow.querySelector(`[data-src="${src.id}"]`);
+    if (!pill) {
+      pill = document.createElement('span');
+      pill.dataset.src = src.id;
+      pill.style.cssText = 'background:#1e2738;border-radius:999px;padding:.2rem .6rem;font-size:.72rem;display:inline-flex;align-items:center;gap:.3rem';
+      progressRow.appendChild(pill);
+    }
+    const color = state === 'done' ? '#7c9' : state === 'fail' ? '#f87171' : '#9aa9c1';
+    const icon = state === 'done' ? '✓' : state === 'fail' ? '✗' : '<span class="mini-spinner" style="display:inline-block;width:10px;height:10px;border:2px solid #3a4a63;border-top-color:#5b8cff;border-radius:50%;animation:spin .8s linear infinite;"></span>';
+    pill.innerHTML = `<span style="color:${color}">${icon}</span> ${escapeHtml(src.name)}${detail ? ' · ' + escapeHtml(detail) : ''}`;
+  };
+
+  const isStale = () => catSearchActive !== token;
+  const found = new Map();
+
+  try {
+    // 1) Matches already loaded
+    for (const c of (categoriesState.categories || [])) {
+      if (searchWordsMatch(c.name || '', queryWords(q))) {
+        const key = (c.link || '').split('?')[0];
+        if (key) found.set(key, c);
+      }
+    }
+
+    // 2) Direct category URL from slug → category tile (if page has content)
+    await Promise.all(sources.map(async (src) => {
+      if (!slug || slug === 'bdsm') return;                    // 'bdsm' = the one combined BDSM card, no per-site / video-based tiles
+      const url = src.feedUrl(slug);
+      try {
+        const res = await fetch('/api/scrape', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ urls: [url] }),
+        });
+        if (!res.ok) return;
+        const json = await res.json();
+        const data = (json.results || [])[0];
+        if (!data || data.error || !(data.items || []).length) return;
+        const key = (data.page || url).split('?')[0];
+        if (found.has(key)) return;
+        found.set(key, {
+          name: q.replace(/\b\w/g, ch => ch.toUpperCase()),
+          link: key,
+          thumbnail: (data.items[0] && data.items[0].thumbnail) || null,
+          sourceId: src.id,
+        });
+      } catch { /* ignore */ }
+    }));
+
+    // 3) Walk category indexes on each site until matches found or pages run out
+    const maxPages = 15;
+    await Promise.all(sources.map(async (src) => {
+      markSource(src, 'loading');
+      let pageUrl = src.indexUrl;
+      for (let i = 0; i < maxPages && pageUrl; i++) {
+        if (isStale()) return;
+        try {
+          const res = await fetch('/api/scrape-categories', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: pageUrl }),
+          });
+          if (!res.ok) break;
+          const json = await res.json();
+          if (json.error) break;
+
+          for (const c of (json.categories || [])) {
+            const key = (c.link || '').split('?')[0];
+            if (!key) continue;
+            // Always grow the master list so scroll has more to show later
+            if (!(categoriesState.categories || []).some(x => (x.link || '').split('?')[0] === key)) {
+              categoriesState.categories.push({ ...c, sourceId: src.id });
+            }
+            if (searchWordsMatch(c.name || '', queryWords(q)) && !found.has(key)) {
+              found.set(key, { ...c, sourceId: src.id });
+            }
+          }
+
+          // Track pagination for this source
+          if (!categoriesState.nextBySource) categoriesState.nextBySource = {};
+          categoriesState.nextBySource[src.id] = json.next_page || '';
+          pageUrl = json.next_page || null;
+        } catch {
+          break;
+        }
+      }
+      const matches = [...found.values()].filter(f => f.sourceId === src.id).length;
+      markSource(src, matches ? 'done' : 'fail', `${matches} match${matches !== 1 ? 'es' : ''}`);
+    }));
+
+    // If the user typed again while we were walking, discard these results
+    if (isStale()) {
+      if (banner) banner.remove();
+      catSearchActive = 0;
+      if (categoriesBtn) categoriesBtn.disabled = false;
+      return;
+    }
+
+    // Merge finds into master list
+    for (const cat of found.values()) {
+      const key = (cat.link || '').split('?')[0];
+      if (!(categoriesState.categories || []).some(x => (x.link || '').split('?')[0] === key)) {
+        categoriesState.categories.push(cat);
+      }
+    }
+
+    categoriesState.next_page =
+      Object.values(categoriesState.nextBySource || {}).find(Boolean) || categoriesState.next_page || '';
+    categoriesState.exhausted = !categoriesState.next_page;
+    categoriesState.nameQuery = q;
+    categoriesState.kind = 'categories';
+
+    // Re-render category grid, then filter to search matches. Only if Categories is still the view on screen:
+    // if the user went elsewhere meanwhile, the results are kept in categoriesState and must not hijack the screen
+    // (or hide the search bar of the feed they opened).
+    categoriesState.nameQuery = q;
+    if (activeTab === CATEGORIES_TAB) {
+      // renderCategories() rebuilds the grid and re-creates the search input, which would
+      // steal focus mid-typing. Remember the focused element + caret so we can hand it back.
+      const focusedTag = document.activeElement && document.activeElement.tagName;
+      const focusedId = (document.activeElement && document.activeElement.id) || null;
+      const selStart = (document.activeElement && 'selectionStart' in document.activeElement)
+        ? document.activeElement.selectionStart : null;
+      const selEnd = (document.activeElement && 'selectionEnd' in document.activeElement)
+        ? document.activeElement.selectionEnd : null;
+
+      const data = {
+        categories: (categoriesState.categories || []).slice(),
+        count: (categoriesState.categories || []).length,
+        next_page: categoriesState.next_page,
+        nextBySource: { ...(categoriesState.nextBySource || {}) },
+        page_num: categoriesState.page_num || 1,
+        kind: 'categories',
+      };
+      renderCategories(data, false, { kind: 'categories' });
+      categoriesState.nameQuery = q;
+      const input = document.getElementById('categorySearchInput');
+      if (input) input.value = q;
+      applyCategorySourceFilter(filter);
+      applyCategoryNameFilter();
+
+      // Restore focus + caret so typing continues uninterrupted. Defer so the browser
+      // has finished the innerHTML rebuild before we grab the new input node.
+      if (focusedId === 'categorySearchInput' && input) {
+        requestAnimationFrame(() => {
+          input.focus();
+          if (selStart != null && selEnd != null) {
+            try { input.setSelectionRange(selStart, selEnd); } catch (_) {}
+          }
+        });
+      }
+
+      setStatus(
+        found.size
+          ? `Categories — ${found.size} match${found.size !== 1 ? 'es' : ''} for “${q}”`
+          : `No categories matching “${q}”`,
+        false
+      );
+    }
+  } catch (err) {
+    if (isStale()) { catSearchActive = 0; if (categoriesBtn) categoriesBtn.disabled = false; return; }
+    setStatus(`Category search error: ${err.message}`, false);
+  } finally {
+    if (!isStale()) {
+      if (banner) {
+        // Leave a one-line summary for a moment instead of vanishing instantly
+        const summary = banner.querySelector(':scope > div:first-child');
+        if (summary) {
+          summary.innerHTML = `<span style="color:#9aa9c1;">Search complete · ${found.size} match${found.size !== 1 ? 'es' : ''} for “${escapeHtml(q)}”</span>`;
+        }
+        const progress = banner.querySelector('.cat-src-progress');
+        if (progress) progress.innerHTML = '';
+        setTimeout(() => banner.remove(), 1500);
+      }
+      catSearchActive = 0;
+      if (categoriesBtn) categoriesBtn.disabled = false;
+    }
+  }
+}
+
+/** Load (or show) the homepage feed for a source id. */
+async function loadSourceFeed(sourceId, { force = false, skipPush = false } = {}) {
+  const src = getSource(sourceId);
+  if (!src) return;
+  const label = feedOfSource(sourceId).name;
+
+  // Already have data — just render
+  if (!force && siteData.has(src.url)) {
+    activeTab = src.url;
+    renderFeed(src.url);
+    if (!skipPush) replaceNav({ view: 'feed', sourceId, feedUrl: src.url });
+    const n = siteData.get(src.url)?.items?.length || 0;
+    setStatus(`${label} — ${n} preview${n !== 1 ? 's' : ''}`, false);
+    scheduleRecheck(src.url);
+    return;
+  }
+
+  // Also check resolved page keys for this source
+  const existingKey = [...siteData.keys()].find(k => {
+    const s = sites.find(x => x.url === k);
+    return s && s.sourceId === sourceId;
+  });
+  if (!force && existingKey && siteData.has(existingKey)) {
+    // Prefer homepage URL entry
+    const homeEntry = [...siteData.keys()].find(k => hostOf(k) === hostOf(src.url));
+    const key = homeEntry || existingKey;
+    // Only use if it's the homepage-ish, not a deep category
+    if (homeEntry) {
+      activeTab = homeEntry;
+      renderFeed(homeEntry);
+      if (!skipPush) replaceNav({ view: 'feed', sourceId, feedUrl: homeEntry });
+      scheduleRecheck(homeEntry);
+      return;
+    }
+  }
+
+  if (busy) return;
+  busy = true;
+  setStatus(`Loading ${label}…`, true);
+  showSectionLoading(`${label} previews`);
+
+  try {
+    const res = await fetch('/api/scrape', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ urls: [src.url] })
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    if (json.error) throw new Error(json.error);
+    const data = (json.results || [])[0];
+    if (!data) throw new Error('No data returned');
+
+    const key = data.page || src.url;
+    if (!sites.find(s => s.url === key || s.url === src.url)) {
+      sites.unshift({ name: src.name, url: key, sourceId: src.id });
+    } else {
+      sites = sites.map(s =>
+        (s.sourceId === src.id || s.url === src.url)
+          ? { name: src.name, url: key, sourceId: src.id }
+          : s
+      );
+    }
+    // Keep SOURCES url aligned if server redirected
+    src.url = key;
+
+    siteData.set(key, {
+      page: key,
+      page_title: data.page_title,
+      error: data.error,
+      items: (data.items || []).map(it => ({ ...it, _host: hostOf(key) })),
+    });
+    siteState.set(key, {
+      // Only follow server-provided next_page URLs. Never guess URLs - a guessed URL
+      // can loop forever or return items from a different part of the site.
+      next_page: data.next_page || '',
+      page_num: data.page_num || 1,
+      loading: false,
+      exhausted: !data.next_page,
+      emptyCount: 0, retryCount: 0, error: !!data.error,
+    });
+
+    activeTab = key;
+    renderFeed(key);
+    if (!skipPush) replaceNav({ view: 'feed', sourceId, feedUrl: key });
+    const total = data.items?.length || 0;
+    setStatus(`${label} — ${total} preview${total !== 1 ? 's' : ''}`, false);
+  } catch (err) {
+    rescueSearchBar(); results.innerHTML = `<div class="empty">⚠️ ${escapeHtml(err.message)}</div>`;
+    setStatus(`${label} load error`, false);
+  } finally {
+    busy = false;
+  }
+}
+
+async function switchSource(sourceId) {
+  if (sourceId === activeSourceId && activeTab && activeTab !== CATEGORIES_TAB) {
+    const isHome = SOURCES.some(s => s.id === sourceId && (s.url === activeTab || hostOf(s.url) === hostOf(activeTab)));
+    if (isHome) return;
+  }
+  if (activeTab === CATEGORIES_TAB) saveCategoryCache(COMBINED_CAT_CACHE_KEY);
+  if (activeTab === PORN_SITES_TAB) saveCategoryCache(PORN_SITES_CACHE_KEY);
+  if (activeTab === PORN_TAGS_TAB) saveCategoryCache(PORN_TAGS_CACHE_KEY);
+
+  activeSourceId = sourceId;
+  navSection = 'home';
+  renderSiteTabs();
+  resetMainPlayer();
+  if (mainPlayer) mainPlayer.classList.remove('active');
+  await loadSourceFeed(sourceId, { skipPush: true });
+  replaceNav({ view: 'feed', sourceId, feedUrl: activeTab || activeSource().url });
+}
+
+async function scrapeAll(force = false) {
+  navSection = 'home';
+  activeFeedId = ALL_FEED.id;
+  activeSourceId = ALL_FEED.siteIds[0];
+  renderSiteTabs();
+  await loadFeed(activeFeedId, { force, skipPush: true });
+  replaceNav({ view: 'feed', feedId: activeFeedId, sourceId: activeSourceId, feedUrl: activeTab });
+}
+
+/** Turn free text into a URL slug: "Hog Tied" → "hog-tied" */
+function toSlug(text) {
+  return String(text || '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/['’]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-{2,}/g, '-');
+}
+
+// (the Test screen used to store its custom sites here: clear that leftover once)
+try { localStorage.removeItem('test_custom_sites'); } catch {}
+
+
+/* --------------------------------------------------------------
+   NETWORKS + PORNSTARS (same behaviour as Categories)
+   - tiles from each source's index page, endless paging
+   - filter chips (All / General / BDSM) when more than one group exists
+   - name search: typing filters instantly, Enter / Search walks every remaining page
+   - click a tile -> opens that network / pornstar as a normal video feed
+-------------------------------------------------------------- */
+function catMatch(name, q) {
+  const words = queryWords(q);
+  if (!words.length) return true;
+  return searchWordsMatch(name, words);
+}
+
+async function fetchCatalogPage(kind, i, url) {
+  const cfg = CATALOGS[kind], st = catalogState[kind], src = cfg.sources[i];
+  st.pages[i] = (st.pages[i] || 0) + 1;
+  let added = 0;
+  try {
+    const res = await fetch('/api/scrape-categories', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    for (const c of (data.categories || [])) {
+      const key = (c.link || '').split('?')[0];
+      if (!key || isAllVideosLink(key) || st.seen.has(key)) continue;
+      st.seen.add(key);
+      st.items.push({ ...c, sourceId: src.id, group: src.group });
+      added++;
+    }
+    // Stop after 2 consecutive pages with no new items (avoids infinite loops on
+    // duplicate/guessed URLs while still allowing one "blank" page before the real end).
+    st.emptyCount = (st.emptyCount || 0) + (added ? 0 : 1);
+    st.next[i] = (data.next_page && st.pages[i] < 40 && st.emptyCount < 2) ? data.next_page : '';
+  } catch (err) {
+    st.next[i] = '';
+    st.emptyCount = (st.emptyCount || 0) + 1;
+    const errMsg = `${src.name || hostOf(url)}: ${err.message}`;
+    st.errors.push(errMsg);
+    console.warn(`Catalog fetch failed for ${src.name}:`, err);
+  }
+  return added;
+}
+
+function catalogCardHtml(c, kind) {
+  const name = escapeHtml(c.name || 'Untitled');
+  const ph = c.thumbnail ? escapeHtml(c.thumbnail)
+    : 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
+  const feed = feedOfSource(c.sourceId);
+  const label = c.members ? (c.group === 'bdsm' ? 'BDSM' : 'General Porn') : escapeHtml(feed.name);
+  return `<a class="card category-card${kind === 'pornstars' ? ' portrait' : ''}" href="#" data-link="${escapeHtml(c.link)}"
+             data-name="${escapeHtml(c.name || '')}" data-source-id="${escapeHtml(c.sourceId)}"
+             data-group="${escapeHtml(c.group || '')}"${c.members ? ` data-members="${escapeHtml(JSON.stringify(c.members))}"` : ''} title="${name}">
+    <div class="thumb"${c.thumbnail ? ` style="--bg:url(&quot;${ph}&quot;)"` : ''}>
+      <img src="${ph}" loading="lazy" decoding="async" alt="${name}" referrerpolicy="no-referrer" onerror="this.style.opacity=0">
+      <span class="site-label s-${escapeHtml(feed.id)}">${label}</span>
+    </div>
+    <div class="info"><div class="title">${name}</div>${c.video_count ? `<div class="meta">${Number(c.video_count).toLocaleString()} videos</div>` : ''}</div>
+  </a>`;
+}
+
+function catalogChipsHtml(kind) {
+  const cfg = CATALOGS[kind], st = catalogState[kind];
+  const groups = [...new Set(cfg.sources.map(s => s.group))];
+  if (groups.length < 2) return '';
+  const chip = (id, label) => {
+    const state = st.filter === id ? 'active' : (st.filter === 'all' ? '' : 'dim');
+    return `<span data-cat-group="${id}" class="chip-btn ${id === 'all' ? '' : 'chip-' + id} ${state}">${label}</span>`;
+  };
+  return `<div class="badges catalog-chips" style="padding:.6rem 1.4rem;gap:.5rem;display:flex;flex-wrap:wrap">
+    ${chip('all', 'All')}${groups.map(g => chip(g, g === 'bdsm' ? 'BDSM' : 'General')).join('')}</div>`;
+}
+
+function renderCatalog(kind, opts = {}) {
+  const cfg = CATALOGS[kind], st = catalogState[kind];
+  const isRestore = opts.isRestore || false;
+  hideSearchBar();
+  activeTab = cfg.tab;
+  setTimeout(updateNetworkBarActive, 0);
+  const groups = [...new Set(cfg.sources.map(s => s.group))];
+  const subtitle = groups.length > 1 ? 'General Porn + BDSM' : 'General Porn';
+  
+  // Save current scroll position before rendering
+  const savedScrollY = st.scrollY || 0;
+  
+  // Check if the feed already exists in DOM (restore case)
+  const existingFeed = results.querySelector(`.feed[data-site="${cfg.tab}"]`);
+  
+  if (isRestore && existingFeed) {
+    // Don't rebuild anything - just restore scroll position
+    const grid = existingFeed.querySelector('.videos');
+    if (grid) {
+      grid.classList.remove('loading-hidden');
+      grid.classList.add('loading-visible');
+    }
+    requestAnimationFrame(() => {
+      window.scrollTo({ top: savedScrollY, left: 0, behavior: 'instant' });
+    });
+    return;
+  }
+  
+  rescueSearchBar(); results.innerHTML = `
+    <div class="feed" data-site="${cfg.tab}">
+      <div class="feed-header section-intro">
+        <div>
+          <div class="feed-name">${cfg.icon} ${escapeHtml(cfg.title)}</div>
+          <div class="feed-url">${subtitle}</div>
+        </div>
+        <div class="badges"><span class="count-badge">🗂️ ${st.items.length}</span></div>
+      </div>
+      ${catalogChipsHtml(kind)}
+      <div class="cat-search-bar">
+        <input id="catalogSearchInput" type="search" placeholder="Search ${cfg.noun}s by name…" autocomplete="off" />
+      </div>
+      <div class="videos loading-hidden">
+        <div class="loading-row-slot"></div>
+      </div>
+      <div class="sentinel" data-site="${cfg.tab}"></div>
+    </div>`;
+  refreshCatalogGrid(kind, { isRestore });
+  bindCatalogControls(kind);
+  
+  // Restore scroll position after rendering
+  requestAnimationFrame(() => {
+    window.scrollTo({ top: savedScrollY, left: 0, behavior: 'instant' });
+  });
+  
+  // Reveal cards after they're rendered
+  requestAnimationFrame(() => {
+    const grid = results.querySelector('.videos');
+    if (grid) {
+      grid.classList.remove('loading-hidden');
+      grid.classList.add('loading-visible');
+    }
+  });
+}
+
+/** Same star on several websites -> one card with every page as `members`; a name that exists on one site only stays as it is. */
+function catalogUnify(items) {
+  const norm = t => (t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
+  const byName = new Map(), order = [];
+  items.forEach(c => {
+    const k = norm(c.name);
+    if (!k) { order.push({ list: [c] }); return; }
+    let g = byName.get(k);
+    if (!g) { g = { list: [] }; byName.set(k, g); order.push(g); }
+    g.list.push(c);
+  });
+  return order.flatMap(g => {
+    const sites = new Map();
+    g.list.forEach(c => { if (!sites.has(c.sourceId)) sites.set(c.sourceId, c); });
+    if (sites.size < 2) return g.list;
+    const best = g.list.find(c => c.thumbnail) || g.list[0];
+    const members = [...sites.values()].map(c => ({ link: c.link, sid: c.sourceId, label: ((SOURCES.find(x => x.id === c.sourceId)) || {}).name || c.sourceId }));
+    return [{ ...best, members, group: [...new Set([...sites.values()].map(c => c.group))].join(' ') }];
+  });
+}
+
+function refreshCatalogGrid(kind, opts = {}) {
+  const cfg = CATALOGS[kind], st = catalogState[kind];
+  const feed = results.querySelector(`.feed[data-site="${cfg.tab}"]`);
+  const grid = feed && feed.querySelector('.videos');
+  if (!grid) return;
+  const slot = grid.querySelector('.loading-row-slot');
+  
+  // If this is a restore and grid already has cards, do nothing - DOM is already correct
+  if (opts.isRestore && grid.querySelector('.category-card')) {
+    // Just re-bind and re-observe, don't rebuild
+    bindCategoryCards();
+    applyCatalogFilter(kind);
+    observeCatalogSentinel(kind);
+    return;
+  }
+  
+  // Check if this is initial load or append
+  const isInitialLoad = !grid.querySelector('.category-card');
+  
+  if (isInitialLoad) {
+    // Initial load: show everything sorted
+    grid.querySelectorAll('.category-card, .cat-filter-empty').forEach(el => el.remove());
+    const sorted = catalogUnify(st.items).sort((a, b) =>
+      (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base', numeric: true }));
+    const temp = document.createElement('div');
+    temp.innerHTML = sorted.map(c => catalogCardHtml(c, kind)).join('');
+    while (temp.firstElementChild) grid.insertBefore(temp.firstElementChild, slot);
   } else {
     // Append mode: a star that already has a card (same name, any website) is MERGED into that card as one more member,
     // so the same star never shows up twice. Only genuinely new names become new cards.
