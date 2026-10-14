@@ -1960,6 +1960,13 @@ function hashToState() {
 ------------------------------------------------------------------- */
 const entryScroll = new Map();          // history entry idx -> scrollY
 const entryView = new Map();            // history entry idx -> which view that scrollY belongs to
+// Dedicated memory for the main indexes. This is intentionally independent of
+// browser-history scroll values, because a nested feed uses the same document
+// and must never become the saved position of its parent index.
+const sectionListMemory = {
+  categories: { y: 0, anchor: null },
+  pornstars: { y: 0, anchor: null },
+};
 let scrollFreezeUntil = 0;              // right after a tap the page is being rebuilt: its scroll events are not the user's
 let scrollRestoring = false;            // a restore is running: its intermediate scroll positions must not be recorded
 let scrollSaveRaf = 0;
@@ -2011,8 +2018,49 @@ window.addEventListener('scroll', () => {
     rememberSectionListScroll(window.scrollY);
   });
 }, { passive: true });
-document.addEventListener('pointerdown', () => saveEntryScroll(true), true);                       // the exact spot at the moment of a tap
-document.addEventListener('click', () => { saveEntryScroll(true); scrollFreezeUntil = performance.now() + 1200; }, true);
+function captureSectionListPosition() {
+  try {
+    const st = history.state;
+    if (!st || st.sid !== NAV_SID || !['categories', 'pornstars'].includes(st.view)) return;
+    const pos = Math.max(0, Math.round(window.scrollY || 0));
+    // Capture an anchor only from the visible parent index, immediately before
+    // it is replaced by a nested feed.
+    const cards = [...results.querySelectorAll('.category-card[data-link]')];
+    const anchorCard = cards.find(card => card.getBoundingClientRect().bottom > 0);
+    const anchor = anchorCard ? {
+      link: anchorCard.getAttribute('data-link') || '',
+      name: anchorCard.getAttribute('data-name') || '',
+      offset: Math.round(anchorCard.getBoundingClientRect().top)
+    } : null;
+    sectionListMemory[st.view] = { y: pos, anchor };
+    const next = { ...st, scrollY: pos, scrollAnchor: anchor };
+    history.replaceState(next, '', location.href);
+    if (typeof next.idx === 'number') {
+      entryScroll.set(next.idx, pos);
+      entryView.set(next.idx, navViewKey(next));
+    }
+    if (st.view === 'categories' && categoriesState) categoriesState.scrollY = pos;
+    if (st.view === 'pornstars' && catalogState.pornstars) catalogState.pornstars.scrollY = pos;
+  } catch (_) {}
+}
+function restoreSectionListAnchor(state) {
+  const anchor = state && sectionListMemory[state.view]?.anchor || (state && state.scrollAnchor);
+  if (!anchor || !anchor.link || !['categories', 'pornstars'].includes(state.view)) return;
+  const apply = () => {
+    // Never apply an old list anchor over a different page or a user's new scroll.
+    const current = history.state;
+    if (!current || current.sid !== NAV_SID || current.idx !== state.idx || current.view !== state.view) return;
+    const card = [...results.querySelectorAll('.category-card[data-link]')].find(el =>
+      (el.getAttribute('data-link') || '') === anchor.link &&
+      (!anchor.name || (el.getAttribute('data-name') || '') === anchor.name));
+    if (!card) return;
+    const delta = card.getBoundingClientRect().top - Number(anchor.offset || 0);
+    if (Math.abs(delta) > 1) window.scrollTo({ top: Math.max(0, window.scrollY + delta), left: 0, behavior: 'instant' });
+  };
+  [80, 220, 500, 900].forEach(ms => setTimeout(apply, ms));
+}
+document.addEventListener('pointerdown', () => { captureSectionListPosition(); saveEntryScroll(true); }, true); // capture before click handlers replace the list
+document.addEventListener('click', () => { captureSectionListPosition(); saveEntryScroll(true); scrollFreezeUntil = performance.now() + 1200; }, true);
 document.addEventListener('keydown', (e) => { if (e.key === 'Enter') { saveEntryScroll(true); scrollFreezeUntil = performance.now() + 1200; } }, true);
 window.addEventListener('pagehide', () => saveEntryScroll(true));
 
@@ -2099,10 +2147,23 @@ function viewAlreadyShown(state) {
 function postRestore(state) {
   updateNetworkBarActive();
   const y = savedScrollFor(state);
-  if (y > 0) restoreScrollRobust(y);
+  restoreScrollRobust(y);
+  restoreSectionListAnchor(state);
 }
 
 async function applyNavState(state) {
+  // For these two indexes, their own memory is authoritative. Do not derive
+  // their position from the nested feed's current scroll or a stale history map.
+  if (state && (state.view === 'categories' || state.view === 'pornstars')) {
+    const mem = sectionListMemory[state.view];
+    if (mem) {
+      state = { ...state, scrollY: mem.y, scrollAnchor: mem.anchor || state.scrollAnchor };
+      if (state.sid === NAV_SID && typeof state.idx === 'number') {
+        entryScroll.set(state.idx, mem.y);
+        entryView.set(state.idx, navViewKey(state));
+      }
+    }
+  }
   navSection = sectionForState(state);
   await applyNavStateInner(state);
   if (state && state.view && state.view !== 'player') postRestore(state);
@@ -2143,7 +2204,7 @@ async function applyNavStateInner(state) {
   }
 
   if (state.view === 'categories') {
-    categoriesState.scrollY = savedScrollFor(state);
+    categoriesState.scrollY = sectionListMemory.categories.y;
     await openCategories(false, { skipPush: true });
     return;
   }
@@ -2160,7 +2221,7 @@ async function applyNavStateInner(state) {
     return;
   }
   if (state.view === 'pornstars') {
-    if (catalogState.pornstars) catalogState.pornstars.scrollY = savedScrollFor(state);
+    if (catalogState.pornstars) catalogState.pornstars.scrollY = sectionListMemory.pornstars.y;
     await openCatalog(state.view, { skipPush: true });
     return;
   }
@@ -3314,15 +3375,22 @@ function saveCatalogScroll(y = window.scrollY) {
 // opened feed. Only record scroll while the actual Categories/Pornstars index
 // is the active history view; nested feeds must not mutate these saved values.
 function rememberSectionListScroll(y = window.scrollY) {
-  if (navSilent || scrollRestoring || pageIsLocked()) return;
+  if (navSilent || scrollRestoring || pageIsLocked() || performance.now() < scrollFreezeUntil) return;
   const st = history.state;
   if (!st || st.sid !== NAV_SID) return;
   const pos = Math.max(0, Math.round(y || 0));
-  if (activeTab === CATEGORIES_TAB && st.view === 'categories' && categoriesState) {
+  // During the async transition to a nested feed, activeTab/history.state can
+  // briefly still say "pornstars" while the index DOM has already been replaced
+  // by a loading screen. Only save while actual index cards are still rendered.
+  if (activeTab === CATEGORIES_TAB && st.view === 'categories' && categoriesState &&
+      results.querySelector(`.feed[data-site="${CATEGORIES_TAB}"] .category-card[data-link]`)) {
+    sectionListMemory.categories.y = pos;
     categoriesState.scrollY = pos;
   }
   const k = kindOfCatalogTab(activeTab);
-  if (k && st.view === CATALOGS[k].view && catalogState[k]) {
+  if (k && st.view === CATALOGS[k].view && catalogState[k] &&
+      results.querySelector(`.feed[data-site="${CATALOGS[k].tab}"] .category-card[data-link]`)) {
+    if (k === 'pornstars') sectionListMemory.pornstars.y = pos;
     catalogState[k].scrollY = pos;
   }
 }
@@ -3562,6 +3630,9 @@ function scheduleCategoryRecheck() {
 
 async function openCategoryFeed(link, name, opts = {}) {
   if (busy) return;
+
+  // Capture the parent index before activeTab/results change to the nested feed.
+  captureSectionListPosition();
 
   // Save scroll position of the view we're leaving
   if (activeTab === NETWORKS_TAB || activeTab === PORN_SITES_TAB) {
@@ -6372,7 +6443,7 @@ async function openCatalog(kind, opts = {}) {
   const st = catalogState[kind] = {
     items: [], seen: new Set(), next: {}, pages: {}, filter: (have && have.filter) || 'all',
     q: '', loading: false, done: false, errors: [], searchToken: 0,
-    scrollY: 0,
+    scrollY: kind === 'pornstars' ? sectionListMemory.pornstars.y : 0,
   };
   try {
     await Promise.all(cfg.sources.map((src, i) => fetchCatalogPage(kind, i, src.indexUrl)));
