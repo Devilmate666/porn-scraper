@@ -2904,16 +2904,28 @@ function renderCategories(data, append = false, opts = {}) {
       if (typeof tgOnCategoriesRendered === 'function') tgOnCategoriesRendered();   // Categories | Tags & Genres switch
     }
   } else {
-    // append mode: data is just the new page payload
+    // append mode: data is just the new page payload - append at bottom without re-sorting
     const feed = results.querySelector(`.feed[data-site="${activeTab}"]`);
     if (!feed) return;
     const grid = feed.querySelector('.videos');
     const slot = grid.querySelector('.loading-row-slot');
+    
     const newCats = data.categories || [];
+    // Append to state but don't re-sort on scroll
     categoriesState.categories.push(...newCats);
-    if (!isPornSites) sortCategoriesAZ(categoriesState.categories);
-    refreshCategoryGridFromState();
+    
+    // Only sort on initial load, not on scroll append
+    // if (!isPornSites) sortCategoriesAZ(categoriesState.categories);
+    
+    // Append new cards at the bottom without rebuilding entire grid
+    const temp = document.createElement('div');
+    temp.innerHTML = newCats.map(categoryCardHtml).join('');
+    while (temp.firstElementChild) {
+      grid.insertBefore(temp.firstElementChild, slot);
+    }
+    
     if (!isPornSites) applyCategoryNameFilter();
+    bindCategoryCards();
 
     const countBadge = feed.querySelector('.count-badge');
     const totalNow = categoriesState.categories.length;
@@ -4644,6 +4656,7 @@ async function openCategories(forceRefresh = false, opts = {}) {
   busy = true;
   if (categoriesBtn) categoriesBtn.disabled = true;
   setStatus('Loading categories…', true);
+  showSectionLoading('categories', { kind: 'categories' });
 
   try {
     const merged = [];
@@ -5414,13 +5427,32 @@ function refreshCategoryGridFromState() {
   if (window.tgConsolidateBdsm) window.tgConsolidateBdsm();
   const cats = categoriesState.categories || [];
 
-  grid.querySelectorAll('.category-card, .cat-filter-empty').forEach(el => el.remove());
-  const temp = document.createElement('div');
-  temp.innerHTML = cats.map(categoryCardHtml).join('') ||
-    '<div class="cat-filter-empty" style="grid-column:1/-1;padding:2rem;text-align:center;color:#7a8aaa;">No categories found.</div>';
-  while (temp.firstElementChild) {
-    grid.insertBefore(temp.firstElementChild, slot);
+  // Check if this is initial load or append
+  const isInitialLoad = !grid.querySelector('.category-card');
+  
+  if (isInitialLoad) {
+    // Initial load: show everything sorted
+    grid.querySelectorAll('.category-card, .cat-filter-empty').forEach(el => el.remove());
+    const temp = document.createElement('div');
+    temp.innerHTML = cats.map(categoryCardHtml).join('') ||
+      '<div class="cat-filter-empty" style="grid-column:1/-1;padding:2rem;text-align:center;color:#7a8aaa;">No categories found.</div>';
+    while (temp.firstElementChild) {
+      grid.insertBefore(temp.firstElementChild, slot);
+    }
+  } else {
+    // Append mode: only add new items at bottom without re-sorting
+    const existingLinks = new Set();
+    grid.querySelectorAll('.category-card').forEach(el => {
+      existingLinks.add(el.getAttribute('data-link'));
+    });
+    const newCats = cats.filter(c => !existingLinks.has(c.link));
+    const temp = document.createElement('div');
+    temp.innerHTML = newCats.map(categoryCardHtml).join('');
+    while (temp.firstElementChild) {
+      grid.insertBefore(temp.firstElementChild, slot);
+    }
   }
+  
   bindCategoryCards();
   applyCategoryNameFilter();      // every rebuild keeps the active search / General-BDSM filter (otherwise all tiles flash back)
 }
@@ -5963,7 +5995,9 @@ async function fetchCatalogPage(kind, i, url) {
     st.next[i] = (added && data.next_page && st.pages[i] < 40) ? data.next_page : '';
   } catch (err) {
     st.next[i] = '';
-    st.errors.push(`${hostOf(url)}: ${err.message}`);
+    const errMsg = `${src.name || hostOf(url)}: ${err.message}`;
+    st.errors.push(errMsg);
+    console.warn(`Catalog fetch failed for ${src.name}:`, err);
   }
   return added;
 }
@@ -5997,13 +6031,29 @@ function catalogChipsHtml(kind) {
     ${chip('all', 'All')}${groups.map(g => chip(g, g === 'bdsm' ? 'BDSM' : 'General')).join('')}</div>`;
 }
 
-function renderCatalog(kind) {
+function renderCatalog(kind, opts = {}) {
   const cfg = CATALOGS[kind], st = catalogState[kind];
+  const isRestore = opts.isRestore || false;
   hideSearchBar();
   activeTab = cfg.tab;
   setTimeout(updateNetworkBarActive, 0);
   const groups = [...new Set(cfg.sources.map(s => s.group))];
   const subtitle = groups.length > 1 ? 'General Porn + BDSM' : 'General Porn';
+  
+  // Save current scroll position before rendering
+  const savedScrollY = st.scrollY || 0;
+  
+  // Check if the feed already exists (restore case)
+  const existingFeed = results.querySelector(`.feed[data-site="${cfg.tab}"]`);
+  
+  if (isRestore && existingFeed) {
+    // Just restore scroll position without rebuilding
+    requestAnimationFrame(() => {
+      window.scrollTo({ top: savedScrollY, left: 0, behavior: 'instant' });
+    });
+    return;
+  }
+  
   rescueSearchBar(); results.innerHTML = `
     <div class="feed" data-site="${cfg.tab}">
       <div class="feed-header section-intro">
@@ -6022,8 +6072,13 @@ function renderCatalog(kind) {
       </div>
       <div class="sentinel" data-site="${cfg.tab}"></div>
     </div>`;
-  refreshCatalogGrid(kind);
+  refreshCatalogGrid(kind, { isRestore });
   bindCatalogControls(kind);
+  
+  // Restore scroll position after rendering
+  requestAnimationFrame(() => {
+    window.scrollTo({ top: savedScrollY, left: 0, behavior: 'instant' });
+  });
 }
 
 /** Same star on several websites -> one card with every page as `members`; a name that exists on one site only stays as it is. */
@@ -6047,18 +6102,44 @@ function catalogUnify(items) {
   });
 }
 
-function refreshCatalogGrid(kind) {
+function refreshCatalogGrid(kind, opts = {}) {
   const cfg = CATALOGS[kind], st = catalogState[kind];
   const feed = results.querySelector(`.feed[data-site="${cfg.tab}"]`);
   const grid = feed && feed.querySelector('.videos');
   if (!grid) return;
   const slot = grid.querySelector('.loading-row-slot');
-  grid.querySelectorAll('.category-card, .cat-filter-empty').forEach(el => el.remove());
-  const sorted = catalogUnify(st.items).sort((a, b) =>
-    (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base', numeric: true }));
-  const temp = document.createElement('div');
-  temp.innerHTML = sorted.map(c => catalogCardHtml(c, kind)).join('');
-  while (temp.firstElementChild) grid.insertBefore(temp.firstElementChild, slot);
+  
+  // If this is a restore and grid already has cards, skip rebuilding
+  if (opts.isRestore && grid.querySelector('.category-card')) {
+    bindCategoryCards();
+    applyCatalogFilter(kind);
+    observeCatalogSentinel(kind);
+    return;
+  }
+  
+  // Check if this is initial load or append
+  const isInitialLoad = !grid.querySelector('.category-card');
+  
+  if (isInitialLoad) {
+    // Initial load: show everything sorted
+    grid.querySelectorAll('.category-card, .cat-filter-empty').forEach(el => el.remove());
+    const sorted = catalogUnify(st.items).sort((a, b) =>
+      (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base', numeric: true }));
+    const temp = document.createElement('div');
+    temp.innerHTML = sorted.map(c => catalogCardHtml(c, kind)).join('');
+    while (temp.firstElementChild) grid.insertBefore(temp.firstElementChild, slot);
+  } else {
+    // Append mode: only add new items at bottom without re-sorting
+    const existingLinks = new Set();
+    grid.querySelectorAll('.category-card').forEach(el => {
+      existingLinks.add(el.getAttribute('data-link'));
+    });
+    const newItems = st.items.filter(item => !existingLinks.has(item.link));
+    const temp = document.createElement('div');
+    temp.innerHTML = newItems.map(c => catalogCardHtml(c, kind)).join('');
+    while (temp.firstElementChild) grid.insertBefore(temp.firstElementChild, slot);
+  }
+  
   bindCategoryCards();
   applyCatalogFilter(kind);
   observeCatalogSentinel(kind);
@@ -6179,13 +6260,15 @@ async function openCatalog(kind, opts = {}) {
   if (!cfg) return;
   const have = catalogState[kind];
   if (!opts.force && have && have.items.length) {
-    renderCatalog(kind);
+    renderCatalog(kind, { isRestore: true });
     if (!opts.skipPush) pushNav({ view: cfg.view });
-    // Restore scroll position
+    // Restore scroll position with multiple attempts to ensure it sticks
     const y = have.scrollY || 0;
     const go = () => window.scrollTo({ top: y, left: 0, behavior: 'instant' });
     requestAnimationFrame(go);
+    setTimeout(go, 50);
     setTimeout(go, 150);
+    setTimeout(go, 300);
     return;
   }
   if (busy) return;
@@ -6194,6 +6277,7 @@ async function openCatalog(kind, opts = {}) {
   const st = catalogState[kind] = {
     items: [], seen: new Set(), next: {}, pages: {}, filter: (have && have.filter) || 'all',
     q: '', loading: false, done: false, errors: [], searchToken: 0,
+    scrollY: 0,
   };
   try {
     await Promise.all(cfg.sources.map((src, i) => fetchCatalogPage(kind, i, src.indexUrl)));
