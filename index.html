@@ -231,6 +231,10 @@
   .cams-loading { position: relative; }
   .main-player-status .player-spinner { display: none !important; }
 
+  /* Hide grid until fully loaded */
+  .videos.loading-hidden { opacity: 0; pointer-events: none; }
+  .videos.loading-visible { opacity: 1; transition: opacity .2s ease; }
+
   @keyframes spin { to { transform: rotate(360deg); } }
 
   /* Category-specific skeleton that mirrors the real card grid */
@@ -2891,7 +2895,7 @@ function renderCategories(data, append = false, opts = {}) {
         </div>
         ${filterBar}
         ${searchBar}
-        <div class="videos">
+        <div class="videos loading-hidden">
           ${cards || '<div style="grid-column:1/-1;padding:2rem;text-align:center;color:#7a8aaa;">No items found.</div>'}
           <div class="loading-row-slot"></div>
         </div>
@@ -2903,6 +2907,15 @@ function renderCategories(data, append = false, opts = {}) {
       applyCategoryNameFilter();
       if (typeof tgOnCategoriesRendered === 'function') tgOnCategoriesRendered();   // Categories | Tags & Genres switch
     }
+    
+    // Reveal cards after they're rendered
+    requestAnimationFrame(() => {
+      const grid = results.querySelector('.videos');
+      if (grid) {
+        grid.classList.remove('loading-hidden');
+        grid.classList.add('loading-visible');
+      }
+    });
   } else {
     // append mode: data is just the new page payload - append at bottom without re-sorting
     const feed = results.querySelector(`.feed[data-site="${activeTab}"]`);
@@ -2933,6 +2946,12 @@ function renderCategories(data, append = false, opts = {}) {
       countBadge.textContent = isPornSites
         ? `🗂️ ${totalNow} ${noun}${totalNow !== 1 ? 's' : ''}`
         : `🗂️ ${totalNow} categor${totalNow !== 1 ? 'ies' : 'y'}`;
+    }
+    
+    // Reveal grid after appending new content
+    if (grid.classList.contains('loading-hidden')) {
+      grid.classList.remove('loading-hidden');
+      grid.classList.add('loading-visible');
     }
   }
 
@@ -6043,11 +6062,16 @@ function renderCatalog(kind, opts = {}) {
   // Save current scroll position before rendering
   const savedScrollY = st.scrollY || 0;
   
-  // Check if the feed already exists (restore case)
+  // Check if the feed already exists in DOM (restore case)
   const existingFeed = results.querySelector(`.feed[data-site="${cfg.tab}"]`);
   
   if (isRestore && existingFeed) {
-    // Just restore scroll position without rebuilding
+    // Don't rebuild anything - just restore scroll position
+    const grid = existingFeed.querySelector('.videos');
+    if (grid) {
+      grid.classList.remove('loading-hidden');
+      grid.classList.add('loading-visible');
+    }
     requestAnimationFrame(() => {
       window.scrollTo({ top: savedScrollY, left: 0, behavior: 'instant' });
     });
@@ -6067,7 +6091,7 @@ function renderCatalog(kind, opts = {}) {
       <div class="cat-search-bar">
         <input id="catalogSearchInput" type="search" placeholder="Search ${cfg.noun}s by name…" autocomplete="off" />
       </div>
-      <div class="videos">
+      <div class="videos loading-hidden">
         <div class="loading-row-slot"></div>
       </div>
       <div class="sentinel" data-site="${cfg.tab}"></div>
@@ -6078,6 +6102,15 @@ function renderCatalog(kind, opts = {}) {
   // Restore scroll position after rendering
   requestAnimationFrame(() => {
     window.scrollTo({ top: savedScrollY, left: 0, behavior: 'instant' });
+  });
+  
+  // Reveal cards after they're rendered
+  requestAnimationFrame(() => {
+    const grid = results.querySelector('.videos');
+    if (grid) {
+      grid.classList.remove('loading-hidden');
+      grid.classList.add('loading-visible');
+    }
   });
 }
 
@@ -6109,8 +6142,9 @@ function refreshCatalogGrid(kind, opts = {}) {
   if (!grid) return;
   const slot = grid.querySelector('.loading-row-slot');
   
-  // If this is a restore and grid already has cards, skip rebuilding
+  // If this is a restore and grid already has cards, do nothing - DOM is already correct
   if (opts.isRestore && grid.querySelector('.category-card')) {
+    // Just re-bind and re-observe, don't rebuild
     bindCategoryCards();
     applyCatalogFilter(kind);
     observeCatalogSentinel(kind);
@@ -6274,6 +6308,7 @@ async function openCatalog(kind, opts = {}) {
   if (busy) return;
   busy = true;
   setStatus(`Loading ${cfg.title}…`, true);
+  showSectionLoading(cfg.title);
   const st = catalogState[kind] = {
     items: [], seen: new Set(), next: {}, pages: {}, filter: (have && have.filter) || 'all',
     q: '', loading: false, done: false, errors: [], searchToken: 0,
