@@ -121,22 +121,32 @@
   .badges span.source { background: #102e3a; border-color: #1f5a72; color: #7dd3fc; }
   .badges span.source.warn { background: #3a2710; border-color: #72551f; color: #fcd77d; }
 
-  .videos { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-            gap: .8rem; padding: .8rem 1rem; }
+.videos { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: .8rem; padding: .8rem 1rem; align-content: start; }
   @media (min-width: 1400px) {
     .videos { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
   }
   @media (max-width: 768px) {
     .videos { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .6rem; padding: .6rem .8rem; }
   }
+  /* Make grid items stretch to fill the row so there are no empty gaps */
+  .videos > .category-card { display: flex; flex-direction: column; }
+  .videos > .category-card > .thumb { flex: 0 0 auto; }
+  .videos > .category-card > .info { flex: 1; display: flex; flex-direction: column; }
+  .videos > .category-card > .info > .title { flex: 0 0 auto; }
+  .videos > .category-card > .info > .meta { flex: 0 0 auto; }
   /* ---- Sex Cams: Lemoncams live-stream cards ---- */
-  .cams-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: .8rem; padding: .8rem 1rem; }
+  .cams-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: .8rem; padding: .8rem 1rem; align-content: start; }
   @media (min-width: 1400px) {
     .cams-grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
   }
   @media (max-width: 768px) {
     .cams-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .6rem; padding: .6rem .8rem; }
   }
+  .cams-grid > .cam-card { display: flex; flex-direction: column; }
+  .cams-grid > .cam-card > .cam-info { flex: 1; display: flex; flex-direction: column; }
+  .cams-grid > .cam-card > .cam-name { flex: 0 0 auto; }
+  .cams-grid > .cam-card > .cam-sub { flex: 0 0 auto; margin-top: auto; }
   .cam-card { display: block; background: #171d28; border: 1px solid #232b3b; border-radius: .8rem; overflow: hidden;
               text-decoration: none; color: inherit; transition: .15s; content-visibility: auto; contain-intrinsic-size: auto 250px; }
   .cam-card:hover { transform: translateY(-2px); border-color: #3b4a66; box-shadow: 0 6px 16px rgba(0,0,0,.4); }
@@ -149,8 +159,8 @@
   .cam-viewers { position: absolute; right: .4rem; bottom: .4rem; z-index: 2; background: rgba(0,0,0,.7); color: #fff;
                  font-size: .65rem; padding: .1rem .4rem; border-radius: .3rem; }
   .cam-provider { position: absolute; left: .4rem; bottom: .4rem; z-index: 2; max-width: 48%; background: rgba(0,0,0,.6);
-                  border-radius: .3rem; padding: .12rem .35rem; color: #fff; font-size: .6rem; line-height: 1.2;
-                  display: flex; align-items: center; }
+                   border-radius: .3rem; padding: .12rem .35rem; color: #fff; font-size: .6rem; line-height: 1.2;
+                   display: flex; align-items: center; }
   .cam-provider img { height: 1rem; width: auto; max-width: 100%; object-fit: contain; display: block; }
   .cam-info { padding: .5rem .65rem .6rem; }
   .cam-name { font-weight: 600; font-size: .82rem; color: #e7eefb; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -653,6 +663,7 @@
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
     gap: .8rem;
     padding: .8rem 1rem;
+    align-content: start;
   }
   @media (min-width: 1400px) {
     .studio-list.series-grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
@@ -667,6 +678,10 @@
     grid-column: 1 / -1;
   }
   .studio-list.series-grid > .studio-section:not(.series-card) { grid-column: 1 / -1; }
+  /* Make series cards stretch to fill the row */
+  .series-card { display: flex; flex-direction: column; }
+  .series-card > .studio-section-head { flex: 0 0 auto; }
+  .series-card > .studio-section-body { flex: 1; }
   .series-card {
     background: #171d28;
     border: 1px solid #232b3b;
@@ -1508,6 +1523,112 @@ img { image-rendering: auto; }
   </div>
 </div>
 
+<style id="fixedCols">
+/* FIXED card counts: set once from the physical screen (not the zoomable viewport), so zoom never changes the column count */
+:root { --cols: 2; }
+#results .grid, .grid, .videos, .cams-grid, .studio-list.series-grid, .cat-skeleton-grid, .section-loading {
+  grid-template-columns: repeat(var(--cols), minmax(0, 1fr)) !important;
+}
+.sentinel.end-of-list { height: auto; text-align: center; padding: 1rem; font-size: .75rem; color: #5b6a84; }
+</style>
+<script>
+/* ===== Override layer: fixed columns, scroll-driven page-by-page loading, hard stop at end of list ===== */
+(function () {
+    var w = screen.width || 1200;
+  var cols = w < 700 ? 2 : w < 1100 ? 3 : w < 1600 ? 4 : 5;
+  document.documentElement.style.setProperty('--cols', cols);
+
+  /* ONE load per user scroll: every "load more" entry point is gated. Searches (which deliberately load everything) bypass the gate. */
+  var armed = true, lastFire = 0, depth = 0;
+  function scrollable() { return document.documentElement.scrollHeight > window.innerHeight + 120; }
+  window.addEventListener('scroll', function () { if (!armed && Date.now() - lastFire > 500) armed = true; }, { passive: true });
+  function allow() { if (depth > 0 || !scrollable()) return true; if (armed) { armed = false; lastFire = Date.now(); return true; } return false; }
+  function gate(name, bypass) {
+    var f = window[name]; if (typeof f !== 'function') return;
+    window[name] = function () {
+      if ((bypass && bypass.apply(this, arguments)) || allow()) { depth++; try { return f.apply(this, arguments); } finally { depth--; } }
+      return Promise.resolve(0);
+    };
+  }
+  window.addEventListener('DOMContentLoaded', function () {
+    /* While a search is active the app deliberately loads page after page to look for matches: never gate that. */
+    var searching = function () {
+      try {
+        if (['catalogSearchInput', 'categorySearchInput', 'tagSearchInput', 'studioSearchInput'].some(function (id) { var e = document.getElementById(id); return e && e.value.trim(); })) return true;
+        if (typeof feedQueries !== 'undefined' && typeof activeTab !== 'undefined' && feedQueries.get(activeTab)) return true;
+      } catch (e) {}
+      return false;
+    };
+    gate('loadNextPageForSite', searching); gate('loadNextCategoriesPage', searching); gate('loadNextStudioPage', searching);
+    gate('loadMoreMixed', function (t, o) { return !!(o && (o.search || o.quiet)); });
+    gate('loadMoreWebSearch', function (init) { return init === true; });
+    gate('loadTagMixPages', function (a, b, o) { return !(o && o.recheck); });
+    gate('loadMoreCatalog', function (k) { try { return !!(catalogState[k] && catalogState[k].q) || searching(); } catch (e) { return false; } });
+    gate('scheduleRecheck'); gate('scheduleCategoryRecheck');
+  });
+
+  /* Remove the sentinel of any list that has finished, so nothing can trigger it again. */
+  setInterval(function () {
+    try {
+      document.querySelectorAll('.sentinel:not(.end-of-list)').forEach(function (s) {
+        var k = s.getAttribute('data-site'), done = false;
+        if (typeof siteState !== 'undefined' && siteState.has(k) && siteState.get(k).exhausted) done = true;
+        if (typeof categoriesState !== 'undefined' && categoriesState.exhausted && k === CATEGORIES_TAB) done = true;
+        if (typeof studioState !== 'undefined' && studioState.exhausted && (k === PORN_SITES_TAB || k === NETWORKS_TAB)) done = true;
+        if (typeof catalogState !== 'undefined') Object.keys(catalogState).forEach(function (c) { if (catalogState[c] && catalogState[c].done && CATALOGS[c] && CATALOGS[c].tab === k) done = true; });
+        if (done) { s.className = 'sentinel end-of-list'; s.textContent = 'End of list'; }
+      });
+    } catch (e) {}
+  }, 600);
+
+  /* Remember where a list was scrolled when a card opens; Back puts the list exactly there. A freshly opened feed starts at the top. */
+  var pos = {};
+  function pageLockedNow() { var p = document.getElementById('mainPlayer'); return !!(p && p.classList.contains('active')) || document.body.style.position === 'fixed'; }
+  var LISTS = ['categories', 'pornsites', 'porntags', 'networks', 'pornstars', 'livecams', 'livechannels'];
+  /* a list's position is stored under its own list-view key, so nothing scrolled inside a feed can ever overwrite it */
+  function key(st) { return st && typeof st.idx === 'number' && LISTS.indexOf(st.view) > -1 ? (st.sid || '') + ':' + st.idx + ':' + st.view : null; }
+  document.addEventListener('click', function (e) {
+    var k = key(history.state);
+    if (!k || !(e.target.closest && e.target.closest('#results .category-card, #results .card, #results .studio-card, #results .cam-card'))) return;
+    if (pageLockedNow()) return;
+    pos[k] = Math.round(window.scrollY);
+    var from = history.state.idx;
+    [350, 900].forEach(function (t) { setTimeout(function () {
+      if (history.state && history.state.idx !== from && history.state.idx > from && window.scrollY > 5) window.scrollTo({ top: 0, behavior: 'instant' });
+    }, t); });
+  }, true);
+  window.addEventListener('popstate', function (e) {
+    var y = pos[key(e.state)];
+    if (typeof y !== 'number') return;
+    var res = document.getElementById('results'), t0 = Date.now(), stable = 0, stop = false, padded = false;
+    var cancel = function () { stop = true; };
+    ['touchstart', 'wheel', 'keydown', 'mousedown'].forEach(function (n) { window.addEventListener(n, cancel, { once: true, passive: true }); });
+    (function step() {
+      if (stop || Date.now() - t0 > 5000 || stable > 8) { if (padded && res) res.style.minHeight = ''; return; }
+      var need = y + window.innerHeight;
+      if (document.documentElement.scrollHeight < need && res) { res.style.minHeight = need + 'px'; padded = true; }
+      if (Math.abs(window.scrollY - y) > 2) { window.scrollTo({ top: y, behavior: 'instant' }); stable = 0; } else stable++;
+      setTimeout(step, 50);
+    })();
+  });
+
+  /* Search box: typing creates one history step, so Back #1 only clears the keyword and Back #2 reaches "Where to?" */
+  document.addEventListener('input', function (e) {
+    var el = e.target;
+    if (!el.matches || !el.matches('#catalogSearchInput,#categorySearchInput,#tagSearchInput,#studioSearchInput')) return;
+    if (el.value.trim() && !el._hist) { el._hist = true; try { history.pushState(Object.assign({}, history.state, { kwEntry: true }), '', location.href); } catch (_) {} }
+    if (!el.value.trim()) el._hist = false;
+  });
+  window.addEventListener('popstate', function (e) {
+    var el = document.querySelector('#catalogSearchInput,#categorySearchInput,#tagSearchInput,#studioSearchInput');
+    if (el && el._hist && el.value.trim() && !(e.state && e.state.kwEntry)) {
+      el.value = ''; el._hist = false; el.dispatchEvent(new Event('input'));
+      el._hist = false;
+      e.stopImmediatePropagation();
+    }
+  }, true);
+})();
+</script>
 <script>
 // Backend base URL. Injected at deploy time by GitHub Actions (repo variable API_URL).
 // Empty string = same origin (local Flask server).
@@ -3464,6 +3585,7 @@ async function loadNextCategoriesPage() {
   const feed = results.querySelector(`.feed[data-site="${activeTab}"]`);
   if (!feed) return;
   const grid = feed.querySelector('.videos');
+  if (!grid) return;
   const slot = grid.querySelector('.loading-row-slot');
 
   // Build list of next URLs to fetch (combined categories = one per source)
@@ -3494,6 +3616,7 @@ async function loadNextCategoriesPage() {
   const existing = new Set((st.categories || []).map(c => (c.link || '').split('?')[0]));
   const uniqueNew = [];
   let anyNext = false;
+  let allEmpty = true;
 
   try {
     await Promise.all(jobs.map(async (job) => {
@@ -3521,12 +3644,15 @@ async function loadNextCategoriesPage() {
             sourceId: c.sourceId || job.sourceId || (isFpKind(kind) ? 'fullporno' : job.sourceId),
           });
         }
-        const nxt = data.next_page || guessNextUrl(job.url, nextPageNum + 1) || '';
+        // Only follow server-provided next_page URLs. Never guess URLs - a guessed URL
+        // can loop forever or return items from a different part of the site.
+        const nxt = data.next_page || '';
         if (st.nextBySource) {
           st.nextBySource[job.sourceId] = nxt;
         }
         if (nxt) anyNext = true;
         else if (st.nextBySource) st.nextBySource[job.sourceId] = '';
+        if (uniqueNew.length) allEmpty = false;
       } catch {
         if (st.nextBySource) st.nextBySource[job.sourceId] = '';
       }
@@ -3543,7 +3669,8 @@ async function loadNextCategoriesPage() {
       } else {
         st.next_page = '';
       }
-      if (st.emptyCount >= 3 || !anyNext) st.exhausted = true;
+      // Stop after 2 consecutive empty pages (avoids infinite loops on duplicate/guessed URLs)
+      if (st.emptyCount >= 2 || !anyNext) st.exhausted = true;
       else {
         st.page_num = nextPageNum;
         scheduleCategoryRecheck();
@@ -3588,10 +3715,11 @@ async function loadNextCategoriesPage() {
     } else {
       st.next_page = anyNext ? st.next_page : '';
     }
+    // Only keep rechecking when we actually added new items AND there are more pages.
     if (!anyNext && !st.next_page) st.exhausted = true;
 
     saveCategoryCache(cacheKeyOfKind(kind));
-    scheduleCategoryRecheck();
+    if (!st.exhausted) scheduleCategoryRecheck();
   } catch (err) {
     st.retryCount = (st.retryCount || 0) + 1;
     loader.innerHTML = `<div style="color:#f87171;">Retrying… (${st.retryCount}/4)</div>`;
@@ -3696,7 +3824,9 @@ async function openCategoryFeed(link, name, opts = {}) {
       items: (data.items || []).map(it => ({ ...it, _host: hostOf(key) })),
     });
     siteState.set(key, {
-      next_page: data.next_page || guessNextUrl(key, 2) || '',
+      // Only follow server-provided next_page URLs. Never guess URLs - a guessed URL
+      // can loop forever or return items from a different part of the site.
+      next_page: data.next_page || '',
       page_num: data.page_num || 1,
       loading: false,
       exhausted: !data.next_page,
@@ -3792,7 +3922,9 @@ async function openTagMix(key, name, members, opts = {}) {
         fresh.push({ ...it, _host: ms.host, _label: ms.label, _sourceId: ms.sid });
       });
       if (fresh.length) {
-        ms.next_page = data.next_page || guessNextUrl(base, 2) || '';
+        // Only follow server-provided next_page URLs. Never guess URLs - a guessed URL
+        // can loop forever or return items from a different part of the site.
+        ms.next_page = data.next_page || '';
         ms.exhausted = !ms.next_page;
       }
       batch.push(...fresh);
@@ -3866,7 +3998,9 @@ async function loadTagMixPages(key, depth, opts = {}) {
         m.page_num = e.num;
         if (!fresh.length) { m.exhausted = true; m.next_page = ''; break; }
         added.push(...fresh);
-        m.next_page = (e.data && e.data.next_page) || guessNextUrl(e.url, e.num + 1) || '';
+        // Only follow server-provided next_page URLs. Never guess URLs - a guessed URL
+        // can loop forever or return items from a different part of the site.
+        m.next_page = (e.data && e.data.next_page) || '';
         if (!m.next_page) { m.exhausted = true; break; }
       }
     });
@@ -4180,7 +4314,9 @@ async function loadFeed(feedId, { force = false, skipPush = false } = {}) {
         items.push({ ...it, _host: hostOf(site), _feed: bdsmAwareFeed(it, sf.id), _label: src.name, _sourceId: src.id });
       });
       pages.set(site, {
-        next_page: items.length ? (data.next_page || guessNextUrl(site, 2) || '') : '',
+        // Only follow server-provided next_page URLs. Never guess URLs - a guessed URL
+        // can loop forever or return items from a different part of the site.
+        next_page: items.length ? (data.next_page || '') : '',
         page_num: data.page_num || 1,
         exhausted: !items.length || !data.next_page,
         emptyCount: 0, retryCount: 0,
@@ -4674,8 +4810,9 @@ async function loadNextPageForSite(siteUrl) {
     const totalNow = grid.querySelectorAll('.card').length;
     if (countBadge) countBadge.textContent = `🎬 ${totalNow} preview${totalNow !== 1 ? 's' : ''}`;
 
-    st.page_num = nextPageNum;
-    st.next_page = data.next_page || guessNextUrl(nextUrl, nextPageNum + 1) || '';
+    // Only follow server-provided next_page URLs. Never guess URLs - a guessed URL
+    // can loop forever or return items from a different part of the site.
+    st.next_page = data.next_page || '';
     if (!st.next_page) st.exhausted = true;
 
     loader.remove();
@@ -5261,9 +5398,10 @@ async function loadNextStudioPage() {
         if (!key || existing.has(key)) continue;
         existing.add(key); uniqueNew.push(s); fresh++;
       }
-      // a source that failed or adds nothing new is finished (also stops repeating guessed pages)
-      if (isNet) st.nexts[j.group] = (!err && fresh && r.next) ? r.next : '';
-      else st.next_page = (!err && r.next) || null;
+      // Always follow the server's next_page when provided, even if this page added nothing new.
+      // Only stop when the server gives no next_page URL or we hit a safety cap.
+      if (isNet) st.nexts[j.group] = (!err && r.next && st.page_num < 40) ? r.next : '';
+      else st.next_page = (!err && r.next && st.page_num < 40) ? r.next : null;
     }
     if (isNet) st.next_page = Object.values(st.nexts).find(Boolean) || null;
 
@@ -5287,7 +5425,11 @@ async function loadNextStudioPage() {
       applyStudioFilter();
     } else {
       loader.remove();
-      if (!isNet) st.exhausted = true; else if (!st.exhausted) scheduleStudioRecheck();
+      // Stop after 2 consecutive pages with no new items (avoids infinite loops on
+      // duplicate/guessed URLs while still allowing one "blank" page before the real end).
+      st.emptyCount = (st.emptyCount || 0) + 1;
+      if (st.emptyCount >= 2 || !st.next_page) st.exhausted = true;
+      else if (!isNet) scheduleStudioRecheck();
     }
   } catch (err) {
     st.retryCount = (st.retryCount || 0) + 1;
@@ -5556,718 +5698,35 @@ function refreshCategoryGridFromState() {
       grid.insertBefore(temp.firstElementChild, slot);
     }
   } else {
-    // Append mode: only add new items at bottom without re-sorting
-    const existingLinks = new Set();
+    // Append mode: a star that already has a card (same name, any website) is MERGED into that card as one more member,
+    // so the same star never shows up twice. Only genuinely new names become new cards.
+    const norm = t => (t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
+    const seen = grid._seenLinks || (grid._seenLinks = new Set());
+    const byName = new Map();
     grid.querySelectorAll('.category-card').forEach(el => {
-      existingLinks.add(el.getAttribute('data-link'));
+      seen.add(el.getAttribute('data-link'));
+      try { JSON.parse(el.dataset.members || '[]').forEach(m => seen.add(m.link)); } catch (_) {}
+      const k = norm(el.getAttribute('data-name')); if (k && !byName.has(k)) byName.set(k, el);
     });
-    const newCats = cats.filter(c => !existingLinks.has(c.link));
+    const fresh = st.items.filter(item => !seen.has(item.link));
+    const toAdd = [];
+    fresh.forEach(it => {
+      seen.add(it.link);
+      const el = byName.get(norm(it.name));
+      if (!el) { toAdd.push(it); return; }
+      let members = [];
+      try { members = JSON.parse(el.dataset.members || '[]'); } catch (_) {}
+      if (!members.length) members = [{ link: el.getAttribute('data-link'), sid: el.getAttribute('data-source-id'), label: ((SOURCES.find(x => x.id === el.getAttribute('data-source-id'))) || {}).name || el.getAttribute('data-source-id') }];
+      if (members.some(m => m.sid === it.sourceId)) return;
+      members.push({ link: it.link, sid: it.sourceId, label: ((SOURCES.find(x => x.id === it.sourceId)) || {}).name || it.sourceId });
+      el.dataset.members = JSON.stringify(members);
+      const groups = new Set((el.getAttribute('data-group') || '').split(' ').filter(Boolean)); groups.add(it.group);
+      el.setAttribute('data-group', [...groups].join(' '));
+      const lab = el.querySelector('.site-label');
+      if (lab) lab.textContent = (groups.size === 1 && groups.has('bdsm')) ? 'BDSM' : 'General Porn';
+    });
     const temp = document.createElement('div');
-    temp.innerHTML = newCats.map(categoryCardHtml).join('');
-    while (temp.firstElementChild) {
-      grid.insertBefore(temp.firstElementChild, slot);
-    }
-  }
-  
-  bindCategoryCards();
-  applyCategoryNameFilter();      // every rebuild keeps the active search / General-BDSM filter (otherwise all tiles flash back)
-}
-
-/** Show/hide category tiles by source filter + name search (categories only, not videos). */
-function applyCategoryNameFilter() {
-  const filter = categoriesState.filterSource || 'all';
-  const fname = filter === 'bdsm' ? 'BDSM' : filter === 'general' ? 'General' : '';
-  const q = (categoriesState.nameQuery || '').trim().toLowerCase();
-
-  const feed = results.querySelector(`.feed[data-site="${CATEGORIES_TAB}"]`);
-  if (!feed) return;
-  const cards = feed.querySelectorAll('.category-card');
-  const onlyBdsm = q.replace(/[^a-z0-9]/g, '') === 'bdsm' && !!feed.querySelector('.category-card[data-bdsm-all]');
-  let visible = 0;
-  const alnum = t => (t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
-  const fits = [];
-  cards.forEach(card => {
-    const sid = card.getAttribute('data-source-id') || '';
-    const name = card.getAttribute('data-name') || '';
-    const sourceOk = filter === 'all' || feedOfSource(sid).id === filter;
-    const nameOk = !q || searchWordsMatch(name, queryWords(q));
-    card._fit = sourceOk && nameOk && (!onlyBdsm || card.hasAttribute('data-bdsm-all'));
-    card._show = card._fit;
-    if (card._fit) fits.push(card);
-  });
-  if (q) {
-    // A search returns ONE unified card per name (per General / BDSM): an exact name beats partial matches,
-    // and the same name from several websites collapses into a single card (it opens the mixed feed).
-    const qn = alnum(q);
-    const exact = fits.filter(c => alnum(c.getAttribute('data-name')) === qn);
-    const pool = exact.length ? exact : fits;
-    const best = new Map();
-    pool.forEach(c => {
-      const key = feedOfSource(c.getAttribute('data-source-id') || '').id + '|' + alnum(c.getAttribute('data-name'));
-      const cur = best.get(key);
-      const score = x => (x.hasAttribute('data-bdsm-all') ? 2 : 0) + (x.querySelector('.thumb[style*="--bg"]') ? 1 : 0);
-      if (!cur || score(c) > score(cur)) best.set(key, c);
-    });
-    const keep = new Set(best.values());
-    cards.forEach(c => { c._show = keep.has(c); });
-  }
-  cards.forEach(card => {
-    card.style.display = card._show ? '' : 'none';
-    if (card._show) visible++;
-  });
-
-  let empty = feed.querySelector('.cat-filter-empty');
-  if (visible === 0) {
-    if (!empty) {
-      const grid = feed.querySelector('.videos');
-      empty = document.createElement('div');
-      empty.className = 'cat-filter-empty';
-      empty.style.cssText = 'grid-column:1/-1;padding:2rem;text-align:center;color:#7a8aaa;';
-      const slot = grid.querySelector('.loading-row-slot');
-      grid.insertBefore(empty, slot);
-    }
-    empty.textContent = q
-      ? `No categories matching “${q}”${fname ? ' in ' + fname : ''}.`
-      : (fname ? `No ${fname} categories loaded.` : 'No categories found.');
-  } else if (empty) {
-    empty.remove();
-  }
-
-  const countBadge = feed.querySelector('.count-badge');
-  if (countBadge) {
-    let suffix = fname ? ' · ' + fname : '';
-    if (q) suffix += ` · “${q}”`;
-    countBadge.textContent = `🗂️ ${visible} categor${visible !== 1 ? 'ies' : 'y'}${suffix}`;
-  }
-
-  setStatus(
-    q
-      ? `Categories — ${visible} match${visible !== 1 ? 'es' : ''} for “${q}”`
-      : `Categories — ${visible}`,
-    false
-  );
-}
-
-function bindCombinedCategorySearch() {
-  const input = document.getElementById('categorySearchInput');
-  if (!input) return;
-
-  // Live local filter — updates immediately as you type; clearing restores full list
-  const runLive = () => {
-    const q = (input.value || '').trim();
-    categoriesState.nameQuery = q;
-    applyCategoryNameFilter();
-    saveCategoryCache(COMBINED_CAT_CACHE_KEY);
-    if (!q) {
-      // Deleted search keyword → show all categories for current menu
-      refreshCategoryGridFromState();
-      applyCategoryNameFilter();
-      scheduleCategoryRecheck();
-      setStatus(`Categories — ${(categoriesState.categories || []).length}`, false);
-    }
-  };
-
-  // Full website search (finds categories not loaded yet). Only fires after the user
-  // stops typing for a while AND has entered a complete keyword (3+ chars) so it never
-  // interrupts typing with a network round-trip.
-  const runWebsite = () => {
-    const q = (input.value || '').trim();
-    categoriesState.nameQuery = q;
-    if (!q) {
-      runLive();
-      return;
-    }
-    searchCategoriesByName(q, ++catSearchToken);
-  };
-
-  // Typing = instant local filter. The deep website search waits for the user to pause
-  // (600ms) and only kicks in once a real keyword is on the table (3+ chars).
-  // Every new keystroke cancels any search that is still running for the previous keyword.
-  input.addEventListener('input', () => {
-    clearTimeout(input._catTimer);
-    clearTimeout(input._catDeep);
-    runLive();
-    const v = (input.value || '').trim();
-    if (v.length >= 3) {
-      input._catDeep = setTimeout(() => {
-        if ((input.value || '').trim() === v && v.length >= 3) runWebsite();
-      }, 600);
-    }
-  });
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') e.preventDefault();          // live search only
-
-    // Esc clears search and restores all
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      input.value = '';
-      clearTimeout(input._catTimer);
-      clearTimeout(input._catDeep);
-      catSearchToken++;          // abort any in-flight search
-      catSearchActive = 0;       // release the search slot so a new search can start
-      runLive();
-    }
-  });
-
-  // Sync input with state
-  if (categoriesState.nameQuery && input.value !== categoriesState.nameQuery) {
-    input.value = categoriesState.nameQuery;
-  }
-}
-
-/**
- * Search for category *tiles* by name from the live websites
- * (not only categories already loaded in the grid).
- * Stays on the Categories view — does not open video results.
- */
-async function searchCategoriesByName(query, token) {
-  if (token) catSearchActive = token;          // a new search is starting: claim the slot
-  else if (catSearchActive) return;            // no token supplied and one is already running
-  const q = (query || '').trim();
-  if (!q) { catSearchActive = 0; return; }
-  const slug = toSlug(q);
-  const filter = categoriesState.filterSource || 'all';
-
-  const sources = COMBINED_CATEGORY_SOURCES.filter(
-    s => filter === 'all' || feedOfSource(s.id).id === filter
-  );
-  if (!sources.length) { catSearchActive = 0; return; }
-
-  if (categoriesBtn) categoriesBtn.disabled = true;
-  setStatus(`Searching categories for “${q}”…`, true);
-
-  // Soft loading indicator without wiping the page. Shows per-source progress so the
-  // user sees each website's walk independently instead of one anonymous spinner.
-  const feed = results.querySelector(`.feed[data-site="${CATEGORIES_TAB}"]`);
-  let banner = feed && feed.querySelector('.cat-search-loading');
-  if (feed && !banner) {
-    banner = document.createElement('div');
-    banner.className = 'cat-search-loading';
-    banner.style.cssText = 'padding:.6rem 1.4rem;border-bottom:1px solid #1e2738;display:flex;flex-direction:column;gap:.5rem';
-    const grid = feed.querySelector('.videos');
-    if (grid) feed.insertBefore(banner, grid);
-  }
-  if (banner) {
-    banner.innerHTML = `
-      <div style="color:#9aa9c1;font-size:.82rem;display:flex;align-items:center;gap:.4rem;">
-        <span class="mini-spinner" style="display:inline-block;width:12px;height:12px;border:2px solid #3a4a63;border-top-color:#5b8cff;border-radius:50%;animation:spin .8s linear infinite;"></span>
-        Searching websites for “${escapeHtml(q)}”…
-      </div>
-      <div class="cat-src-progress" style="display:flex;gap:.4rem;flex-wrap:wrap"></div>`;
-  }
-  const progressRow = banner && banner.querySelector('.cat-src-progress');
-
-  const markSource = (src, state, detail) => {
-    if (!progressRow) return;
-    let pill = progressRow.querySelector(`[data-src="${src.id}"]`);
-    if (!pill) {
-      pill = document.createElement('span');
-      pill.dataset.src = src.id;
-      pill.style.cssText = 'background:#1e2738;border-radius:999px;padding:.2rem .6rem;font-size:.72rem;display:inline-flex;align-items:center;gap:.3rem';
-      progressRow.appendChild(pill);
-    }
-    const color = state === 'done' ? '#7c9' : state === 'fail' ? '#f87171' : '#9aa9c1';
-    const icon = state === 'done' ? '✓' : state === 'fail' ? '✗' : '<span class="mini-spinner" style="display:inline-block;width:10px;height:10px;border:2px solid #3a4a63;border-top-color:#5b8cff;border-radius:50%;animation:spin .8s linear infinite;"></span>';
-    pill.innerHTML = `<span style="color:${color}">${icon}</span> ${escapeHtml(src.name)}${detail ? ' · ' + escapeHtml(detail) : ''}`;
-  };
-
-  const isStale = () => catSearchActive !== token;
-  const found = new Map();
-
-  try {
-    // 1) Matches already loaded
-    for (const c of (categoriesState.categories || [])) {
-      if (searchWordsMatch(c.name || '', queryWords(q))) {
-        const key = (c.link || '').split('?')[0];
-        if (key) found.set(key, c);
-      }
-    }
-
-    // 2) Direct category URL from slug → category tile (if page has content)
-    await Promise.all(sources.map(async (src) => {
-      if (!slug || slug === 'bdsm') return;                    // 'bdsm' = the one combined BDSM card, no per-site / video-based tiles
-      const url = src.feedUrl(slug);
-      try {
-        const res = await fetch('/api/scrape', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ urls: [url] }),
-        });
-        if (!res.ok) return;
-        const json = await res.json();
-        const data = (json.results || [])[0];
-        if (!data || data.error || !(data.items || []).length) return;
-        const key = (data.page || url).split('?')[0];
-        if (found.has(key)) return;
-        found.set(key, {
-          name: q.replace(/\b\w/g, ch => ch.toUpperCase()),
-          link: key,
-          thumbnail: (data.items[0] && data.items[0].thumbnail) || null,
-          sourceId: src.id,
-        });
-      } catch { /* ignore */ }
-    }));
-
-    // 3) Walk category indexes on each site until matches found or pages run out
-    const maxPages = 15;
-    await Promise.all(sources.map(async (src) => {
-      markSource(src, 'loading');
-      let pageUrl = src.indexUrl;
-      for (let i = 0; i < maxPages && pageUrl; i++) {
-        if (isStale()) return;
-        try {
-          const res = await fetch('/api/scrape-categories', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url: pageUrl }),
-          });
-          if (!res.ok) break;
-          const json = await res.json();
-          if (json.error) break;
-
-          for (const c of (json.categories || [])) {
-            const key = (c.link || '').split('?')[0];
-            if (!key) continue;
-            // Always grow the master list so scroll has more to show later
-            if (!(categoriesState.categories || []).some(x => (x.link || '').split('?')[0] === key)) {
-              categoriesState.categories.push({ ...c, sourceId: src.id });
-            }
-            if (searchWordsMatch(c.name || '', queryWords(q)) && !found.has(key)) {
-              found.set(key, { ...c, sourceId: src.id });
-            }
-          }
-
-          // Track pagination for this source
-          if (!categoriesState.nextBySource) categoriesState.nextBySource = {};
-          categoriesState.nextBySource[src.id] = json.next_page || '';
-          pageUrl = json.next_page || null;
-        } catch {
-          break;
-        }
-      }
-      const matches = [...found.values()].filter(f => f.sourceId === src.id).length;
-      markSource(src, matches ? 'done' : 'fail', `${matches} match${matches !== 1 ? 'es' : ''}`);
-    }));
-
-    // If the user typed again while we were walking, discard these results
-    if (isStale()) {
-      if (banner) banner.remove();
-      catSearchActive = 0;
-      if (categoriesBtn) categoriesBtn.disabled = false;
-      return;
-    }
-
-    // Merge finds into master list
-    for (const cat of found.values()) {
-      const key = (cat.link || '').split('?')[0];
-      if (!(categoriesState.categories || []).some(x => (x.link || '').split('?')[0] === key)) {
-        categoriesState.categories.push(cat);
-      }
-    }
-
-    categoriesState.next_page =
-      Object.values(categoriesState.nextBySource || {}).find(Boolean) || categoriesState.next_page || '';
-    categoriesState.exhausted = !categoriesState.next_page;
-    categoriesState.nameQuery = q;
-    categoriesState.kind = 'categories';
-
-    // Re-render category grid, then filter to search matches. Only if Categories is still the view on screen:
-    // if the user went elsewhere meanwhile, the results are kept in categoriesState and must not hijack the screen
-    // (or hide the search bar of the feed they opened).
-    categoriesState.nameQuery = q;
-    if (activeTab === CATEGORIES_TAB) {
-      // renderCategories() rebuilds the grid and re-creates the search input, which would
-      // steal focus mid-typing. Remember the focused element + caret so we can hand it back.
-      const focusedTag = document.activeElement && document.activeElement.tagName;
-      const focusedId = (document.activeElement && document.activeElement.id) || null;
-      const selStart = (document.activeElement && 'selectionStart' in document.activeElement)
-        ? document.activeElement.selectionStart : null;
-      const selEnd = (document.activeElement && 'selectionEnd' in document.activeElement)
-        ? document.activeElement.selectionEnd : null;
-
-      const data = {
-        categories: (categoriesState.categories || []).slice(),
-        count: (categoriesState.categories || []).length,
-        next_page: categoriesState.next_page,
-        nextBySource: { ...(categoriesState.nextBySource || {}) },
-        page_num: categoriesState.page_num || 1,
-        kind: 'categories',
-      };
-      renderCategories(data, false, { kind: 'categories' });
-      categoriesState.nameQuery = q;
-      const input = document.getElementById('categorySearchInput');
-      if (input) input.value = q;
-      applyCategorySourceFilter(filter);
-      applyCategoryNameFilter();
-
-      // Restore focus + caret so typing continues uninterrupted. Defer so the browser
-      // has finished the innerHTML rebuild before we grab the new input node.
-      if (focusedId === 'categorySearchInput' && input) {
-        requestAnimationFrame(() => {
-          input.focus();
-          if (selStart != null && selEnd != null) {
-            try { input.setSelectionRange(selStart, selEnd); } catch (_) {}
-          }
-        });
-      }
-
-      setStatus(
-        found.size
-          ? `Categories — ${found.size} match${found.size !== 1 ? 'es' : ''} for “${q}”`
-          : `No categories matching “${q}”`,
-        false
-      );
-    }
-  } catch (err) {
-    if (isStale()) { catSearchActive = 0; if (categoriesBtn) categoriesBtn.disabled = false; return; }
-    setStatus(`Category search error: ${err.message}`, false);
-  } finally {
-    if (!isStale()) {
-      if (banner) {
-        // Leave a one-line summary for a moment instead of vanishing instantly
-        const summary = banner.querySelector(':scope > div:first-child');
-        if (summary) {
-          summary.innerHTML = `<span style="color:#9aa9c1;">Search complete · ${found.size} match${found.size !== 1 ? 'es' : ''} for “${escapeHtml(q)}”</span>`;
-        }
-        const progress = banner.querySelector('.cat-src-progress');
-        if (progress) progress.innerHTML = '';
-        setTimeout(() => banner.remove(), 1500);
-      }
-      catSearchActive = 0;
-      if (categoriesBtn) categoriesBtn.disabled = false;
-    }
-  }
-}
-
-/** Load (or show) the homepage feed for a source id. */
-async function loadSourceFeed(sourceId, { force = false, skipPush = false } = {}) {
-  const src = getSource(sourceId);
-  if (!src) return;
-  const label = feedOfSource(sourceId).name;
-
-  // Already have data — just render
-  if (!force && siteData.has(src.url)) {
-    activeTab = src.url;
-    renderFeed(src.url);
-    if (!skipPush) replaceNav({ view: 'feed', sourceId, feedUrl: src.url });
-    const n = siteData.get(src.url)?.items?.length || 0;
-    setStatus(`${label} — ${n} preview${n !== 1 ? 's' : ''}`, false);
-    scheduleRecheck(src.url);
-    return;
-  }
-
-  // Also check resolved page keys for this source
-  const existingKey = [...siteData.keys()].find(k => {
-    const s = sites.find(x => x.url === k);
-    return s && s.sourceId === sourceId;
-  });
-  if (!force && existingKey && siteData.has(existingKey)) {
-    // Prefer homepage URL entry
-    const homeEntry = [...siteData.keys()].find(k => hostOf(k) === hostOf(src.url));
-    const key = homeEntry || existingKey;
-    // Only use if it's the homepage-ish, not a deep category
-    if (homeEntry) {
-      activeTab = homeEntry;
-      renderFeed(homeEntry);
-      if (!skipPush) replaceNav({ view: 'feed', sourceId, feedUrl: homeEntry });
-      scheduleRecheck(homeEntry);
-      return;
-    }
-  }
-
-  if (busy) return;
-  busy = true;
-  setStatus(`Loading ${label}…`, true);
-  showSectionLoading(`${label} previews`);
-
-  try {
-    const res = await fetch('/api/scrape', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ urls: [src.url] })
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const json = await res.json();
-    if (json.error) throw new Error(json.error);
-    const data = (json.results || [])[0];
-    if (!data) throw new Error('No data returned');
-
-    const key = data.page || src.url;
-    if (!sites.find(s => s.url === key || s.url === src.url)) {
-      sites.unshift({ name: src.name, url: key, sourceId: src.id });
-    } else {
-      sites = sites.map(s =>
-        (s.sourceId === src.id || s.url === src.url)
-          ? { name: src.name, url: key, sourceId: src.id }
-          : s
-      );
-    }
-    // Keep SOURCES url aligned if server redirected
-    src.url = key;
-
-    siteData.set(key, {
-      page: key,
-      page_title: data.page_title,
-      error: data.error,
-      items: (data.items || []).map(it => ({ ...it, _host: hostOf(key) })),
-    });
-    siteState.set(key, {
-      next_page: data.next_page || guessNextUrl(key, 2) || '',
-      page_num: data.page_num || 1,
-      loading: false,
-      exhausted: !data.next_page,
-      emptyCount: 0, retryCount: 0, error: !!data.error,
-    });
-
-    activeTab = key;
-    renderFeed(key);
-    if (!skipPush) replaceNav({ view: 'feed', sourceId, feedUrl: key });
-    const total = data.items?.length || 0;
-    setStatus(`${label} — ${total} preview${total !== 1 ? 's' : ''}`, false);
-  } catch (err) {
-    rescueSearchBar(); results.innerHTML = `<div class="empty">⚠️ ${escapeHtml(err.message)}</div>`;
-    setStatus(`${label} load error`, false);
-  } finally {
-    busy = false;
-  }
-}
-
-async function switchSource(sourceId) {
-  if (sourceId === activeSourceId && activeTab && activeTab !== CATEGORIES_TAB) {
-    const isHome = SOURCES.some(s => s.id === sourceId && (s.url === activeTab || hostOf(s.url) === hostOf(activeTab)));
-    if (isHome) return;
-  }
-  if (activeTab === CATEGORIES_TAB) saveCategoryCache(COMBINED_CAT_CACHE_KEY);
-  if (activeTab === PORN_SITES_TAB) saveCategoryCache(PORN_SITES_CACHE_KEY);
-  if (activeTab === PORN_TAGS_TAB) saveCategoryCache(PORN_TAGS_CACHE_KEY);
-
-  activeSourceId = sourceId;
-  navSection = 'home';
-  renderSiteTabs();
-  resetMainPlayer();
-  if (mainPlayer) mainPlayer.classList.remove('active');
-  await loadSourceFeed(sourceId, { skipPush: true });
-  replaceNav({ view: 'feed', sourceId, feedUrl: activeTab || activeSource().url });
-}
-
-async function scrapeAll(force = false) {
-  navSection = 'home';
-  activeFeedId = ALL_FEED.id;
-  activeSourceId = ALL_FEED.siteIds[0];
-  renderSiteTabs();
-  await loadFeed(activeFeedId, { force, skipPush: true });
-  replaceNav({ view: 'feed', feedId: activeFeedId, sourceId: activeSourceId, feedUrl: activeTab });
-}
-
-/** Turn free text into a URL slug: "Hog Tied" → "hog-tied" */
-function toSlug(text) {
-  return String(text || '')
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/['’]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .replace(/-{2,}/g, '-');
-}
-
-// (the Test screen used to store its custom sites here: clear that leftover once)
-try { localStorage.removeItem('test_custom_sites'); } catch {}
-
-
-/* --------------------------------------------------------------
-   NETWORKS + PORNSTARS (same behaviour as Categories)
-   - tiles from each source's index page, endless paging
-   - filter chips (All / General / BDSM) when more than one group exists
-   - name search: typing filters instantly, Enter / Search walks every remaining page
-   - click a tile -> opens that network / pornstar as a normal video feed
--------------------------------------------------------------- */
-function catMatch(name, q) {
-  const words = queryWords(q);
-  if (!words.length) return true;
-  return searchWordsMatch(name, words);
-}
-
-async function fetchCatalogPage(kind, i, url) {
-  const cfg = CATALOGS[kind], st = catalogState[kind], src = cfg.sources[i];
-  st.pages[i] = (st.pages[i] || 0) + 1;
-  let added = 0;
-  try {
-    const res = await fetch('/api/scrape-categories', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url }),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    if (data.error) throw new Error(data.error);
-    for (const c of (data.categories || [])) {
-      const key = (c.link || '').split('?')[0];
-      if (!key || isAllVideosLink(key) || st.seen.has(key)) continue;
-      st.seen.add(key);
-      st.items.push({ ...c, sourceId: src.id, group: src.group });
-      added++;
-    }
-    // stop when a page adds nothing new (end of the list or a repeating guessed page)
-    st.next[i] = (added && data.next_page && st.pages[i] < 40) ? data.next_page : '';
-  } catch (err) {
-    st.next[i] = '';
-    const errMsg = `${src.name || hostOf(url)}: ${err.message}`;
-    st.errors.push(errMsg);
-    console.warn(`Catalog fetch failed for ${src.name}:`, err);
-  }
-  return added;
-}
-
-function catalogCardHtml(c, kind) {
-  const name = escapeHtml(c.name || 'Untitled');
-  const ph = c.thumbnail ? escapeHtml(c.thumbnail)
-    : 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
-  const feed = feedOfSource(c.sourceId);
-  const label = c.members ? (c.group === 'bdsm' ? 'BDSM' : 'General Porn') : escapeHtml(feed.name);
-  return `<a class="card category-card${kind === 'pornstars' ? ' portrait' : ''}" href="#" data-link="${escapeHtml(c.link)}"
-             data-name="${escapeHtml(c.name || '')}" data-source-id="${escapeHtml(c.sourceId)}"
-             data-group="${escapeHtml(c.group || '')}"${c.members ? ` data-members="${escapeHtml(JSON.stringify(c.members))}"` : ''} title="${name}">
-    <div class="thumb"${c.thumbnail ? ` style="--bg:url(&quot;${ph}&quot;)"` : ''}>
-      <img src="${ph}" loading="lazy" decoding="async" alt="${name}" referrerpolicy="no-referrer" onerror="this.style.opacity=0">
-      <span class="site-label s-${escapeHtml(feed.id)}">${label}</span>
-    </div>
-    <div class="info"><div class="title">${name}</div>${c.video_count ? `<div class="meta">${Number(c.video_count).toLocaleString()} videos</div>` : ''}</div>
-  </a>`;
-}
-
-function catalogChipsHtml(kind) {
-  const cfg = CATALOGS[kind], st = catalogState[kind];
-  const groups = [...new Set(cfg.sources.map(s => s.group))];
-  if (groups.length < 2) return '';
-  const chip = (id, label) => {
-    const state = st.filter === id ? 'active' : (st.filter === 'all' ? '' : 'dim');
-    return `<span data-cat-group="${id}" class="chip-btn ${id === 'all' ? '' : 'chip-' + id} ${state}">${label}</span>`;
-  };
-  return `<div class="badges catalog-chips" style="padding:.6rem 1.4rem;gap:.5rem;display:flex;flex-wrap:wrap">
-    ${chip('all', 'All')}${groups.map(g => chip(g, g === 'bdsm' ? 'BDSM' : 'General')).join('')}</div>`;
-}
-
-function renderCatalog(kind, opts = {}) {
-  const cfg = CATALOGS[kind], st = catalogState[kind];
-  const isRestore = opts.isRestore || false;
-  hideSearchBar();
-  activeTab = cfg.tab;
-  setTimeout(updateNetworkBarActive, 0);
-  const groups = [...new Set(cfg.sources.map(s => s.group))];
-  const subtitle = groups.length > 1 ? 'General Porn + BDSM' : 'General Porn';
-  
-  // Save current scroll position before rendering
-  const savedScrollY = st.scrollY || 0;
-  
-  // Check if the feed already exists in DOM (restore case)
-  const existingFeed = results.querySelector(`.feed[data-site="${cfg.tab}"]`);
-  
-  if (isRestore && existingFeed) {
-    // Don't rebuild anything - just restore scroll position
-    const grid = existingFeed.querySelector('.videos');
-    if (grid) {
-      grid.classList.remove('loading-hidden');
-      grid.classList.add('loading-visible');
-    }
-    requestAnimationFrame(() => {
-      window.scrollTo({ top: savedScrollY, left: 0, behavior: 'instant' });
-    });
-    return;
-  }
-  
-  rescueSearchBar(); results.innerHTML = `
-    <div class="feed" data-site="${cfg.tab}">
-      <div class="feed-header section-intro">
-        <div>
-          <div class="feed-name">${cfg.icon} ${escapeHtml(cfg.title)}</div>
-          <div class="feed-url">${subtitle}</div>
-        </div>
-        <div class="badges"><span class="count-badge">🗂️ ${st.items.length}</span></div>
-      </div>
-      ${catalogChipsHtml(kind)}
-      <div class="cat-search-bar">
-        <input id="catalogSearchInput" type="search" placeholder="Search ${cfg.noun}s by name…" autocomplete="off" />
-      </div>
-      <div class="videos loading-hidden">
-        <div class="loading-row-slot"></div>
-      </div>
-      <div class="sentinel" data-site="${cfg.tab}"></div>
-    </div>`;
-  refreshCatalogGrid(kind, { isRestore });
-  bindCatalogControls(kind);
-  
-  // Restore scroll position after rendering
-  requestAnimationFrame(() => {
-    window.scrollTo({ top: savedScrollY, left: 0, behavior: 'instant' });
-  });
-  
-  // Reveal cards after they're rendered
-  requestAnimationFrame(() => {
-    const grid = results.querySelector('.videos');
-    if (grid) {
-      grid.classList.remove('loading-hidden');
-      grid.classList.add('loading-visible');
-    }
-  });
-}
-
-/** Same star on several websites -> one card with every page as `members`; a name that exists on one site only stays as it is. */
-function catalogUnify(items) {
-  const norm = t => (t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
-  const byName = new Map(), order = [];
-  items.forEach(c => {
-    const k = norm(c.name);
-    if (!k) { order.push({ list: [c] }); return; }
-    let g = byName.get(k);
-    if (!g) { g = { list: [] }; byName.set(k, g); order.push(g); }
-    g.list.push(c);
-  });
-  return order.flatMap(g => {
-    const sites = new Map();
-    g.list.forEach(c => { if (!sites.has(c.sourceId)) sites.set(c.sourceId, c); });
-    if (sites.size < 2) return g.list;
-    const best = g.list.find(c => c.thumbnail) || g.list[0];
-    const members = [...sites.values()].map(c => ({ link: c.link, sid: c.sourceId, label: ((SOURCES.find(x => x.id === c.sourceId)) || {}).name || c.sourceId }));
-    return [{ ...best, members, group: [...new Set([...sites.values()].map(c => c.group))].join(' ') }];
-  });
-}
-
-function refreshCatalogGrid(kind, opts = {}) {
-  const cfg = CATALOGS[kind], st = catalogState[kind];
-  const feed = results.querySelector(`.feed[data-site="${cfg.tab}"]`);
-  const grid = feed && feed.querySelector('.videos');
-  if (!grid) return;
-  const slot = grid.querySelector('.loading-row-slot');
-  
-  // If this is a restore and grid already has cards, do nothing - DOM is already correct
-  if (opts.isRestore && grid.querySelector('.category-card')) {
-    // Just re-bind and re-observe, don't rebuild
-    bindCategoryCards();
-    applyCatalogFilter(kind);
-    observeCatalogSentinel(kind);
-    return;
-  }
-  
-  // Check if this is initial load or append
-  const isInitialLoad = !grid.querySelector('.category-card');
-  
-  if (isInitialLoad) {
-    // Initial load: show everything sorted
-    grid.querySelectorAll('.category-card, .cat-filter-empty').forEach(el => el.remove());
-    const sorted = catalogUnify(st.items).sort((a, b) =>
-      (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base', numeric: true }));
-    const temp = document.createElement('div');
-    temp.innerHTML = sorted.map(c => catalogCardHtml(c, kind)).join('');
-    while (temp.firstElementChild) grid.insertBefore(temp.firstElementChild, slot);
-  } else {
-    // Append mode: only add new items at bottom without re-sorting
-    const existingLinks = new Set();
-    grid.querySelectorAll('.category-card').forEach(el => {
-      existingLinks.add(el.getAttribute('data-link'));
-    });
-    const newItems = st.items.filter(item => !existingLinks.has(item.link));
-    const temp = document.createElement('div');
-    temp.innerHTML = newItems.map(c => catalogCardHtml(c, kind)).join('');
+    temp.innerHTML = catalogUnify(toAdd).map(c => catalogCardHtml(c, kind)).join('');
     while (temp.firstElementChild) grid.insertBefore(temp.firstElementChild, slot);
   }
   
@@ -7271,7 +6730,9 @@ async function loadSitePagesBatch(key, depth, opts = {}) {
       st.page_num = e.num;
       if (!fresh.length) { st.exhausted = true; st.next_page = ''; break; }       // same page again / no more videos
       added.push(...fresh);
-      st.next_page = (e.data && e.data.next_page) || guessNextUrl(e.url, e.num + 1) || '';
+      // Only follow server-provided next_page URLs. Never guess URLs - a guessed URL
+      // can loop forever or return items from a different part of the site.
+      st.next_page = (e.data && e.data.next_page) || '';
       if (!st.next_page) { st.exhausted = true; break; }
     }
     st.retryCount = 0;
@@ -7697,7 +7158,9 @@ async function restoreSectionFeed(sectionUrl) {
       items: (data.items || []).map(it => ({ ...it, _host: hostOf(pageUrl) })),
     });
     siteState.set(pageUrl, {
-      next_page: data.next_page || guessNextUrl(pageUrl, 2) || '',
+      // Only follow server-provided next_page URLs. Never guess URLs - a guessed URL
+      // can loop forever or return items from a different part of the site.
+      next_page: data.next_page || '',
       page_num: data.page_num || 1,
       loading: false,
       exhausted: !data.next_page,
