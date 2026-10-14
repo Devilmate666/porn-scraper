@@ -10,39 +10,39 @@
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: system-ui, -apple-system, sans-serif; background: #0a0c10;
-         color: #e2e8f0; padding: 1.5rem; min-height: 100vh; }
-  .app { max-width: 1600px; margin: 0 auto; }
+         color: #e2e8f0; padding: 1rem; min-height: 100vh; }
+  .app { max-width: 1400px; margin: 0 auto; }
 
-  header { display: flex; flex-direction: column; gap: 1rem; margin-bottom: 1.5rem; }
+  header { display: flex; flex-direction: column; gap: .8rem; margin-bottom: 1rem; }
   .app > header.section-nav-sticky {
-    position: sticky; top: 0; z-index: 60; padding: .5rem 0;
+    position: sticky; top: 0; z-index: 60; padding: .4rem 0;
     background: #0a0c10; box-shadow: 0 8px 16px -12px rgba(0,0,0,.8);
   }
   .top-row > .status { margin-left: auto; }
   .top-row { display: flex; justify-content: space-between; align-items: center;
-             flex-wrap: wrap; gap: 1rem; }
-  h1 { font-size: 1.7rem; background: linear-gradient(135deg, #c4b5fd, #7aa9ff);
+             flex-wrap: wrap; gap: .8rem; }
+  h1 { font-size: 1.4rem; background: linear-gradient(135deg, #c4b5fd, #7aa9ff);
        -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
   .feed > .search-bar {
-    display: flex !important; gap: .5rem; align-items: center;
-    padding: .75rem 1.4rem; border-bottom: 1px solid #252e3f; background: #0d121c;
+    display: flex !important; gap: .4rem; align-items: center;
+    padding: .5rem 1rem; border-bottom: 1px solid #252e3f; background: #0d121c;
   }
   .feed > .search-bar input { flex: 1; min-width: 180px; }
-  .status { display: flex; align-items: center; gap: .5rem; background: #1a1f2b;
-            padding: .4rem 1rem; border-radius: 30px; border: 1px solid #2b3344;
-            font-size: .8rem; color: #b0c0dd; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: #4ade80; }
+  .status { display: flex; align-items: center; gap: .4rem; background: #1a1f2b;
+            padding: .3rem .8rem; border-radius: 24px; border: 1px solid #2b3344;
+            font-size: .75rem; color: #b0c0dd; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: #4ade80; }
   .dot.loading, .tab.loading .tab-dot {
     background: linear-gradient(90deg, #283348 25%, #7183a4 50%, #283348 75%);
     background-size: 200% 100%; animation: loadingSweep 1.25s linear infinite;
   }
   @keyframes loadingSweep { to { background-position: -200% 0; } }
 
-  .search-bar { display: flex; gap: .5rem; align-items: center; }
+  .search-bar { display: flex; gap: .4rem; align-items: center; }
   .search-bar input {
-    flex: 1; min-width: 240px;
+    flex: 1; min-width: 200px;
     background: #0c0f15; border: 1px solid #232b3b; color: #e2e8f0;
-    padding: .6rem 1rem; border-radius: 30px; font-size: .85rem;
+    padding: .5rem .8rem; border-radius: 24px; font-size: .8rem;
     font-family: inherit; outline: none; transition: .15s;
   }
   .search-bar input:focus { border-color: #4f46e5; box-shadow: 0 0 0 3px #4f46e533; }
@@ -52,136 +52,142 @@
   /* search-box suggestions (categories / tags / pornstars / studios) */
   #suggestBox { position: fixed; z-index: 200; display: none; overflow-y: auto; max-height: min(60vh, 440px);
     overscroll-behavior: contain; touch-action: pan-y; -webkit-overflow-scrolling: touch;   /* scrolling the list never moves the feed behind it */
-    background: #0c0f15; border: 1px solid #2c3750; border-radius: 14px; padding: .3rem;
+    background: #0c0f15; border: 1px solid #2c3750; border-radius: 12px; padding: .25rem;
     box-shadow: 0 18px 40px -12px rgba(0,0,0,.85); }
   #suggestBox.open { display: block; }
-  #suggestBox .sg { display: flex; align-items: center; gap: .6rem; padding: .5rem .7rem; border-radius: 10px;
-    cursor: pointer; font-size: .85rem; color: #e2e8f0; }
+  #suggestBox .sg { display: flex; align-items: center; gap: .5rem; padding: .4rem .6rem; border-radius: 8px;
+    cursor: pointer; font-size: .8rem; color: #e2e8f0; }
   #suggestBox .sg.active, #suggestBox .sg:hover { background: #1a2133; }
-  #suggestBox .sg-head { padding: .45rem .7rem .2rem; font-size: .68rem; letter-spacing: .04em; text-transform: uppercase; color: #5b6a84; }
-  #suggestBox .sg-head:not(:first-child) { margin-top: .25rem; border-top: 1px solid #1a2133; padding-top: .6rem; }
+  #suggestBox .sg-head { padding: .35rem .6rem .15rem; font-size: .65rem; letter-spacing: .04em; text-transform: uppercase; color: #5b6a84; }
+  #suggestBox .sg-head:not(:first-child) { margin-top: .2rem; border-top: 1px solid #1a2133; padding-top: .5rem; }
   #suggestBox .sg-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #suggestBox .sg-name b { color: #c4b5fd; font-weight: 600; }
 
-  .tabs { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center;
-          padding: .5rem; background: #0c0f15; border: 1px solid #212836;
-          border-radius: 1.2rem; }
-  .tab { display: inline-flex; align-items: center; gap: .5rem;
+  .tabs { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center;
+          padding: .4rem; background: #0c0f15; border: 1px solid #212836;
+          border-radius: 1rem; }
+  .tab { display: inline-flex; align-items: center; gap: .4rem;
          background: #131822; border: 1px solid #232b3b; color: #a9b9d6;
-         padding: .55rem 1.1rem; border-radius: 30px; font-size: .8rem;
+         padding: .45rem .9rem; border-radius: 24px; font-size: .75rem;
          cursor: pointer; font-family: inherit; transition: .15s;
-         white-space: nowrap; max-width: 300px; }
+         white-space: nowrap; max-width: 280px; }
   .tab:hover { background: #1c2330; border-color: #3a465e; color: #d5e0f5; }
   .tab.active { background: linear-gradient(145deg, #4f46e5, #6366f1);
                 border-color: #7c8af8; color: #fff;
-                box-shadow: 0 4px 14px -4px #4f46e5aa; }
+                box-shadow: 0 3px 10px -3px #4f46e5aa; }
   .tab.search-tab.active { background: linear-gradient(145deg, #0ea5e9, #22d3ee);
                            border-color: #67e8f9; color: #04141b;
-                           box-shadow: 0 4px 14px -4px #0ea5e9aa; }
-  .tab .tab-dot { width: 6px; height: 6px; border-radius: 50%;
+                           box-shadow: 0 3px 10px -3px #0ea5e9aa; }
+  .tab .tab-dot { width: 5px; height: 5px; border-radius: 50%;
                   background: #4ade80; flex: 0 0 auto; }
   .tab.error .tab-dot { background: #f87171; }
   .tab .tab-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .tab .tab-count { font-size: .65rem; opacity: .7;
+  .tab .tab-count { font-size: .6rem; opacity: .7;
                     font-family: ui-monospace, monospace; }
 
-  .controls { display: flex; gap: .6rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+  .controls { display: flex; gap: .5rem; flex-wrap: wrap; margin-bottom: 1rem; }
   button.action { background: #1e2432; border: 1px solid #2e3749; color: #d0daea;
-           padding: .55rem 1.2rem; border-radius: 30px; font-size: .8rem;
+           padding: .45rem 1rem; border-radius: 24px; font-size: .75rem;
            cursor: pointer; font-family: inherit; transition: .15s; }
   button.action:hover { background: #29303f; border-color: #46526b; }
   button.action.primary { background: linear-gradient(145deg, #4f46e5, #6366f1);
                    border-color: #7c8af8; color: #fff; }
   button.action:disabled { opacity: .5; cursor: not-allowed; }
 
-  .feed { background: #131822; border: 1px solid #232b3b; border-radius: 1.4rem;
+  .feed { background: #131822; border: 1px solid #232b3b; border-radius: 1rem;
           overflow: hidden; overflow: clip; }   /* clip (not hidden) keeps the rounded corners AND lets position:sticky work */
   .feed-controls-sticky {
-    position: sticky; top: calc(var(--nav-h, 3.4rem) - 1px); z-index: 45; display: flex; flex-direction: column; gap: .55rem;
-    max-height: min(42vh, 20rem); overflow-y: hidden; overflow-anchor: none; overscroll-behavior: contain;
-    padding: .65rem 1rem; background: #0d121c; border-bottom: 1px solid #252e3f;
-    box-shadow: 0 8px 16px -8px rgba(0,0,0,.6);
+    position: sticky; top: calc(var(--nav-h, 3.4rem) - 1px); z-index: 45; display: flex; flex-direction: column; gap: .4rem;
+    max-height: min(42vh, 18rem); overflow-y: hidden; overflow-anchor: none; overscroll-behavior: contain;
+    padding: .5rem .8rem; background: #0d121c; border-bottom: 1px solid #252e3f;
+    box-shadow: 0 6px 12px -6px rgba(0,0,0,.6);
   }
   .feed-controls-sticky .site-bar { min-width: 0; }
   .feed-controls-sticky > .search-bar {
     position: sticky; top: 0; z-index: 1; padding: 0; border: 0; background: #0d121c;
   }
   .feed-header { display: flex; justify-content: space-between; align-items: center;
-                 gap: 1rem; padding: 1rem 1.4rem; background: #181e2a;
+                 gap: .8rem; padding: .8rem 1rem; background: #181e2a;
                  border-bottom: 1px solid #252e3f; flex-wrap: wrap; }
-  .feed-name { font-weight: 600; font-size: 1rem; color: #e7eefb;
-               display: flex; align-items: center; gap: .5rem; }
-  .feed-url { font-size: .7rem; color: #7f91b2; font-family: ui-monospace, monospace;
+  .feed-name { font-weight: 600; font-size: .9rem; color: #e7eefb;
+               display: flex; align-items: center; gap: .4rem; }
+  .feed-url { font-size: .65rem; color: #7f91b2; font-family: ui-monospace, monospace;
               text-decoration: none; }
   .feed-url:hover { color: #a5b8dd; text-decoration: underline; }
-  .badges { display: flex; gap: .5rem; flex-wrap: wrap; font-size: .7rem;
+  .badges { display: flex; gap: .4rem; flex-wrap: wrap; font-size: .65rem;
             align-items: center; }
-  .badges span { background: #1c2330; padding: .25rem .7rem; border-radius: 20px;
+  .badges span { background: #1c2330; padding: .2rem .6rem; border-radius: 16px;
                  border: 1px solid #2c3548; color: #92a6c9; }
   .badges span.source { background: #102e3a; border-color: #1f5a72; color: #7dd3fc; }
   .badges span.source.warn { background: #3a2710; border-color: #72551f; color: #fcd77d; }
 
-  .videos { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 1rem; padding: 1.2rem 1.4rem; }
+  .videos { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: .8rem; padding: .8rem 1rem; }
+  @media (min-width: 1400px) {
+    .videos { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+  }
+  @media (max-width: 768px) {
+    .videos { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .6rem; padding: .6rem .8rem; }
+  }
   /* ---- Sex Cams: Lemoncams live-stream cards ---- */
-  .cams-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 1rem; padding: 1.2rem 1.4rem; }
-  .cam-card { display: block; background: #171d28; border: 1px solid #232b3b; border-radius: 1rem; overflow: hidden;
-              text-decoration: none; color: inherit; transition: .15s; content-visibility: auto; contain-intrinsic-size: auto 270px; }
-  .cam-card:hover { transform: translateY(-2px); border-color: #3b4a66; box-shadow: 0 8px 22px rgba(0,0,0,.4); }
+  .cams-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: .8rem; padding: .8rem 1rem; }
+  @media (min-width: 1400px) {
+    .cams-grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+  }
+  @media (max-width: 768px) {
+    .cams-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .6rem; padding: .6rem .8rem; }
+  }
+  .cam-card { display: block; background: #171d28; border: 1px solid #232b3b; border-radius: .8rem; overflow: hidden;
+              text-decoration: none; color: inherit; transition: .15s; content-visibility: auto; contain-intrinsic-size: auto 250px; }
+  .cam-card:hover { transform: translateY(-2px); border-color: #3b4a66; box-shadow: 0 6px 16px rgba(0,0,0,.4); }
   .cam-thumb { position: relative; aspect-ratio: 4/3; background: #0b0e14; overflow: hidden; }
   .cam-thumb .cam-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-  .cam-live { position: absolute; top: .5rem; left: .5rem; display: flex; align-items: center; gap: .35rem; z-index: 2;
-              background: rgba(0,0,0,.65); color: #fff; font-size: .62rem; font-weight: 700; letter-spacing: .05em;
-              padding: .15rem .5rem; border-radius: 999px; }
-  .cam-live::before { content: ''; width: .45rem; height: .45rem; border-radius: 50%; background: #ef4444; box-shadow: 0 0 6px #ef4444; }
-  .cam-viewers { position: absolute; right: .5rem; bottom: .5rem; z-index: 2; background: rgba(0,0,0,.7); color: #fff;
-                 font-size: .7rem; padding: .12rem .45rem; border-radius: .35rem; }
-  .cam-provider { position: absolute; left: .5rem; bottom: .5rem; z-index: 2; max-width: 48%; background: rgba(0,0,0,.6);
-                  border-radius: .35rem; padding: .15rem .4rem; color: #fff; font-size: .65rem; line-height: 1.2;
+  .cam-live { position: absolute; top: .4rem; left: .4rem; display: flex; align-items: center; gap: .3rem; z-index: 2;
+              background: rgba(0,0,0,.65); color: #fff; font-size: .58rem; font-weight: 700; letter-spacing: .05em;
+              padding: .12rem .45rem; border-radius: 999px; }
+  .cam-live::before { content: ''; width: .4rem; height: .4rem; border-radius: 50%; background: #ef4444; box-shadow: 0 0 5px #ef4444; }
+  .cam-viewers { position: absolute; right: .4rem; bottom: .4rem; z-index: 2; background: rgba(0,0,0,.7); color: #fff;
+                 font-size: .65rem; padding: .1rem .4rem; border-radius: .3rem; }
+  .cam-provider { position: absolute; left: .4rem; bottom: .4rem; z-index: 2; max-width: 48%; background: rgba(0,0,0,.6);
+                  border-radius: .3rem; padding: .12rem .35rem; color: #fff; font-size: .6rem; line-height: 1.2;
                   display: flex; align-items: center; }
-  .cam-provider img { height: 1.1rem; width: auto; max-width: 100%; object-fit: contain; display: block; }
-  .cam-info { padding: .6rem .75rem .7rem; }
-  .cam-name { font-weight: 600; font-size: .88rem; color: #e7eefb; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .cam-name small { color: #8ea0bd; font-weight: 500; margin-left: .35rem; }
-  .cam-sub { margin-top: .22rem; font-size: .72rem; color: #8ea0bd; display: flex; align-items: center; gap: .4rem; min-width: 0; }
-  .cam-sub img { width: 16px; height: 12px; object-fit: cover; border-radius: 2px; flex: 0 0 auto; }
+  .cam-provider img { height: 1rem; width: auto; max-width: 100%; object-fit: contain; display: block; }
+  .cam-info { padding: .5rem .65rem .6rem; }
+  .cam-name { font-weight: 600; font-size: .82rem; color: #e7eefb; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cam-name small { color: #8ea0bd; font-weight: 500; margin-left: .3rem; }
+  .cam-sub { margin-top: .2rem; font-size: .68rem; color: #8ea0bd; display: flex; align-items: center; gap: .35rem; min-width: 0; }
+  .cam-sub img { width: 14px; height: 11px; object-fit: cover; border-radius: 2px; flex: 0 0 auto; }
   .cam-sub span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  @media (max-width: 700px) {
-    .cams-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .6rem; padding: .8rem; }
-    .cam-info { padding: .5rem .6rem .6rem; }
-    .cam-name { font-size: .8rem; }
-    .cam-viewers { font-size: .62rem; }
-  }
-  .cams-chips { display: flex; flex-wrap: wrap; gap: .4rem; padding: .7rem 1.4rem 0; }
-  .cams-chips .cam-chip { cursor: pointer; user-select: none; font-size: .74rem; color: #b6c3dc; background: #171d28;
-    border: 1px solid #2a3347; border-radius: 999px; padding: .28rem .7rem; transition: .12s; }
+  .cams-chips { display: flex; flex-wrap: wrap; gap: .35rem; padding: .6rem 1rem 0; }
+  .cams-chips .cam-chip { cursor: pointer; user-select: none; font-size: .7rem; color: #b6c3dc; background: #171d28;
+    border: 1px solid #2a3347; border-radius: 999px; padding: .25rem .65rem; transition: .12s; }
   .cams-chips .cam-chip:hover { filter: brightness(1.25); }
   .cams-chips .cam-chip.active { background: #2b3556; color: #fff; border-color: #7c8af8; }
-  .cams-chips .cam-chip small { opacity: .65; margin-left: .3rem; }
-  .cam-tagline { margin-top: .22rem; font-size: .68rem; color: #6f7f9c; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .cams-empty { grid-column: 1 / -1; padding: 2rem; text-align: center; color: #7a8aaa; }
+  .cams-chips .cam-chip small { opacity: .65; margin-left: .25rem; }
+  .cam-tagline { margin-top: .2rem; font-size: .65rem; color: #6f7f9c; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cams-empty { grid-column: 1 / -1; padding: 1.5rem; text-align: center; color: #7a8aaa; }
   .cam-thumb .cam-img { opacity: 0; transition: opacity .35s ease; z-index: 0; }
   .cam-thumb .cam-img.ready { opacity: 1; }
-  .cam-ph { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 2.6rem;
+  .cam-ph { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 2.2rem;
     font-weight: 700; color: #3d4c6e; text-transform: uppercase; background: linear-gradient(135deg, #111726, #1b2338); }
   .cam-thumb.loading::before { content: ''; position: absolute; inset: 0; z-index: 1; transform: translateX(-100%);
     background: linear-gradient(90deg, transparent, rgba(255,255,255,.07), transparent); animation: camShimmer 1.3s infinite; }
   @keyframes camShimmer { to { transform: translateX(100%); } }
   .cams-sentinel { width: 100%; height: 1px; }
-  .cams-loading { display: flex; align-items: center; gap: .6rem; }
+  .cams-loading { display: flex; align-items: center; gap: .5rem; }
   .chan-thumb { background: radial-gradient(circle at 50% 40%, #1d2740, #0d121d 75%); }
-  .chan-thumb .cam-img { object-fit: contain; padding: 12%; box-sizing: border-box; }
+  .chan-thumb .cam-img { object-fit: contain; padding: 10%; box-sizing: border-box; }
   .chan-card .cam-name { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-  .cams-more { display: flex; flex-direction: column; align-items: center; gap: .5rem; padding: .4rem 0 1.6rem; color: #7a8aaa; font-size: .75rem; }
-  .cams-error { padding: 2.2rem 1.4rem; text-align: center; color: #fca5a5; }
-  .cams-error details { margin: 1rem auto 0; max-width: 46rem; text-align: left; color: #8ea0bd; font-size: .72rem; }
-  .cams-error pre { white-space: pre-wrap; word-break: break-word; background: #0f1420; border: 1px solid #232b3b; border-radius: .6rem; padding: .7rem .9rem; }
+  .cams-more { display: flex; flex-direction: column; align-items: center; gap: .4rem; padding: .4rem 0 1.2rem; color: #7a8aaa; font-size: .7rem; }
+  .cams-error { padding: 1.8rem 1rem; text-align: center; color: #fca5a5; }
+  .cams-error details { margin: .8rem auto 0; max-width: 40rem; text-align: left; color: #8ea0bd; font-size: .68rem; }
+  .cams-error pre { white-space: pre-wrap; word-break: break-word; background: #0f1420; border: 1px solid #232b3b; border-radius: .5rem; padding: .6rem .8rem; }
 
-  .card { background: #171d28; border: 1px solid #232b3b; border-radius: 1rem;
+  .card { background: #171d28; border: 1px solid #232b3b; border-radius: .8rem;
           overflow: hidden; transition: .15s; display: block; cursor: pointer;
           text-decoration: none; color: inherit; }
-  .card:hover { transform: translateY(-3px); border-color: #4a5b7d;
-                box-shadow: 0 12px 24px -10px #000000aa; }
+  .card:hover { transform: translateY(-2px); border-color: #4a5b7d;
+                box-shadow: 0 8px 16px -8px #000000aa; }
 
   .card .thumb { aspect-ratio: 16/9; background: #0b0e14; overflow: hidden;
                  position: relative; }
@@ -192,11 +198,11 @@
                      object-fit: cover; display: block; background: #000; }
   .card .thumb img  { z-index: 1; }
 
-  .info { padding: .75rem .85rem .9rem; }
-  .title { font-size: .85rem; font-weight: 600; line-height: 1.35; margin-bottom: .4rem;
+  .info { padding: .6rem .7rem .7rem; }
+  .title { font-size: .8rem; font-weight: 600; line-height: 1.3; margin-bottom: .3rem;
            color: #e2eafc; display: -webkit-box; -webkit-line-clamp: 2;
            -webkit-box-orient: vertical; overflow: hidden; }
-  .meta { display: flex; flex-wrap: wrap; gap: .35rem .7rem; font-size: .65rem;
+  .meta { display: flex; flex-wrap: wrap; gap: .3rem .6rem; font-size: .6rem;
           color: #8a9cc0; align-items: center; }
 
   .empty { text-align: center; padding: 4rem 2rem; color: #7a8aaa;
@@ -231,28 +237,34 @@
   .cat-skeleton-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-    gap: 1rem;
-    padding: .5rem 1.4rem 1.5rem;
+    gap: .8rem;
+    padding: .5rem 1rem 1.5rem;
+  }
+  @media (min-width: 1400px) {
+    .cat-skeleton-grid { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+  }
+  @media (max-width: 768px) {
+    .cat-skeleton-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .6rem; padding: .6rem .8rem 1.5rem; }
   }
   .cat-skeleton-card {
     background: #161d2b;
     border: 1px solid #1e2738;
-    border-radius: 12px;
+    border-radius: .8rem;
     overflow: hidden;
     animation: catPulse 1.4s ease-in-out infinite;
   }
   .cat-skeleton-thumb {
-    height: 130px;
+    height: 120px;
     background: linear-gradient(90deg, #1e2738 0%, #27324a 50%, #1e2738 100%);
     background-size: 200% 100%;
   }
-  .cat-skeleton-body { padding: .65rem .8rem .9rem; }
+  .cat-skeleton-body { padding: .55rem .7rem .8rem; }
   .cat-skeleton-line {
-    height: 10px;
+    height: 9px;
     background: linear-gradient(90deg, #1e2738 0%, #27324a 50%, #1e2738 100%);
     background-size: 200% 100%;
-    border-radius: 6px;
-    margin-bottom: .45rem;
+    border-radius: 5px;
+    margin-bottom: .4rem;
   }
   .cat-skeleton-line.short { width: 55%; }
   @keyframes catPulse {
@@ -635,8 +647,14 @@
   .studio-list.series-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 1rem;
-    padding: 1.2rem 1.4rem;
+    gap: .8rem;
+    padding: .8rem 1rem;
+  }
+  @media (min-width: 1400px) {
+    .studio-list.series-grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+  }
+  @media (max-width: 768px) {
+    .studio-list.series-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .6rem; padding: .6rem .8rem; }
   }
   .studio-list.series-grid > .loading-row-slot,
   .studio-list.series-grid > .loading-row,
@@ -648,7 +666,7 @@
   .series-card {
     background: #171d28;
     border: 1px solid #232b3b;
-    border-radius: 1rem;
+    border-radius: .8rem;
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -658,9 +676,9 @@
     transition: .15s;
   }
   .series-card:hover {
-    transform: translateY(-3px);
+    transform: translateY(-2px);
     border-color: #4a5b7d;
-    box-shadow: 0 12px 24px -10px #000000aa;
+    box-shadow: 0 8px 16px -8px #000000aa;
   }
   .series-card .series-thumb {
     aspect-ratio: 16/9;
@@ -673,7 +691,7 @@
     object-fit: cover; display: block; background: #000;
   }
   .series-card .series-body {
-    padding: .75rem .85rem .9rem;
+    padding: .6rem .7rem .7rem;
     display: flex;
     flex-direction: column;
     gap: .55rem;
@@ -2231,6 +2249,41 @@ window.addEventListener('popstate', (e) => {
   if (goingBack && !(mainPlayer && mainPlayer.classList.contains('active')) && (sectionMenuOpen || isSectionRootState(currentNavState(true)))) {
     // Back on a section's main page does not walk through the history: it asks where to go (other sections, or Exit).
     // The Back is undone by putting the same page on top of the history again - nothing is re-rendered, nothing moves.
+    
+    // Check if there's a search keyword in any section-specific search input
+    const catalogInput = document.getElementById('catalogSearchInput');
+    const categoryInput = document.getElementById('categorySearchInput');
+    const tagInput = document.getElementById('tagSearchInput');
+    const studioInput = document.getElementById('studioSearchInput');
+    
+    const hasSearch = (catalogInput && catalogInput.value.trim()) ||
+                      (categoryInput && categoryInput.value.trim()) ||
+                      (tagInput && tagInput.value.trim()) ||
+                      (studioInput && studioInput.value.trim());
+    
+    if (hasSearch) {
+      // First back press: clear search and push new state without showing menu
+      if (catalogInput) { catalogInput.value = ''; catalogInput._hadText = false; }
+      if (categoryInput) { categoryInput.value = ''; categoryInput._hadText = false; }
+      if (tagInput) { tagInput.value = ''; tagInput._hadText = false; }
+      if (studioInput) { studioInput.value = ''; studioInput._hadText = false; }
+      
+      // Trigger the filter update
+      if (catalogInput) catalogInput.dispatchEvent(new Event('input'));
+      if (categoryInput) categoryInput.dispatchEvent(new Event('input'));
+      if (tagInput) tagInput.dispatchEvent(new Event('input'));
+      if (studioInput) studioInput.dispatchEvent(new Event('input'));
+      
+      const keep = { ...currentNavState(true), ts: Date.now(), sid: NAV_SID, idx: fromIdx };
+      navIdx = fromIdx;
+      navSilent = true;
+      forgetEntryScrollFrom(fromIdx + 1);
+      try { history.pushState(keep, '', stateToHash(keep)); } catch (_) {}
+      setTimeout(() => { navSilent = false; }, 90);
+      return;
+    }
+    
+    // Second back press (no search): show the "Where to?" menu
     const keep = { ...currentNavState(true), ts: Date.now(), sid: NAV_SID, idx: fromIdx };
     navIdx = fromIdx;
     navSilent = true;
@@ -3768,8 +3821,11 @@ function mixStateFor(tabKey) {
 function mixScope(ss) {
   let groups = ss.groups;
   if (ss.filter) {
-    if (ss.filter === 'general' || ss.filter === 'bdsm') {
+    if (ss.filter === 'general') {
       groups = groups.filter(g => g.feedId === ss.filter);
+    } else if (ss.filter === 'bdsm') {
+      // Show bdsm-tagged videos from all sites + bdsm hole entirely
+      groups = groups.filter(g => g.feedId === ss.filter || g.sourceId === 'bdsmhole');
     } else {
       groups = groups.filter(g => g.sourceId === ss.filter);
     }
@@ -3787,9 +3843,11 @@ function applyMixFilter(grid, ss) {
   const f = ss.filter || null;
   grid.querySelectorAll('.card').forEach(c => {
     const ok = !f ||
-      ((f === 'general' || f === 'bdsm')
+      (f === 'general'
         ? c.getAttribute('data-feed') === f
-        : c.getAttribute('data-source-id') === f);
+        : f === 'bdsm'
+          ? c.getAttribute('data-feed') === f || c.getAttribute('data-source-id') === 'bdsmhole'
+          : c.getAttribute('data-source-id') === f);
     c.classList.toggle('filtered-out', !ok);
   });
 }
@@ -4585,15 +4643,13 @@ async function openCategories(forceRefresh = false, opts = {}) {
   if (busy) return;
   busy = true;
   if (categoriesBtn) categoriesBtn.disabled = true;
-  setStatus('Loading Superporn + BDSMHole categories…', true);
-  showSectionLoading('categories', { kind: 'categories' });
+  setStatus('Loading categories…', true);
 
   try {
     const merged = [];
     const seen = new Set();
     const nextBySource = {};
     let anyError = null;
-    const loaded = {};
 
     await Promise.all(COMBINED_CATEGORY_SOURCES.map(async (src) => {
       try {
@@ -4606,20 +4662,14 @@ async function openCategories(forceRefresh = false, opts = {}) {
         const json = await res.json();
         if (json.error) throw new Error(json.error);
         nextBySource[src.id] = json.next_page || '';
-        let n = 0;
         for (const c of (json.categories || [])) {
           const key = (c.link || '').split('?')[0];
           if (!key || isAllVideosLink(key) || seen.has(key)) continue;
           seen.add(key);
           merged.push({ ...c, sourceId: src.id });
-          n++;
         }
-        loaded[src.name] = n;
-        setStatus(`Loading categories… ${escapeHtml(src.name)} ✓ (${n})`, true);
       } catch (err) {
         anyError = err;
-        loaded[src.name] = 'error';
-        setStatus(`Loading categories… ${escapeHtml(src.name)} ✗`, true);
       }
     }));
 
@@ -5923,12 +5973,13 @@ function catalogCardHtml(c, kind) {
   const ph = c.thumbnail ? escapeHtml(c.thumbnail)
     : 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
   const feed = feedOfSource(c.sourceId);
+  const label = c.members ? (c.group === 'bdsm' ? 'BDSM' : 'General Porn') : escapeHtml(feed.name);
   return `<a class="card category-card${kind === 'pornstars' ? ' portrait' : ''}" href="#" data-link="${escapeHtml(c.link)}"
              data-name="${escapeHtml(c.name || '')}" data-source-id="${escapeHtml(c.sourceId)}"
              data-group="${escapeHtml(c.group || '')}"${c.members ? ` data-members="${escapeHtml(JSON.stringify(c.members))}"` : ''} title="${name}">
     <div class="thumb"${c.thumbnail ? ` style="--bg:url(&quot;${ph}&quot;)"` : ''}>
       <img src="${ph}" loading="lazy" decoding="async" alt="${name}" referrerpolicy="no-referrer" onerror="this.style.opacity=0">
-      <span class="site-label s-${escapeHtml(feed.id)}">${c.members ? `🔗 ${c.members.length} sites` : escapeHtml(feed.name)}</span>
+      <span class="site-label s-${escapeHtml(feed.id)}">${label}</span>
     </div>
     <div class="info"><div class="title">${name}</div>${c.video_count ? `<div class="meta">${Number(c.video_count).toLocaleString()} videos</div>` : ''}</div>
   </a>`;
@@ -6140,7 +6191,6 @@ async function openCatalog(kind, opts = {}) {
   if (busy) return;
   busy = true;
   setStatus(`Loading ${cfg.title}…`, true);
-  showSectionLoading(cfg.title);
   const st = catalogState[kind] = {
     items: [], seen: new Set(), next: {}, pages: {}, filter: (have && have.filter) || 'all',
     q: '', loading: false, done: false, errors: [], searchToken: 0,
@@ -7908,6 +7958,15 @@ async function goHome(forceRefresh = false, startJourney = false) {
   const hs = mixStates.get(ALL_FEED.id);
   if (hs) hs.filter = null;
   searchInput.value = '';
+  // Clear all section-specific search inputs when returning to home
+  const catalogInput = document.getElementById('catalogSearchInput');
+  if (catalogInput) { catalogInput.value = ''; catalogInput._hadText = false; }
+  const categoryInput = document.getElementById('categorySearchInput');
+  if (categoryInput) { categoryInput.value = ''; categoryInput._hadText = false; }
+  const tagInput = document.getElementById('tagSearchInput');
+  if (tagInput) { tagInput.value = ''; tagInput._hadText = false; }
+  const studioInput = document.getElementById('studioSearchInput');
+  if (studioInput) { studioInput.value = ''; studioInput._hadText = false; }
   const wasHome = activeTab === mixKey(ALL_FEED.id) && !!hs;
   if (wasHome && !forceRefresh) {
     resetMainPlayer();
