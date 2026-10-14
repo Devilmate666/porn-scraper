@@ -1641,6 +1641,8 @@ let activeSourceId = SOURCES[0].id; // real site id (used by categories)
 let activeFeedId = ALL_FEED.id;     // home feed id
 let busy = false;
 let activeTab = null;
+let catSearchToken = 0;          // category search cancellation token (bindCombinedCategorySearch increments it)
+let catSearchActive = 0;         // the token of the search currently in flight (0 = none)
 
 const siteData = new Map();
 const siteState = new Map();
@@ -5477,11 +5479,12 @@ function bindCombinedCategorySearch() {
       runLive();
       return;
     }
-    searchCategoriesByName(q);
+    searchCategoriesByName(q, ++catSearchToken);
   };
 
   // Typing = instant local filter. The deep website search waits for the user to pause
   // (600ms) and only kicks in once a real keyword is on the table (3+ chars).
+  // Every new keystroke cancels any search that is still running for the previous keyword.
   input.addEventListener('input', () => {
     clearTimeout(input._catTimer);
     clearTimeout(input._catDeep);
@@ -5502,6 +5505,8 @@ function bindCombinedCategorySearch() {
       input.value = '';
       clearTimeout(input._catTimer);
       clearTimeout(input._catDeep);
+      catSearchToken++;          // abort any in-flight search
+      catSearchActive = 0;       // release the search slot so a new search can start
       runLive();
     }
   });
@@ -5517,19 +5522,19 @@ function bindCombinedCategorySearch() {
  * (not only categories already loaded in the grid).
  * Stays on the Categories view — does not open video results.
  */
-async function searchCategoriesByName(query) {
-  if (busy) return;
+async function searchCategoriesByName(query, token) {
+  if (token) catSearchActive = token;          // a new search is starting: claim the slot
+  else if (catSearchActive) return;            // no token supplied and one is already running
   const q = (query || '').trim();
-  if (!q) return;
+  if (!q) { catSearchActive = 0; return; }
   const slug = toSlug(q);
   const filter = categoriesState.filterSource || 'all';
 
   const sources = COMBINED_CATEGORY_SOURCES.filter(
     s => filter === 'all' || feedOfSource(s.id).id === filter
   );
-  if (!sources.length) return;
+  if (!sources.length) { catSearchActive = 0; return; }
 
-  busy = true;
   if (categoriesBtn) categoriesBtn.disabled = true;
   setStatus(`Searching categories for “${q}”…`, true);
 
@@ -5568,6 +5573,7 @@ async function searchCategoriesByName(query) {
     pill.innerHTML = `<span style="color:${color}">${icon}</span> ${escapeHtml(src.name)}${detail ? ' · ' + escapeHtml(detail) : ''}`;
   };
 
+  const isStale = () => catSearchActive !== token;
   const found = new Map();
 
   try {
@@ -5610,6 +5616,7 @@ async function searchCategoriesByName(query) {
       markSource(src, 'loading');
       let pageUrl = src.indexUrl;
       for (let i = 0; i < maxPages && pageUrl; i++) {
+        if (isStale()) return;
         try {
           const res = await fetch('/api/scrape-categories', {
             method: 'POST',
@@ -5644,6 +5651,14 @@ async function searchCategoriesByName(query) {
       markSource(src, matches ? 'done' : 'fail', `${matches} match${matches !== 1 ? 'es' : ''}`);
     }));
 
+    // If the user typed again while we were walking, discard these results
+    if (isStale()) {
+      if (banner) banner.remove();
+      catSearchActive = 0;
+      if (categoriesBtn) categoriesBtn.disabled = false;
+      return;
+    }
+
     // Merge finds into master list
     for (const cat of found.values()) {
       const key = (cat.link || '').split('?')[0];
@@ -5663,6 +5678,15 @@ async function searchCategoriesByName(query) {
     // (or hide the search bar of the feed they opened).
     categoriesState.nameQuery = q;
     if (activeTab === CATEGORIES_TAB) {
+      // renderCategories() rebuilds the grid and re-creates the search input, which would
+      // steal focus mid-typing. Remember the focused element + caret so we can hand it back.
+      const focusedTag = document.activeElement && document.activeElement.tagName;
+      const focusedId = (document.activeElement && document.activeElement.id) || null;
+      const selStart = (document.activeElement && 'selectionStart' in document.activeElement)
+        ? document.activeElement.selectionStart : null;
+      const selEnd = (document.activeElement && 'selectionEnd' in document.activeElement)
+        ? document.activeElement.selectionEnd : null;
+
       const data = {
         categories: (categoriesState.categories || []).slice(),
         count: (categoriesState.categories || []).length,
@@ -5678,6 +5702,17 @@ async function searchCategoriesByName(query) {
       applyCategorySourceFilter(filter);
       applyCategoryNameFilter();
 
+      // Restore focus + caret so typing continues uninterrupted. Defer so the browser
+      // has finished the innerHTML rebuild before we grab the new input node.
+      if (focusedId === 'categorySearchInput' && input) {
+        requestAnimationFrame(() => {
+          input.focus();
+          if (selStart != null && selEnd != null) {
+            try { input.setSelectionRange(selStart, selEnd); } catch (_) {}
+          }
+        });
+      }
+
       setStatus(
         found.size
           ? `Categories — ${found.size} match${found.size !== 1 ? 'es' : ''} for “${q}”`
@@ -5686,19 +5721,23 @@ async function searchCategoriesByName(query) {
       );
     }
   } catch (err) {
+    if (isStale()) { catSearchActive = 0; if (categoriesBtn) categoriesBtn.disabled = false; return; }
     setStatus(`Category search error: ${err.message}`, false);
   } finally {
-    if (banner) {
-      // Leave a one-line summary for a moment instead of vanishing instantly
-      const summary = banner.querySelector(':scope > div:first-child');
-      if (summary) {
-        summary.innerHTML = `<span style="color:#9aa9c1;">Search complete · ${found.size} match${found.size !== 1 ? 'es' : ''} for “${escapeHtml(q)}”</span>`;
+    if (!isStale()) {
+      if (banner) {
+        // Leave a one-line summary for a moment instead of vanishing instantly
+        const summary = banner.querySelector(':scope > div:first-child');
+        if (summary) {
+          summary.innerHTML = `<span style="color:#9aa9c1;">Search complete · ${found.size} match${found.size !== 1 ? 'es' : ''} for “${escapeHtml(q)}”</span>`;
+        }
+        const progress = banner.querySelector('.cat-src-progress');
+        if (progress) progress.innerHTML = '';
+        setTimeout(() => banner.remove(), 1500);
       }
-      banner.querySelector('.cat-src-progress').innerHTML = '';
-      setTimeout(() => banner.remove(), 1500);
+      catSearchActive = 0;
+      if (categoriesBtn) categoriesBtn.disabled = false;
     }
-    busy = false;
-    if (categoriesBtn) categoriesBtn.disabled = false;
   }
 }
 
