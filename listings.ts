@@ -39,7 +39,7 @@ function cleanCategoryName(text?: string | null): string | null {
 
 function imgUrl(img: HTMLElement | null | undefined, base: string): string | null {
   if (!img) return null;
-  for (const a of ["data-src", "data-original", "data-lazy-src", "data-webp", "data-thumb", "data-savepage-src", "src"]) {
+  for (const a of ["data-src", "data-original", "data-lazy-src", "data-webp", "data-thumb", "data-img", "data-savepage-src", "src"]) {
     const v = attr(img, a).trim();
     if (v && !v.startsWith("data:")) return absUrl(base, v);
   }
@@ -511,11 +511,91 @@ export async function scrapeModels(url: string, pageNum: number | null = null): 
   return out;
 }
 
+// ------------------------------------------------------------------ superporn pornstars
+/** Superporn /pornstars?page=N - one <a href="/pornstar/<slug>"> per star: thumbnail + "Name Name 102 videos". */
+function superpornPornstars(root: HTMLElement, base: string, max = 200): any[] {
+  const host = new URL(base).host;
+  const out: any[] = [], seen = new Set<string>();
+  for (const a of root.querySelectorAll("a[href]")) {
+    const link = absUrl(base, attr(a, "href").split("#")[0]);
+    if (!link) continue;
+    let p: URL;
+    try { p = new URL(link); } catch { continue; }
+    if (host && p.host !== host) continue;
+    if (!/^\/pornstar\/[^/?#]+\/?$/i.test(p.pathname)) continue;
+    const key = noQuery(link).replace(/\/+$/, "");
+    if (seen.has(key)) continue;
+    const txt = collapse(a.text || "");
+    const m = txt.match(COUNT_TAIL);
+    const img = a.querySelector("img");
+    const name = cleanCategoryName(collapseRepeat((m && m.index !== undefined ? txt.slice(0, m.index) : txt).trim()))
+      || cleanCategoryName(img ? attr(img, "alt") : null) || cleanCategoryName(titleFromUrl(link));
+    if (!name) continue;
+    seen.add(key);
+    out.push({ name, link, thumbnail: imgUrl(img, base) || findThumbnail(a, base), video_count: m ? countOf(m[1]) : null, uid: hash12(link) });
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+export async function scrapeSuperpornPornstars(url: string, pageNum: number | null = null): Promise<any> {
+  const got: any = await pageOrError(url, 25000, { page: url, categories: [], models: [], count: 0, next_page: null, page_num: pageNum || currentPageNumber(url), kind: "pornstars" });
+  if (got.error) return got;
+  const root = prepare(got.html), base = got.base;
+  const stars = superpornPornstars(root, base);
+  const pn = pageNum || currentPageNumber(base);
+  let nxt = stars.length ? findNextPageLink(root, base, new URL(base).host, root.querySelectorAll("a[href]")) : null;
+  if (nxt && currentPageNumber(nxt) <= pn) nxt = null;            // explicit pagination: never guess past the last page
+  const out: any = { page: base, page_title: titleOf(root) || base, categories: stars, models: stars, count: stars.length, next_page: nxt, next_is_guess: false, page_num: pn, kind: "pornstars" };
+  if (!stars.length) out.error = `No pornstars found in the page received (${got.html.length} bytes).`;
+  return out;
+}
+
+// ------------------------------------------------------------------ pornvideobb actors
+/** PornVideoBB /porn_actor/ - star tiles. Accepts /porn_actor/<slug>/ links as well as ?actor=... style links and ignores paging / letter links. */
+export async function scrapePornvideobbActors(url: string, pageNum: number | null = null): Promise<any> {
+  const got: any = await pageOrError(url, 25000, { page: url, categories: [], models: [], count: 0, next_page: null, page_num: pageNum || currentPageNumber(url), kind: "pornstars" });
+  if (got.error) return got;
+  const root = prepare(got.html), base = got.base, host = new URL(base).host;
+  const out: any[] = [], seen = new Set<string>();
+  for (const a of root.querySelectorAll("a[href]")) {
+    const link = absUrl(base, attr(a, "href").split("#")[0]);
+    if (!link) continue;
+    let u: URL;
+    try { u = new URL(link); } catch { continue; }
+    if (u.host !== host) continue;
+    const segs = u.pathname.split("/").filter(Boolean);
+    const first = (segs[0] || "").toLowerCase();
+    const isActor = /^(?:porn[_-]?actors?|actors?|pornstars?|zone_actor)$/.test(first);
+    const byPath = isActor && segs.length >= 2 && !/^(?:page|letter|alphabet|\d+)$/i.test(segs[1]);
+    const byQuery = (first === "zone_video" || isActor) && [...u.searchParams.keys()].some((k) => /^(?:actor|star|pornstar|model)$/i.test(k));
+    if (!byPath && !byQuery) continue;
+    if (seen.has(link)) continue;
+    const img = a.querySelector("img");
+    const qsName = [...u.searchParams.entries()].find(([k, v]) => /^(?:actor|star|pornstar|model)$/i.test(k) && v)?.[1] || "";
+    const name = cleanCategoryName(qsName || attr(a, "title") || textOf(a) || (img ? attr(img, "alt") : "").replace(/^\s*porn\s*stars?\s+/i, "") || segs[1] || "");
+    if (!name) continue;
+    seen.add(link);
+    const th = imgUrl(img, base);
+    out.push({ name, link, thumbnail: th ? th.replace(/ /g, "%20") : null, video_count: null, uid: hash12(link) });
+    if (out.length >= 300) break;
+  }
+  const pn = pageNum || currentPageNumber(base);
+  let nxt = out.length ? findNextPageLink(root, base, host, root.querySelectorAll("a[href]")) : null;
+  const explicit = !!nxt;
+  if (nxt && currentPageNumber(nxt) <= pn) nxt = null;            // explicit pagination (?gender=&page=N): never guess past the last page
+  const res: any = { page: base, page_title: titleOf(root) || base, categories: out, models: out, count: out.length, next_page: nxt, next_is_guess: !!nxt && !explicit, page_num: pn, kind: "pornstars" };
+  if (!out.length) res.error = `No stars found in the page received (${got.html.length} bytes).`;
+  return res;
+}
+
 // ------------------------------------------------------------------ dispatcher = Flask /api/scrape-categories
 export async function scrapeListing(url: string, mode: string | undefined, pageNum: number | null): Promise<any> {
   let host = "", path = "/";
   try { const p = new URL(url.includes("://") ? url : "https://" + url); host = p.hostname.toLowerCase(); path = (p.pathname || "/").toLowerCase(); } catch { /* keep */ }
-  if (mode === "models" || mode === "pornstars" || (host.endsWith("freesexvideos.xxx") && path.startsWith("/models")) || (host.endsWith("pornvideobb.com") && /^\/porn[_-]actors?(\/|$)/.test(path)) || (host.endsWith("bdsmhole.com") && /^\/pornstars(\/|$)/.test(path))) return scrapeModels(url, pageNum);
+  if (host.endsWith("superporn.com") && /^\/pornstars(\/\d+)?\/?$/.test(path)) return scrapeSuperpornPornstars(url, pageNum);
+  if (host.endsWith("pornvideobb.com") && /^\/porn[_-]actors?(\/|$)/.test(path)) return scrapePornvideobbActors(url, pageNum);
+  if (mode === "models" || mode === "pornstars" || (host.endsWith("freesexvideos.xxx") && path.startsWith("/models")) || (host.endsWith("bdsmhole.com") && /^\/pornstars(\/|$)/.test(path))) return scrapeModels(url, pageNum);
   if (host.endsWith("superporn.com") && /^\/categories(\/\d+)?\/?$/.test(path)) return scrapeSuperpornCategories(url, pageNum);
   if (host.endsWith("pornvideobb.com") && path.startsWith("/tags")) return scrapePornvideobbTags(url);
   if (mode === "sites" || (host.endsWith("freesexvideos.xxx") && /^\/sites(\/\d+)?\/?$/.test(path))) return scrapeStudioSections(url);

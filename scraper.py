@@ -1335,7 +1335,7 @@ def _clean_video_count(text):
     return int(m.group(1).replace(",", "")) if m else None
 
 _LAZY_IMG_ATTRS = ("data-src", "data-original", "data-lazy-src", "data-webp",
-                   "data-thumb", "data-savepage-src", "src")
+                   "data-thumb", "data-img", "data-savepage-src", "src")
 
 def _img_url(img, base):
     """Real image URL of a (possibly lazy-loaded) <img>; ignores data: placeholders."""
@@ -1694,6 +1694,150 @@ def scrape_models(url: str = "https://www.freesexvideos.xxx/models/", max_items:
            "page_num": pn, "kind": "pornstars"}
     if not models:
         out["error"] = f"No models found in the page the server received ({len(html)} bytes)."
+    return out
+
+
+# ----------------------------------------------------------------
+# PORNSTARS - Superporn (/pornstars?page=N) and PornVideoBB (/porn_actor/)
+# Same output shape as scrape_models(), so the Pornstars tab renders them unchanged.
+# ----------------------------------------------------------------
+_SP_STAR_PATH = re.compile(r"^/pornstar/([^/?#]+)/?$", re.I)
+
+def _extract_superporn_pornstars(soup, base, max_items=200):
+    """Superporn star tile = ONE <a href="/pornstar/<slug>"> holding thumbnail + 'Name Name 102 videos'."""
+    host = urlparse(base).netloc
+    out, seen = [], set()
+    for a in soup.find_all("a", href=True):
+        link = urljoin(base, a["href"].split("#")[0])
+        p = urlparse(link)
+        if host and p.netloc != host:
+            continue
+        if not _SP_STAR_PATH.match(p.path or ""):
+            continue
+        key = link.split("?")[0].rstrip("/")
+        if key in seen:
+            continue
+        txt = a.get_text(" ", strip=True)
+        m = _COUNT_TAIL.search(txt)
+        img = a.find("img")
+        name = _clean_category_name(_collapse_repeat((txt[:m.start()] if m else txt).strip())) \
+            or _clean_category_name(img.get("alt") if img else None) \
+            or _clean_category_name(_title_from_url(link))
+        if not name:
+            continue
+        seen.add(key)
+        out.append({
+            "name": name, "link": link,
+            "thumbnail": _img_url(img, base) or _find_thumbnail(a, base, host=host),
+            "video_count": _clean_video_count(m.group(1)) if m else None,
+            "uid": hashlib.md5(link.encode("utf-8")).hexdigest()[:12],
+        })
+        if len(out) >= max_items:
+            break
+    return out
+
+
+def scrape_superporn_pornstars(url: str = "https://www.superporn.com/pornstars",
+                               max_items: int = 200, page_num=None):
+    try:
+        html, base = fetch_html(url, timeout=25.0)
+    except Exception as e:
+        return {"page": url, "categories": [], "models": [], "count": 0, "error": str(e),
+                "next_page": None, "page_num": page_num or _current_page_number(url),
+                "kind": "pornstars"}
+    soup = BeautifulSoup(html, "lxml")
+    stars = _extract_superporn_pornstars(soup, base, max_items=max_items)
+    pn = page_num or _current_page_number(base)
+    # Pagination is explicit on this site (1 2 3 ... Next >). Never guess past the last page.
+    nxt = _find_next_page_link(soup, base, urlparse(base).netloc) if stars else None
+    if nxt and _current_page_number(nxt) <= pn:
+        nxt = None
+    title = soup.title.string.strip() if soup.title and soup.title.string else base
+    out = {"page": base, "page_title": title,
+           "categories": stars, "models": stars,      # "categories" keeps the existing grid renderer working
+           "count": len(stars), "next_page": nxt, "next_is_guess": False,
+           "page_num": pn, "kind": "pornstars"}
+    if not stars:
+        out["error"] = f"No pornstars found in the page the server received ({len(html)} bytes)."
+    return out
+
+
+_PVB_ACTOR_SECTIONS = re.compile(r"^(?:porn[_-]?actors?|actors?|pornstars?|zone_actor)$", re.I)
+_PVB_NOT_A_STAR = re.compile(r"^(?:page|letter|alphabet|\d+)$", re.I)
+_PVB_STAR_QS = ("actor", "star", "pornstar", "model")
+_PVB_ALT_PREFIX = re.compile(r"^\s*porn\s*stars?\s+", re.I)
+
+def _extract_pornvideobb_actors(soup, base, max_items=300):
+    """PornVideoBB /porn_actor/ list. A star tile is an image-only link
+    /zone_actor/?d=10&actor=<Name> (name lives in the query string and the img alt
+    'Porn star <Name>'; the real picture is in data-img, src is a base64 placeholder).
+    Also accepts /porn_actor/<slug>/ links, and ignores gender / A-Z / paging links."""
+    host = urlparse(base).netloc
+    out, seen = [], set()
+    for a in soup.find_all("a", href=True):
+        link = urljoin(base, a["href"].split("#")[0])
+        p = urlparse(link)
+        if host and p.netloc != host:
+            continue
+        segs = [x for x in (p.path or "/").split("/") if x]
+        first = segs[0].lower() if segs else ""
+        is_actor = bool(_PVB_ACTOR_SECTIONS.match(first))
+        qs = dict(parse_qsl(p.query))
+        qs_name = next((qs[k] for k in qs if k.lower() in _PVB_STAR_QS and qs[k]), "").strip()
+        by_path = is_actor and len(segs) >= 2 and not _PVB_NOT_A_STAR.match(segs[1])
+        by_query = (first == "zone_video" or is_actor) and bool(qs_name)
+        if not (by_path or by_query):
+            continue
+        key = (p.path.lower(), qs_name.lower()) if qs_name else link
+        if key in seen:
+            continue
+        txt = a.get_text(" ", strip=True)
+        m = _COUNT_TAIL.search(txt)
+        img = a.find("img")
+        alt = _PVB_ALT_PREFIX.sub("", (img.get("alt") if img else "") or "")
+        slug = segs[1].replace("-", " ").replace("_", " ") if len(segs) > 1 else ""
+        name = _clean_category_name(qs_name) \
+            or _clean_category_name(a.get("title")) \
+            or _clean_category_name(txt[:m.start()] if m else txt) \
+            or _clean_category_name(alt) \
+            or _clean_category_name(slug)
+        if not name:
+            continue
+        seen.add(key)
+        thumb = _img_url(img, base) or _find_thumbnail(a, base, host=host)
+        out.append({
+            "name": _collapse_repeat(name), "link": link,
+            "thumbnail": thumb.replace(" ", "%20") if thumb else None,   # their image names contain spaces
+            "video_count": _clean_video_count(m.group(1)) if m else None,
+            "uid": hashlib.md5(link.encode("utf-8")).hexdigest()[:12],
+        })
+        if len(out) >= max_items:
+            break
+    return out
+
+
+def scrape_pornvideobb_actors(url: str = "https://2023.pornvideobb.com/porn_actor/",
+                              max_items: int = 300, page_num=None):
+    try:
+        html, base = fetch_html(url, timeout=25.0)
+    except Exception as e:
+        return {"page": url, "categories": [], "models": [], "count": 0, "error": str(e),
+                "next_page": None, "page_num": page_num or _current_page_number(url),
+                "kind": "pornstars"}
+    soup = BeautifulSoup(html, "lxml")
+    stars = _extract_pornvideobb_actors(soup, base, max_items=max_items)
+    pn = page_num or _current_page_number(base)
+    # Explicit pagination (?gender=&page=N, 1 2 3 ... 115). Never guess past the last page.
+    nxt = _find_next_page_link(soup, base, urlparse(base).netloc) if stars else None
+    if nxt and _current_page_number(nxt) <= pn:
+        nxt = None
+    title = soup.title.string.strip() if soup.title and soup.title.string else base
+    out = {"page": base, "page_title": title,
+           "categories": stars, "models": stars,
+           "count": len(stars), "next_page": nxt, "next_is_guess": False,
+           "page_num": pn, "kind": "pornstars"}
+    if not stars:
+        out["error"] = f"No stars found in the page the server received ({len(html)} bytes)."
     return out
 
 

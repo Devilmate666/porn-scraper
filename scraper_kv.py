@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from scraper import (
     scrape_page, scrape_categories, scrape_tags, scrape_studio_sections,
     scrape_superporn_categories, scrape_models, scrape_pornvideobb_tags,
+    scrape_superporn_pornstars, scrape_pornvideobb_actors,
     search_many, fetch_html,
     _current_page_number, _guess_next_page, _find_next_page_link,
     resolve_full_video_url,
@@ -724,6 +725,10 @@ def scrape_categories_and_cache(url: str, mode: str = "categories", page_num: in
         _host, _path = (_p.hostname or "").lower(), (_p.path or "/").lower()
         if _host.endswith("pornvideobb.com") and _path.startswith("/tags"):
             data = scrape_pornvideobb_tags(url)
+        elif _host.endswith("superporn.com") and re.match(r"^/pornstars(/\d+)?/?$", _path):
+            data = scrape_superporn_pornstars(url, page_num=page_num)
+        elif _host.endswith("pornvideobb.com") and re.match(r"^/porn[_-]actors?(/|$)", _path):
+            data = scrape_pornvideobb_actors(url, page_num=page_num)
         elif mode in ("models", "pornstars"):
             data = scrape_models(url, page_num=page_num)
         elif mode == "sites":
@@ -782,6 +787,8 @@ LISTINGS = [
     ("https://www.superporn.com/categories", "categories", 2),
     ("https://www.superporn.com/series",     "sites",      2),   # Porn Series
     ("https://www.freesexvideos.xxx/models/", "models",    3),   # Pornstars
+    ("https://www.superporn.com/pornstars",   "models",    3),   # Pornstars (Superporn)
+    ("https://2023.pornvideobb.com/porn_actor/", "models", 3),   # Pornstars (PornVideoBB)
     ("https://www.freesexvideos.xxx/sites/",  "sites",     3),   # Networks (General)
     ("https://www.bdsmhole.com/studios/",     "categories", 2),  # Networks (BDSM)
     ("https://www.bdsmhole.com/categories/",  "categories", 2),
@@ -794,6 +801,8 @@ FEED_GROUPS = [
     ("https://www.freesexvideos.xxx/sites/",  "MAX_NETWORK_FEEDS", 12),
     ("https://www.bdsmhole.com/studios/",     "MAX_BDSM_NETWORK_FEEDS", 8),
     ("https://www.freesexvideos.xxx/models/", "MAX_PORNSTAR_FEEDS", 12),
+    ("https://www.superporn.com/pornstars",   "MAX_SP_PORNSTAR_FEEDS", 8),
+    ("https://2023.pornvideobb.com/porn_actor/", "MAX_PVB_PORNSTAR_FEEDS", 8),
     ("https://www.superporn.com/series",      "MAX_SERIES_FEEDS", 6),
 ]
 

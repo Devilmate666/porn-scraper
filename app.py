@@ -27,6 +27,7 @@ from scraper import (
     scrape_many, resolve_video_url, resolve_full_video_url, search_many,
     scrape_categories, scrape_tags, scrape_studio_sections,
     scrape_superporn_categories, scrape_models, scrape_pornvideobb_tags,
+    scrape_superporn_pornstars, scrape_pornvideobb_actors,
 )
 from scraper import scrape_page, _guess_next_page, _current_page_number, fetch_html
 try:
@@ -375,6 +376,11 @@ def api_scrape_categories():
         p = urlparse(url if "://" in url else "https://" + url)
         host, path = (p.hostname or "").lower(), (p.path or "/").lower()
         # Dedicated scrapers, picked by mode or recognised from the URL itself
+        # (site-specific pornstar lists first: they win over the generic models scraper below)
+        if host.endswith("superporn.com") and re.match(r"^/pornstars(/\d+)?/?$", path):
+            return jsonify(scrape_superporn_pornstars(url, page_num=data.get("page_num")))
+        if host.endswith("pornvideobb.com") and re.match(r"^/porn[_-]actors?(/|$)", path):
+            return jsonify(scrape_pornvideobb_actors(url, page_num=data.get("page_num")))
         if mode in ("models", "pornstars") or (host.endswith("freesexvideos.xxx") and path.startswith("/models")):
             return jsonify(scrape_models(url, page_num=data.get("page_num")))
         if host.endswith("superporn.com") and re.match(r"^/categories(/\d+)?/?$", path):

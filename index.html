@@ -1540,6 +1540,7 @@ const tagMixes = new Map();   // key -> { name, members: [{ link, sid, label, ho
 const CAT_URLS = Object.assign({
   categories: 'https://www.superporn.com/categories',
   pornstars:  'https://www.freesexvideos.xxx/models/',
+  superpornPornstars: 'https://www.superporn.com/pornstars',
   studios:    'https://www.freesexvideos.xxx/sites/',
   bdsmStudios: 'https://www.bdsmhole.com/studios/',
 }, window.__CATALOG_URLS__ || {});
@@ -1569,6 +1570,7 @@ const CATALOGS = {
   pornstars: {
     tab: PORNSTARS_TAB, view: 'pornstars', icon: '⭐', title: 'Pornstars', noun: 'pornstar',
     sources: [
+      { id: 'superporn',     group: 'general', indexUrl: CAT_URLS.superpornPornstars },
       { id: 'freesexvideos', group: 'general', indexUrl: CAT_URLS.pornstars },
       { id: 'pornvideobb',   group: 'general', indexUrl: 'https://2023.pornvideobb.com/porn_actor/' },
       { id: 'bdsmhole',      group: 'bdsm',    indexUrl: 'https://www.bdsmhole.com/pornstars/' },
