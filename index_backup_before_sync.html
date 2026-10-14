@@ -1,10 +1,11 @@
 
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta name="referrer" content="no-referrer">
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Porn Archives</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23c4b5fd'/%3E%3Cstop offset='1' stop-color='%237aa9ff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='48' height='48' rx='11' fill='%230a0c10'/%3E%3Crect x='6' y='9' width='36' height='9' rx='3' fill='url(%23g)'/%3E%3Cpath d='M9 18h30v19a3 3 0 0 1-3 3H12a3 3 0 0 1-3-3z' fill='%231a2133' stroke='url(%23g)' stroke-width='2'/%3E%3Cpath d='M21 24v11l10-5.5z' fill='url(%23g)'/%3E%3C/svg%3E">
 <style>
@@ -1269,6 +1270,93 @@ body.fav-panel-open { overflow: hidden; }
 .hist-x:hover { background: #7f1d3a; border-color: #ff4d6d88; }
 .hist-x:focus-visible { outline: 2px solid #7c8af8; outline-offset: 2px; }
 
+
+/* ================= UI + PERFORMANCE ENHANCEMENTS (responsive: phone -> tablet -> desktop -> TV) ================= */
+:root { color-scheme: dark; --card-min: 160px; --gap: .9rem; --pad: 1rem; --r: 12px; --tap: 36px; --ring: #a5b4fc; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; scroll-behavior: smooth; }
+body { -webkit-tap-highlight-color: transparent; -webkit-font-smoothing: antialiased;
+  padding: max(.75rem, env(safe-area-inset-top)) max(.75rem, env(safe-area-inset-right)) max(.75rem, env(safe-area-inset-bottom)) max(.75rem, env(safe-area-inset-left)); }
+a, button, [role=button], [role=link], .card, .tab, .site-tab { touch-action: manipulation; }
+h1 { font-size: clamp(1.2rem, 1rem + 1vw, 1.9rem); letter-spacing: -.01em; }
+header { gap: .6rem; margin-bottom: 1rem; }
+.feed { border-radius: clamp(.9rem, 1.5vw, 1.4rem); }
+.feed-header { padding: .7rem clamp(.8rem, 2vw, 1.4rem); }
+
+/* --- slimmer, friendlier buttons & tabs --- */
+.tab, .site-tab, button.action, button.mix-filter-chip, .tg-chip, .cat-view-switch button {
+  padding: .4rem .85rem; min-height: var(--tap); font-size: .8rem; line-height: 1.1; border-radius: 999px;
+  display: inline-flex; align-items: center; justify-content: center; gap: .4rem; transition: background .15s, border-color .15s, transform .1s, box-shadow .15s; }
+.tabs { padding: .35rem; gap: .35rem; border-radius: 999px; }
+.site-actions, .tabs, .mix-filter-row, .tg-chips { gap: .4rem; scrollbar-width: none; }
+.site-actions::-webkit-scrollbar, .mix-filter-row::-webkit-scrollbar { display: none; }
+button:active, .tab:active, .site-tab:active, button.action:active { transform: scale(.96); }
+button.action.primary, .tab.active, .site-tab.active { box-shadow: 0 4px 14px -4px rgba(99,102,241,.55); }
+:focus-visible { outline: 3px solid var(--ring); outline-offset: 2px; border-radius: 8px; }
+input[type=search], input[type=text], .search-bar input { min-height: 40px; border-radius: 999px; padding: .45rem 1rem; }
+
+/* --- video grid: fluid columns on every screen --- */
+#results .grid, .grid { display: grid !important; grid-template-columns: repeat(auto-fill, minmax(var(--card-min), 1fr)) !important;
+  gap: var(--gap) !important; padding: var(--pad) clamp(.7rem, 2vw, 1.4rem) !important; }
+.studio-list.series-grid { grid-template-columns: repeat(auto-fill, minmax(calc(var(--card-min) + 30px), 1fr)); gap: var(--gap); }
+.cams-grid { grid-template-columns: repeat(auto-fill, minmax(calc(var(--card-min) + 30px), 1fr)); gap: var(--gap); }
+.card { border-radius: var(--r); transition: transform .18s, border-color .18s, box-shadow .18s;
+  content-visibility: auto; contain-intrinsic-size: auto 250px; }          /* PERF: off-screen cards are not laid out/painted */
+.card .thumb img { transition: opacity .25s; }
+.info { padding: .55rem .65rem .65rem; }
+.title { font-size: .82rem; line-height: 1.3; margin-bottom: .3rem; }
+@media (hover: hover) { .card:hover { transform: translateY(-3px); } }
+@media (hover: none) { .card:hover { transform: none; box-shadow: none; } .card:active { transform: scale(.98); } }
+
+/* --- touch devices: comfortable tap targets --- */
+@media (pointer: coarse) {
+  :root { --tap: 44px; }
+  .tab, .site-tab, button.action, .tg-chip, .cat-view-switch button { padding: .45rem 1rem; }
+}
+
+/* --- phones --- */
+@media (max-width: 700px) {
+  :root { --card-min: 150px; --gap: .5rem; --pad: .6rem; }
+  body { padding-left: max(.4rem, env(safe-area-inset-left)); padding-right: max(.4rem, env(safe-area-inset-right)); }
+  .feed { border-radius: .8rem; }
+  .tab, .site-tab, button.action { font-size: .78rem; padding: .35rem .75rem; }
+  .info { padding: .45rem .5rem .55rem; }
+  .title { font-size: .76rem; }
+  #favBar { padding-left: .5rem; padding-right: .5rem; }
+  #favBar button.action { padding: .35rem .6rem; font-size: .74rem; }
+}
+@media (max-width: 340px) { :root { --card-min: 100%; } }
+@media (orientation: landscape) and (max-height: 520px) { :root { --card-min: 170px; } .feed-controls-sticky { max-height: 34vh; } }
+
+/* --- tablets / laptops / desktops --- */
+@media (min-width: 701px)  { :root { --card-min: 210px; --gap: 1rem; } }
+@media (min-width: 1100px) { :root { --card-min: 240px; --gap: 1.1rem; --pad: 1.2rem; } }
+@media (min-width: 1500px) { :root { --card-min: 270px; } .app { max-width: 1900px; } #favBar .fb-row { max-width: 1900px; } }
+
+/* --- big screens & smart TVs (10-foot UI): scale everything up, wider layout, big focus rings --- */
+@media (min-width: 1920px) { html { font-size: 112.5%; } :root { --card-min: 300px; --tap: 44px; } .app { max-width: 2400px; } #favBar .fb-row { max-width: 2400px; } }
+@media (min-width: 2560px) { html { font-size: 150%; } :root { --card-min: 320px; --ring: #fde68a; } .app { max-width: 3400px; } #favBar .fb-row { max-width: 3400px; } }
+@media (min-width: 3200px) { html { font-size: 200%; } .app { max-width: 4400px; } }
+.tv-nav :focus-visible { outline-width: 4px; outline-offset: 3px; box-shadow: 0 0 0 6px rgba(165,180,252,.25); }
+.tv-nav .card:focus-visible { transform: scale(1.04); z-index: 2; }
+
+/* --- PERF: lighter paints + respect reduced motion --- */
+.feed-controls-sticky, #favBar, #sectionMenu .sm-sheet { will-change: auto; }
+img { image-rendering: auto; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+
+#favPanel .hp-h { padding: .9rem var(--lib-pad, 1.2rem) .1rem; font-size: .95rem; font-weight: 700; color: #cbd5e1; }
+#favPanel .hp-h small { color: #8b9ab8; font-weight: 500; margin-left: .3rem; }
+#favPanel .hist-bar { display: flex; justify-content: flex-end; padding: .2rem var(--lib-pad, 1.2rem) 0; }
+
+/* mode switching now lives only in the bottom menu (Library / My Mix / History) */
+#favPanel .lib-modes { display: none !important; }
+
+#favPanel .fav-card-ph.fav-fav { background: linear-gradient(145deg, #1a2234, #121826); }
+#favPanel .fav-card-ph.fav-fav img { width: 34%; max-width: 64px; min-width: 28px; aspect-ratio: 1; object-fit: contain; border-radius: 22%; filter: drop-shadow(0 4px 10px rgba(0,0,0,.5)); }
+
+/* round close button: width = height = min sizes so the mobile min-height rule can't stretch it into an oval */
+#favPanel .fav-close { box-sizing: border-box; flex: none; width: 2.75rem; height: 2.75rem; min-width: 2.75rem; min-height: 2.75rem; max-width: 2.75rem; max-height: 2.75rem;
+  padding: 0; aspect-ratio: 1 / 1; border-radius: 50%; display: inline-grid; place-items: center; line-height: 1; font-size: 1.05rem; }
 </style>
 <base target="_blank">
 <base target="_blank">
@@ -2439,7 +2527,7 @@ function cardHtml(item, si) {
   return `<a class="card" href="#" data-host="${escapeHtml(item._host || '')}" data-feed="${escapeHtml(item._feed || '')}" data-source-id="${escapeHtml(item._sourceId || '')}" data-detail="${escapeHtml(item.link)}"${main ? ` data-main-kind="${escapeHtml(main.kind)}" data-main-name="${escapeHtml(main.name)}" data-main-link="${escapeHtml(main.link || '')}"` : ''}
              data-title="${title}" data-search="${escapeHtml(searchTextOf(item))}" title="Play in main player">
     <div class="thumb${poster ? ' poster-loading' : ''}" id="${id}">
-      <img src="${placeholder}" loading="lazy"
+      <img src="${placeholder}" loading="lazy" decoding="async"
            data-poster="${poster}" alt=""
            onload="this.parentElement.classList.remove('poster-loading')"
            onerror="this.style.opacity=0;this.parentElement.classList.remove('poster-loading')">
@@ -2582,7 +2670,7 @@ function categoryCardHtml(cat) {
              data-name="${nameAttr}" data-source-id="${escapeHtml(sourceId)}"
              title="${name}">
     <div class="thumb"${poster ? ` style="--bg:url(&quot;${poster}&quot;)"` : ''}>
-      <img src="${placeholder}" loading="lazy" alt="${name}"
+      <img src="${placeholder}" loading="lazy" decoding="async" alt="${name}"
            referrerpolicy="no-referrer"
            onerror="this.style.opacity=0">
       ${showBadge && !isFpKind(categoriesState.kind) ? `<span class="site-label s-${catFeed.id}">${escapeHtml(catFeed.name)}</span>` : ''}
@@ -4461,7 +4549,7 @@ function studioSectionHtml(section, si) {
     return `<a class="series-card studio-section" href="#" data-name="${name}" data-group="${escapeHtml(section.group || '')}"
                data-link="${link}" title="${name}">
       <div class="series-thumb">
-        <img src="${ph}" alt="${name}" loading="lazy" referrerpolicy="no-referrer"
+        <img src="${ph}" alt="${name}" loading="lazy" decoding="async" referrerpolicy="no-referrer"
              onerror="this.style.opacity=.25">
       </div>
       <div class="series-body">
@@ -5618,7 +5706,7 @@ function catalogCardHtml(c, kind) {
              data-name="${escapeHtml(c.name || '')}" data-source-id="${escapeHtml(c.sourceId)}"
              data-group="${escapeHtml(c.group || '')}" title="${name}">
     <div class="thumb"${c.thumbnail ? ` style="--bg:url(&quot;${ph}&quot;)"` : ''}>
-      <img src="${ph}" loading="lazy" alt="${name}" referrerpolicy="no-referrer" onerror="this.style.opacity=0">
+      <img src="${ph}" loading="lazy" decoding="async" alt="${name}" referrerpolicy="no-referrer" onerror="this.style.opacity=0">
       <span class="site-label s-${escapeHtml(feed.id)}">${escapeHtml(feed.name)}</span>
     </div>
     <div class="info"><div class="title">${name}</div>${c.video_count ? `<div class="meta">${Number(c.video_count).toLocaleString()} videos</div>` : ''}</div>
@@ -8480,8 +8568,9 @@ document.addEventListener('keydown', (e) => {
     favBtn.setAttribute('aria-pressed', favOn ? 'true' : 'false');
     favBtn.querySelector('.fb-label').textContent = filterOn ? 'Favorites only' : 'Library';
     favBtn.querySelector('svg').classList.toggle('on', favOn);
-    histBtn.classList.toggle('active', histOpen);
-    histBtn.setAttribute('aria-pressed', histOpen ? 'true' : 'false');
+    const histOn = histOpen || (favPanelOpen && libMode === 'history');
+    histBtn.classList.toggle('active', histOn);
+    histBtn.setAttribute('aria-pressed', histOn ? 'true' : 'false');
   }
   function updateStatus(items) {
     status.hidden = !filterOn;
@@ -8504,7 +8593,7 @@ document.addEventListener('keydown', (e) => {
   }
   favBtn.addEventListener('click', () => { if (favPanelOpen && libMode === 'library') dismissPanel('fav'); else openLibrary('library'); });
   mixBtn.addEventListener('click', () => { if (favPanelOpen && libMode === 'mix') dismissPanel('fav'); else openLibrary('mix'); });
-  histBtn.addEventListener('click', () => (histOpen ? dismissPanel('hist') : openHistory()));
+  histBtn.addEventListener('click', () => { if (favPanelOpen && libMode === 'history') dismissPanel('fav'); else openLibrary('history'); });   // History = a tab of the library, like My Mix
 
   // =====================================================================================
   //  Watch history (videos only: cams and live channels are not logged)
@@ -8580,17 +8669,6 @@ document.addEventListener('keydown', (e) => {
       g.n++;
     });
     body.innerHTML = groups.map((g) => `<div class="hp-h">${g.label} <small>${g.n}</small></div><div class="videos hp-grid">${g.html.join('')}</div>`).join('');
-    body.querySelectorAll('a.card').forEach((a, i) => {          // a small ✕ on each card removes it from the history
-      const x = document.createElement('span');
-      x.className = 'hist-x';
-      x.setAttribute('role', 'button');
-      x.tabIndex = 0;
-      x.title = 'Remove from history';
-      x.setAttribute('aria-label', 'Remove from history');
-      x.textContent = '✕';
-      const th = a.querySelector('.thumb');
-      if (th) th.appendChild(x);
-    });
     scroll.scrollTop = y;
   }
   function openHistory() {
@@ -8726,6 +8804,7 @@ document.addEventListener('keydown', (e) => {
     <div class="lib-modes" id="libModes" role="tablist" aria-label="View">
       <button type="button" role="tab" data-mode="library" class="on" aria-selected="true">♥ Library</button>
       <button type="button" role="tab" data-mode="mix" aria-selected="false">🔀 My Mix</button>
+      <button type="button" role="tab" data-mode="history" aria-selected="false">🕘 History</button>
     </div>
     <div class="lib-tools" id="libTools">
       <label class="lib-search">${IC.search}<input id="libSearch" type="search" placeholder="Search your library" autocomplete="off" enterkeyhint="search" aria-label="Search your library"><button type="button" class="lib-sx" id="libSx" aria-label="Clear search" hidden>✕</button></label>
@@ -8804,6 +8883,7 @@ document.addEventListener('keydown', (e) => {
       .finally(() => { liveLoading = false; if (favPanelOpen) renderFavoritesPanel(); });
   }
 
+  const siteIcon = () => { const l = document.querySelector('link[rel~="icon"]'); return (l && l.href) || ''; };   // this website's own favicon
   function favCardHtml(rec) {
     const id = recId(rec);
     const t = TYPES[rec.type] || { icon: '★', one: '' };
@@ -8811,9 +8891,12 @@ document.addEventListener('keydown', (e) => {
     const ph = (rec.type === 'star' || rec.type === 'category') ? esc((rec.name || '').charAt(0) || '★') : t.icon;
     const img = thumb && !/^data:/i.test(thumb)
       ? `<img class="fav-card-img" src="${esc(thumb)}" alt="" loading="lazy" decoding="async">`
-      : `<span class="fav-card-ph">${ph}</span>`;
+      : (rec.type === 'category' && siteIcon()
+          ? `<span class="fav-card-ph fav-fav"><img src="${esc(siteIcon())}" alt="" decoding="async" data-l="${ph}" onerror="this.replaceWith(document.createTextNode(this.dataset.l))"></span>`   // tag / genre without a photo: MY site's own favicon
+          : `<span class="fav-card-ph">${ph}</span>`);
     let badge = '';
     let off = false, subTxt = rec.sub || t.one;
+    if (rec.type === 'category' && !/^chan-cat:/.test(rec.link || '')) subTxt = /bdsmhole/i.test((rec.link || '') + ' ' + (rec.sub || '')) ? 'BDSM' : 'General';   // saved tags/genres: General or BDSM instead of the website name
     if (rec.type === 'channel') badge = '<span class="lib-badge live">LIVE</span>';
     else if (rec.type === 'cam') {
       const st = camStatus(rec);
@@ -8899,7 +8982,7 @@ document.addEventListener('keydown', (e) => {
   function renderFavoritesPanel() {
     if (!panelBody) return;
     applyMode();
-    if (libMode === 'mix') renderMixMeta(); else renderLibrary();
+    if (libMode === 'mix') renderMixMeta(); else if (libMode === 'history') renderHistFull(); else renderLibrary();
   }
   function renderLibrary() {
     if (!panelBody) return;
@@ -9048,9 +9131,10 @@ document.addEventListener('keydown', (e) => {
       else if (a === 'clearq') { searchEl.value = ''; libQuery = ''; renderFavoritesPanel(); }
       else if (a === 'close') dismissPanel('fav');
       else if (a === 'mixretry') { startMix(true); renderMixFull(); }
+      else if (a === 'histclear') { if (hist.length && confirm(`Clear your watch history (${hist.length} video${hist.length === 1 ? '' : 's'})?`)) { hist = []; saveHist(); renderHistFull(); toast('History cleared'); } }
       return;
     }
-    if (libMode === 'mix') {                                              // video cards of the mix
+    if (libMode === 'mix' || libMode === 'history') {                      // video cards of the mix / history
       const vc = e.target.closest('a.card');
       if (vc) {
         e.preventDefault();
@@ -9278,25 +9362,48 @@ document.addEventListener('keydown', (e) => {
   mixShuffleBtn.addEventListener('click', () => { if (!mix) return; mix.pool = shuf(mix.pool); resetMixGrid(); toast('Shuffled'); });
   mixRefreshBtn.addEventListener('click', () => { startMix(true); renderMixFull(); });
 
+  // ---- History tab inside the library (newest first, grouped by day, no per-video ✕)
+  function renderHistFull() {
+    applyMode();
+    if (mixIO) { mixIO.disconnect(); mixIO = null; }
+    const list = hist.slice().sort((x, y) => (y.ts || 0) - (x.ts || 0));
+    subEl.textContent = list.length ? `${list.length} watched` : 'Nothing watched yet';
+    if (!list.length) {
+      panelBody.innerHTML = '<div class="lib-empty"><div class="big">🕘</div><h3>Nothing watched yet</h3><p>Videos you open show up here, newest first.</p><button type="button" class="lib-btn pri" data-act="close">Start browsing</button></div>';
+      return;
+    }
+    const today = dayStart(Date.now()), groups = [];
+    list.forEach((h, i) => {
+      const label = groupLabel(h.ts || 0, today);
+      let g = groups.find((x) => x.label === label);
+      if (!g) groups.push((g = { label, html: [], n: 0 }));
+      g.html.push(cardHtml({ link: h.link, title: h.title, thumbnail: h.thumb, duration: h.duration, views: h.views, rating: h.rating, _host: h.host }, 'lh-' + i));
+      g.n++;
+    });
+    panelBody.innerHTML = `<div class="hist-bar"><button type="button" class="lib-btn danger" data-act="histclear">${IC.trash}<span class="t">Clear history</span></button></div>`
+      + groups.map((g) => `<div class="hp-h">${g.label} <small>${g.n}</small></div><div class="videos mix-grid">${g.html.join('')}</div>`).join('');
+  }
+
   // ---- Library | My Mix
   function applyMode() {
-    const on = libMode === 'mix';
-    panel.classList.toggle('is-mix', on);
+    const on = libMode === 'mix', hm = libMode === 'history';
+    panel.classList.toggle('is-mix', on || hm);
     panel.querySelectorAll('#libModes button').forEach((b) => { const a = b.dataset.mode === libMode; b.classList.toggle('on', a); b.setAttribute('aria-selected', String(a)); });
-    titleEl.textContent = on ? 'My Mix' : 'My Library';
-    panel.setAttribute('aria-label', on ? 'My Mix' : 'My Library');
-    icoEl.classList.toggle('mix', on);
-    icoEl.innerHTML = on ? IC.shuffle.replace('class="ic" ', '') : HEART;
+    titleEl.textContent = on ? 'My Mix' : hm ? 'History' : 'My Library';
+    panel.setAttribute('aria-label', titleEl.textContent);
+    icoEl.classList.toggle('mix', on || hm);
+    icoEl.innerHTML = on ? IC.shuffle.replace('class="ic" ', '') : hm ? '🕘' : HEART;
     mixShuffleBtn.hidden = mixRefreshBtn.hidden = !on;
-    if (on) { selBtn.hidden = favClear.hidden = true; toolsEl.hidden = true; }
+    if (on || hm) { selBtn.hidden = favClear.hidden = true; toolsEl.hidden = true; }
+    if (hm) chipsEl.hidden = true;
   }
   function setMode(m) {
-    if (m === libMode) { if (m === 'mix') { const changed = startMix(false); if (changed || !panelBody.querySelector('#mixGrid')) renderMixFull(); } return; }
+    if (m === libMode) { if (m === 'history') renderHistFull(); else if (m === 'mix') { const changed = startMix(false); if (changed || !panelBody.querySelector('#mixGrid')) renderMixFull(); } return; }
     if (selecting) setSelecting(false);
     hideUndo();
     libMode = m;
     panelBody.scrollTop = 0; panelScrollTop = 0;
-    if (m === 'mix') { startMix(false); renderMixFull(); } else { applyMode(); renderLibrary(); }
+    if (m === 'mix') { startMix(false); renderMixFull(); } else if (m === 'history') renderHistFull(); else { applyMode(); renderLibrary(); }
     updateBar();
   }
   function openLibrary(m) { if (!favPanelOpen) openFavoritesPanel(); setMode(m); }
@@ -9847,6 +9954,44 @@ function render() {
     applyView(feed);
   };
   const wait = setInterval(() => { if (F() && F().onChange) { clearInterval(wait); F().onChange(() => { const v = viewEl(); if (v) { v.querySelectorAll('.tg-pill').forEach(paint); updateChips(); } }); } }, 200);
+})();
+</script>
+<script>
+/* UI/perf helpers: faster images + D-pad / remote-control navigation for TVs, keyboard users and game consoles */
+(function () {
+  'use strict';
+  // PERF: every thumbnail decodes off the main thread and loads lazily
+  const tune = (img) => { if (!img.hasAttribute('decoding')) img.decoding = 'async'; if (!img.hasAttribute('loading') && !img.hasAttribute('fetchpriority')) img.loading = 'lazy'; };
+  document.querySelectorAll('img').forEach(tune);
+  new MutationObserver((ms) => ms.forEach((m) => m.addedNodes.forEach((n) => {
+    if (n.nodeType !== 1) return;
+    if (n.tagName === 'IMG') tune(n); else if (n.querySelectorAll) n.querySelectorAll('img').forEach(tune);
+  }))).observe(document.body, { childList: true, subtree: true });
+
+  // Spatial arrow-key navigation (only while focus is on a card / button / tab, never in inputs or the video player)
+  const SEL = 'a.card, .cam-card, button, .tab, .site-tab, .tg-pill, [role=link], [role=button]';
+  const visible = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < innerHeight && getComputedStyle(el).visibility !== 'hidden'; };
+  document.addEventListener('keydown', (e) => {
+    if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    const dir = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+    if (!dir) return;
+    const a = document.activeElement;
+    if (!a || a === document.body || !a.matches(SEL) || a.closest('input,textarea,select,video,.main-player.active')) return;
+    const from = a.getBoundingClientRect(), fx = from.left + from.width / 2, fy = from.top + from.height / 2;
+    let best = null, bestScore = Infinity;
+    document.querySelectorAll(SEL).forEach((el) => {
+      if (el === a || !visible(el) || el.disabled || el.closest('[hidden],.fav-hidden,.filtered-out,.live-hidden,.live-capped')) return;
+      const r = el.getBoundingClientRect(), dx = r.left + r.width / 2 - fx, dy = r.top + r.height / 2 - fy;
+      const along = dx * dir[0] + dy * dir[1]; if (along <= 4) return;
+      const across = Math.abs(dir[0] ? dy : dx), score = along + across * 2.2;
+      if (score < bestScore) { bestScore = score; best = el; }
+    });
+    if (best) { e.preventDefault(); document.documentElement.classList.add('tv-nav'); best.focus({ preventScroll: true }); best.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' }); }
+  });
+  document.addEventListener('mousedown', () => document.documentElement.classList.remove('tv-nav'), { passive: true });
+  addEventListener('keydown', (e) => { if (e.key.startsWith('Arrow') || e.key === 'Tab') document.documentElement.classList.add('tv-nav'); }, { passive: true, capture: true });
+  // Remote "OK/Enter" on a focused card = click
+  document.addEventListener('keydown', (e) => { if (e.key === 'Enter' && document.activeElement && document.activeElement.matches('.cam-card,.tg-pill,[role=link]') && !e.defaultPrevented) { e.preventDefault(); document.activeElement.click(); } });
 })();
 </script>
 </body>
