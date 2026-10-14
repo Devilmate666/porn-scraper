@@ -2002,7 +2002,14 @@ function saveEntryScroll(force = false) {
 }
 window.addEventListener('scroll', () => {
   if (scrollSaveRaf) return;
-  scrollSaveRaf = requestAnimationFrame(() => { scrollSaveRaf = 0; saveEntryScroll(); });
+  scrollSaveRaf = requestAnimationFrame(() => {
+    scrollSaveRaf = 0;
+    saveEntryScroll();
+    // Keep the section-list position live as the user scrolls. Relying only on
+    // the card click handler loses the position if an infinite-load/render event
+    // replaces the grid immediately before navigation (especially Pornstars).
+    rememberSectionListScroll(window.scrollY);
+  });
 }, { passive: true });
 document.addEventListener('pointerdown', () => saveEntryScroll(true), true);                       // the exact spot at the moment of a tap
 document.addEventListener('click', () => { saveEntryScroll(true); scrollFreezeUntil = performance.now() + 1200; }, true);
@@ -2136,6 +2143,7 @@ async function applyNavStateInner(state) {
   }
 
   if (state.view === 'categories') {
+    categoriesState.scrollY = savedScrollFor(state);
     await openCategories(false, { skipPush: true });
     return;
   }
@@ -2152,6 +2160,7 @@ async function applyNavStateInner(state) {
     return;
   }
   if (state.view === 'pornstars') {
+    if (catalogState.pornstars) catalogState.pornstars.scrollY = savedScrollFor(state);
     await openCatalog(state.view, { skipPush: true });
     return;
   }
@@ -3290,10 +3299,32 @@ function renderTagCloud(tags, data, kind = 'porntags') {
   }
 }
 
-/** Remember the scroll position of the open catalog list (Pornstars...) so it can be restored later. */
+/** Remember the scroll position only while the catalog's own index is visible. */
 function saveCatalogScroll(y = window.scrollY) {
   const k = kindOfCatalogTab(activeTab);
-  if (k && catalogState[k]) catalogState[k].scrollY = y;
+  if (!k || !catalogState[k]) return;
+  // activeTab can temporarily lag behind navigation while a feed is being
+  // rendered/restored. Never let a nested feed's scroll overwrite its parent list.
+  const st = history.state;
+  if (!st || st.sid !== NAV_SID || st.view !== CATALOGS[k].view) return;
+  catalogState[k].scrollY = Math.max(0, Math.round(y || 0));
+}
+
+// Keep the parent index's position separate from the scroll position of any
+// opened feed. Only record scroll while the actual Categories/Pornstars index
+// is the active history view; nested feeds must not mutate these saved values.
+function rememberSectionListScroll(y = window.scrollY) {
+  if (navSilent || scrollRestoring || pageIsLocked()) return;
+  const st = history.state;
+  if (!st || st.sid !== NAV_SID) return;
+  const pos = Math.max(0, Math.round(y || 0));
+  if (activeTab === CATEGORIES_TAB && st.view === 'categories' && categoriesState) {
+    categoriesState.scrollY = pos;
+  }
+  const k = kindOfCatalogTab(activeTab);
+  if (k && st.view === CATALOGS[k].view && catalogState[k]) {
+    catalogState[k].scrollY = pos;
+  }
 }
 
 function bindCategoryCards() {
@@ -3305,7 +3336,7 @@ function bindCategoryCards() {
       const fromCategories = activeTab === CATEGORIES_TAB;
       // Save scroll position before navigating to category feed
       if (activeTab === CATEGORIES_TAB) {
-        categoriesState.scrollY = window.scrollY;
+        categoriesState.scrollY = Math.max(0, Math.round(window.scrollY));
         saveCategoryCache(COMBINED_CAT_CACHE_KEY);
       }
       if (activeTab === NETWORKS_TAB || activeTab === PORN_SITES_TAB) {
@@ -3544,7 +3575,14 @@ async function openCategoryFeed(link, name, opts = {}) {
   saveCatalogScroll();
   if (!opts.skipPush && history.state && ['categories', 'networks', 'pornsites', 'pornstars'].includes(history.state.view)) {
     try {
-      history.replaceState({ ...history.state, scrollY: window.scrollY }, '', location.href);
+      const parentState = { ...history.state, scrollY: Math.max(0, Math.round(window.scrollY)) };
+      history.replaceState(parentState, '', location.href);
+      // savedScrollFor() prefers this map over state.scrollY. Update both together
+      // so an older cached map value cannot override the exact position we just saved.
+      if (typeof parentState.idx === 'number' && parentState.sid === NAV_SID) {
+        entryScroll.set(parentState.idx, parentState.scrollY);
+        entryView.set(parentState.idx, navViewKey(parentState));
+      }
     } catch {}
   }
 
