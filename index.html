@@ -2044,20 +2044,9 @@ function captureSectionListPosition() {
   } catch (_) {}
 }
 function restoreSectionListAnchor(state) {
-  const anchor = state && sectionListMemory[state.view]?.anchor || (state && state.scrollAnchor);
-  if (!anchor || !anchor.link || !['categories', 'pornstars'].includes(state.view)) return;
-  const apply = () => {
-    // Never apply an old list anchor over a different page or a user's new scroll.
-    const current = history.state;
-    if (!current || current.sid !== NAV_SID || current.idx !== state.idx || current.view !== state.view) return;
-    const card = [...results.querySelectorAll('.category-card[data-link]')].find(el =>
-      (el.getAttribute('data-link') || '') === anchor.link &&
-      (!anchor.name || (el.getAttribute('data-name') || '') === anchor.name));
-    if (!card) return;
-    const delta = card.getBoundingClientRect().top - Number(anchor.offset || 0);
-    if (Math.abs(delta) > 1) window.scrollTo({ top: Math.max(0, window.scrollY + delta), left: 0, behavior: 'instant' });
-  };
-  [80, 220, 500, 900].forEach(ms => setTimeout(apply, ms));
+  // postRestore already calls restoreScrollRobust with the correct y.
+  // This function is kept for potential future anchor-based fine-tuning.
+  // No-op: the scroll position is handled by restoreScrollRobust in postRestore.
 }
 document.addEventListener('pointerdown', () => { captureSectionListPosition(); saveEntryScroll(true); }, true); // capture before click handlers replace the list
 document.addEventListener('click', () => { captureSectionListPosition(); saveEntryScroll(true); scrollFreezeUntil = performance.now() + 1200; }, true);
@@ -2086,13 +2075,21 @@ function restoreScrollRobust(y) {
     scrollFreezeUntil = 0;
     saveEntryScroll(true);
   };
+  // Reserve enough height so the page is scrollable to y even while content is still being built
   if (y > 0 && document.documentElement.scrollHeight < y + (window.innerHeight || 0) + 2) { preserveSectionScrollRange(y); reserved = true; }
+  // Single-shot restore: scroll once, then only retry if the position wasn't reached
+  // (avoids the frame-by-frame jumping that a continuous loop causes)
   const step = () => {
     if (stop) { finish(); return; }
     window.scrollTo({ top: y, left: 0, behavior: 'instant' });
     const now = performance.now();
-    if (Math.abs(window.scrollY - y) <= 1) { if (!okSince) okSince = now; if (now - okSince > 250) { finish(); return; } }
-    else okSince = 0;
+    if (Math.abs(window.scrollY - y) <= 1) {
+      // Position reached - wait briefly to confirm it's stable, then stop
+      if (!okSince) okSince = now;
+      if (now - okSince > 200) { finish(); return; }
+    } else {
+      okSince = 0;
+    }
     if (now - t0 > 1500) { finish(); return; }
     requestAnimationFrame(step);
   };
@@ -3945,14 +3942,11 @@ function restoreCategoriesView() {
       ? `🗂️ ${n} ${savedKind === 'porntags' ? 'tag' : 'site'}${n !== 1 ? 's' : ''}`
       : `🗂️ ${n} categor${n !== 1 ? 'ies' : 'y'}`;
   }
-  // Restore scroll position with multiple attempts to ensure it sticks
-  const y = savedScrollY;
-  const go = () => window.scrollTo({ top: y, left: 0, behavior: 'instant' });
-  requestAnimationFrame(go);
-  setTimeout(go, 50);
-  setTimeout(go, 150);
-  setTimeout(go, 300);
   scheduleCategoryRecheck();
+  // Single clean restore: restoreScrollRobust keeps the page at y until content is built
+  if (savedScrollY > 0) {
+    requestAnimationFrame(() => restoreScrollRobust(savedScrollY));
+  }
 }
 
 /* --------------------------------------------------------------
@@ -4777,13 +4771,6 @@ async function openCategories(forceRefresh = false, opts = {}) {
     if (!opts.skipPush) pushNav({ view: 'categories' });
     setStatus(`Categories — ${categoriesState.categories.length}`, false);
     scheduleCategoryRecheck();
-    // Restore scroll position with multiple attempts to ensure it sticks
-    const y = categoriesState.scrollY || 0;
-    const go = () => window.scrollTo({ top: y, left: 0, behavior: 'instant' });
-    requestAnimationFrame(go);
-    setTimeout(go, 50);
-    setTimeout(go, 150);
-    setTimeout(go, 300);
     return;
   }
 
@@ -5374,13 +5361,6 @@ async function openStudioView(tab, forceRefresh = false, opts = {}) {
     }
     if (!opts.skipPush) pushNav({ view: V.navView });
     setStatus(`${V.title} — ${studioState.sections.length}`, false);
-    // Restore scroll position with multiple attempts to ensure it sticks
-    const y = studioState.scrollY || 0;
-    const go = () => window.scrollTo({ top: y, left: 0, behavior: 'instant' });
-    requestAnimationFrame(go);
-    setTimeout(go, 50);
-    setTimeout(go, 150);
-    setTimeout(go, 300);
     return;
   }
 
@@ -5396,13 +5376,6 @@ async function openStudioView(tab, forceRefresh = false, opts = {}) {
     studioState.rendered = true;
     if (!opts.skipPush) pushNav({ view: V.navView });
     setStatus(`${V.title} — ${(studioState.sections.length || lastStudioData.sections.length)}`, false);
-    // Restore scroll position with multiple attempts to ensure it sticks
-    const y = studioState.scrollY || 0;
-    const go = () => window.scrollTo({ top: y, left: 0, behavior: 'instant' });
-    requestAnimationFrame(go);
-    setTimeout(go, 50);
-    setTimeout(go, 150);
-    setTimeout(go, 300);
     return;
   }
 
@@ -5474,13 +5447,6 @@ async function openPornTags(forceRefresh = false, opts = {}) {
     if (!opts.skipPush) pushNav({ view: 'porntags' });
     setStatus(`Porn Tags — ${categoriesState.categories.length}`, false);
     scheduleCategoryRecheck();
-    // Restore scroll position with multiple attempts to ensure it sticks
-    const y = categoriesState.scrollY || 0;
-    const go = () => window.scrollTo({ top: y, left: 0, behavior: 'instant' });
-    requestAnimationFrame(go);
-    setTimeout(go, 50);
-    setTimeout(go, 150);
-    setTimeout(go, 300);
     return;
   }
 
@@ -6427,13 +6393,6 @@ async function openCatalog(kind, opts = {}) {
   if (!opts.force && have && have.items.length) {
     renderCatalog(kind, { isRestore: true });
     if (!opts.skipPush) pushNav({ view: cfg.view });
-    // Restore scroll position with multiple attempts to ensure it sticks
-    const y = have.scrollY || 0;
-    const go = () => window.scrollTo({ top: y, left: 0, behavior: 'instant' });
-    requestAnimationFrame(go);
-    setTimeout(go, 50);
-    setTimeout(go, 150);
-    setTimeout(go, 300);
     return;
   }
   if (busy) return;
@@ -7098,15 +7057,10 @@ function enterNavSection(section, action, force = false, pressedButton = null) {
   feedSearchEntryActive = false;
   clearTimeout(liveTimer);
 
+  // For categories/pornstars, the action itself restores scroll position.
+  // For other sections, restoreScrollRobust keeps the page at targetScrollY (usually 0) until content is built.
   const restoreScroll = () => {
-    const restore = () => {
-      window.scrollTo({ top: targetScrollY, left: 0, behavior: 'instant' });
-      updateNetworkBarActive();
-    };
-    requestAnimationFrame(restore);
-    setTimeout(restore, 50);
-    setTimeout(restore, 150);
-    setTimeout(restore, 300);
+    requestAnimationFrame(() => restoreScrollRobust(targetScrollY));
   };
 
   // When moving between top-level sections, suppress the action's pushState so
