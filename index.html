@@ -1540,6 +1540,7 @@ const tagMixes = new Map();   // key -> { name, members: [{ link, sid, label, ho
 const CAT_URLS = Object.assign({
   categories: 'https://www.superporn.com/categories',
   pornstars:  'https://www.freesexvideos.xxx/models/',
+  superpornPornstars: 'https://www.superporn.com/pornstars',
   studios:    'https://www.freesexvideos.xxx/sites/',
   bdsmStudios: 'https://www.bdsmhole.com/studios/',
 }, window.__CATALOG_URLS__ || {});
@@ -1569,6 +1570,7 @@ const CATALOGS = {
   pornstars: {
     tab: PORNSTARS_TAB, view: 'pornstars', icon: '⭐', title: 'Pornstars', noun: 'pornstar',
     sources: [
+      { id: 'superporn',     group: 'general', indexUrl: CAT_URLS.superpornPornstars },
       { id: 'freesexvideos', group: 'general', indexUrl: CAT_URLS.pornstars },
       { id: 'pornvideobb',   group: 'general', indexUrl: 'https://2023.pornvideobb.com/porn_actor/' },
       { id: 'bdsmhole',      group: 'bdsm',    indexUrl: 'https://www.bdsmhole.com/pornstars/' },
@@ -5829,7 +5831,6 @@ function renderCatalog(kind) {
         <div class="badges"><span class="count-badge">🗂️ ${st.items.length}</span></div>
       </div>
       ${catalogChipsHtml(kind)}
-      ${(() => { const bad = cfg.sources.filter(src => !st.items.some(c => c.sourceId === src.id)).map(src => { const e = st.errors.filter(x => x.startsWith(hostOf(src.indexUrl))); return `⚠️ ${hostOf(src.indexUrl)}: ${e.length ? e[0].replace(/^[^:]+:\s*/, '') : 'no stars found'}`; }); return bad.length ? `<div class="cat-notice" style="margin:.4rem 1.4rem;padding:.55rem .8rem;border:1px solid #6b4a1f;background:#2a2113;color:#fcd9a0;border-radius:.6rem;font-size:.78rem;word-break:break-word">${bad.map(escapeHtml).join('<br>')}</div>` : ''; })()}
       <div class="cat-search-bar">
         <input id="catalogSearchInput" type="search" placeholder="Search ${cfg.noun}s by name…" autocomplete="off" />
       </div>
