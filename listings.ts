@@ -22,7 +22,7 @@ const VIDEO_FRAGMENTS = ["/video/", "/videos/", "/watch/", "/play/", "/player/",
   "/stream/", "/tube/", "/p/", "/content_video/", "/content_video_alt/"];
 const SP_SKIP = new Set(["categories", "series", "pornstars", "login", "signup", "upload", "contact", "tos", "dmca", "cookies-policy", "search", "live", "es", "de", "it", "fr", "br", "nl"]);
 const COUNT_TAIL = /([\d][\d,.]*)\s*(?:videos?|vids?|clips?)\s*$/i;
-const MODEL_HREF = /\/(?:models?|pornstars?|actresses)\/([^/?#]+)\/?$/i;
+const MODEL_HREF = /\/(?:models?|pornstars?|actresses|actors?|porn[_-]actors?)\/([^/?#]+)\/?$/i;
 
 const parentOf = (el: HTMLElement): HTMLElement | null => (el.parentNode as HTMLElement | null) || null;
 const titleOf = (root: HTMLElement) => collapse(root.querySelector("title")?.text || "");
@@ -515,7 +515,7 @@ export async function scrapeModels(url: string, pageNum: number | null = null): 
 export async function scrapeListing(url: string, mode: string | undefined, pageNum: number | null): Promise<any> {
   let host = "", path = "/";
   try { const p = new URL(url.includes("://") ? url : "https://" + url); host = p.hostname.toLowerCase(); path = (p.pathname || "/").toLowerCase(); } catch { /* keep */ }
-  if (mode === "models" || mode === "pornstars" || (host.endsWith("freesexvideos.xxx") && path.startsWith("/models"))) return scrapeModels(url, pageNum);
+  if (mode === "models" || mode === "pornstars" || (host.endsWith("freesexvideos.xxx") && path.startsWith("/models")) || (host.endsWith("pornvideobb.com") && /^\/porn[_-]actors?(\/|$)/.test(path)) || (host.endsWith("bdsmhole.com") && /^\/pornstars(\/|$)/.test(path))) return scrapeModels(url, pageNum);
   if (host.endsWith("superporn.com") && /^\/categories(\/\d+)?\/?$/.test(path)) return scrapeSuperpornCategories(url, pageNum);
   if (host.endsWith("pornvideobb.com") && path.startsWith("/tags")) return scrapePornvideobbTags(url);
   if (mode === "sites" || (host.endsWith("freesexvideos.xxx") && /^\/sites(\/\d+)?\/?$/.test(path))) return scrapeStudioSections(url);

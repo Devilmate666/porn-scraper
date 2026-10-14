@@ -1356,6 +1356,12 @@ img { image-rendering: auto; }
 /* round close button: width = height = min sizes so the mobile min-height rule can't stretch it into an oval */
 #favPanel .fav-close { box-sizing: border-box; flex: none; width: 2.75rem; height: 2.75rem; min-width: 2.75rem; min-height: 2.75rem; max-width: 2.75rem; max-height: 2.75rem;
   padding: 0; aspect-ratio: 1 / 1; border-radius: 50%; display: inline-grid; place-items: center; line-height: 1; font-size: 1.05rem; }
+
+/* tags & genres now live inside Categories (same tiles, General / BDSM split) */
+.cat-view-switch { display: none !important; }
+
+.category-card .cat-sub { font-size: .7rem; color: #c4b5fd; margin-top: .15rem; }
+.category-card[data-bdsm-all] .site-label { background: #7c3aed; color: #fff; }
 </style>
 <base target="_blank">
 <base target="_blank">
@@ -1517,6 +1523,13 @@ const ALL_FEED = { id: 'all', name: 'All', siteIds: SOURCES.map(s => s.id) };
 let homeFilter = null;            // null = All | 'general' | 'bdsm'
 function getFeed(id) { return id === ALL_FEED.id ? ALL_FEED : (FEEDS.find(f => f.id === id) || FEEDS[0]); }
 function feedOfSource(siteId) { return FEEDS.find(f => f.siteIds.includes(siteId)) || FEEDS[0]; }
+/** Anything BDSM-related from a General website is filed under the BDSM filter (edit this word list to taste). */
+const BDSM_RE = /\b(bdsm|bondage|bound|femdom|male ?dom|dominat\w*|dominatrix|submissi\w*|slave\w*|spank\w*|whip(?:s|ped|ping)?|shibari|rope ?bondage|gagg?ed|humiliat\w*|punish\w*|mistress|fetish|torture|restrain\w*|tied ?up|hog-?tie\w*|collar(?:ed)?|kinky|bdsm\w*)\b|bdsm|bondage/i;
+function bdsmAwareFeed(it, feedId) {
+  if (feedId !== 'general' || !it) return feedId;
+  let slug = ''; try { slug = decodeURIComponent((it.link || '').replace(/^https?:\/\/[^/]+/i, '')).replace(/[-_/+]+/g, ' '); } catch (e) {}
+  return BDSM_RE.test(`${it.title || ''} ${slug}`) ? 'bdsm' : feedId;
+}
 function mixKey(feedId) { return MIX_PREFIX + feedId; }
 // Combined tag / genre feed = ONE regular feed (siteData/siteState) whose pages are pulled from every website that has the tag.
 const TAGMIX_PREFIX = '__tagmix_';
@@ -1557,6 +1570,8 @@ const CATALOGS = {
     tab: PORNSTARS_TAB, view: 'pornstars', icon: '⭐', title: 'Pornstars', noun: 'pornstar',
     sources: [
       { id: 'freesexvideos', group: 'general', indexUrl: CAT_URLS.pornstars },
+      { id: 'pornvideobb',   group: 'general', indexUrl: 'https://2023.pornvideobb.com/porn_actor/' },
+      { id: 'bdsmhole',      group: 'bdsm',    indexUrl: 'https://www.bdsmhole.com/pornstars/' },
     ],
   },
 };
@@ -2677,7 +2692,7 @@ function categoryCardHtml(cat) {
   const showBadge = sourceId !== 'fullporno' || !isFpKind(cat.kind);
 
   return `<a class="card category-card" href="#" data-link="${escapeHtml(cat.link)}"
-             data-name="${nameAttr}" data-source-id="${escapeHtml(sourceId)}"
+             data-name="${nameAttr}" data-source-id="${escapeHtml(sourceId)}"${cat.bdsmAll ? ' data-bdsm-all="1"' : ''}${cat.tag ? ` data-tagkey="${escapeHtml(cat.tagKey || '')}"${cat.thumbnail ? '' : ' data-snap="1"'}` : ''}
              title="${name}">
     <div class="thumb"${poster ? ` style="--bg:url(&quot;${poster}&quot;)"` : ''}>
       <img src="${placeholder}" loading="lazy" decoding="async" alt="${name}"
@@ -2686,7 +2701,7 @@ function categoryCardHtml(cat) {
       ${showBadge && !isFpKind(categoriesState.kind) ? `<span class="site-label s-${catFeed.id}">${escapeHtml(catFeed.name)}</span>` : ''}
     </div>
     <div class="info">
-      <div class="title">${name}</div>
+      <div class="title">${name}</div>${cat.bdsmAll ? '<div class="cat-sub">🔗 BDSM · all websites</div>' : ''}
     </div>
   </a>`;
 }
@@ -3178,8 +3193,14 @@ function bindCategoryCards() {
         activeFeedId = feedOfSource(sid).id;
         renderSiteTabs();
       }
-      if (link) {
-        if (sid === 'superporn' && fromCategories && typeof window.tgSharedMembers === 'function') {
+      if (card.dataset.bdsmAll && window.__bdsmAllMembers) {
+        openTagMix(TAGMIX_PREFIX + 'bdsm-all-' + window.__bdsmAllMembers.length, name, window.__bdsmAllMembers);          // BDSM from every General site in one feed
+      } else if (card.dataset.members) {
+        let ms = []; try { ms = JSON.parse(card.dataset.members); } catch (e) {}
+        if (ms.length) openTagMix(TAGMIX_PREFIX + 'star-' + ms.map(m => m.sid).join('+') + '-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), name, ms);   // same star on several sites: ONE mixed feed
+        else openCategoryFeed(link, name);
+      } else if (link) {
+        if (feedOfSource(sid).id === 'general' && fromCategories && typeof window.tgSharedMembers === 'function') {
           // same name is also a tag on FreeSexVideos / PornVideoBB -> ONE feed mixing all three (BDSMHole stays separate)
           try { setStatus(`Opening "${name}"…`, true); } catch (e) {}
           window.tgSharedMembers(name, link).then((ms) => {
@@ -3911,7 +3932,7 @@ async function loadFeed(feedId, { force = false, skipPush = false } = {}) {
         const k = (it.link || '').split('?')[0];
         if (!k || seen.has(k)) return;
         seen.add(k);
-        items.push({ ...it, _host: hostOf(site), _feed: sf.id, _label: src.name, _sourceId: src.id });
+        items.push({ ...it, _host: hostOf(site), _feed: bdsmAwareFeed(it, sf.id), _label: src.name, _sourceId: src.id });
       });
       pages.set(site, {
         next_page: items.length ? (data.next_page || guessNextUrl(site, 2) || '') : '',
@@ -4045,6 +4066,27 @@ function mergePlayerMeta(seed, page) {
   return out;
 }
 
+let plainChipToken = 0;
+async function upgradePlainChips(detail) {
+  let host = ''; try { host = new URL(detail).hostname; } catch (e) { return; }
+  const sid = /freesexvideos\./i.test(host) ? 'fullporno' : /bdsmhole\./i.test(host) ? 'bdsmhole' : '';
+  if (!sid || !mainPlayerMeta || typeof window.tgFindLink !== 'function') return;
+  const my = ++plainChipToken; if (window.tgWarm) window.tgWarm();
+  const pending = () => [...mainPlayerMeta.querySelectorAll('.pm-group')].filter((g) => /Genres|Tags/.test((g.querySelector('.pm-label') || {}).textContent || '')).flatMap((g) => [...g.querySelectorAll('.tag-chip.pm-plain')]);
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  for (let i = 0; i < 80 && my === plainChipToken; i++) {
+    for (const el of pending()) {
+      const nm = el.textContent.trim(), link = window.tgFindLink(nm, sid);
+      if (link) { el.classList.remove('pm-plain'); el.setAttribute('role', 'link'); el.tabIndex = 0; el.dataset.metaLink = link; el.dataset.metaName = nm; el.title = 'Open ' + nm; }
+    }
+    if (!pending().length || window.tgIndexDone()) break;
+    await sleep(500);
+  }
+  if (my !== plainChipToken || !window.tgIndexDone()) return;
+  pending().forEach((el) => el.remove());                                   // no tag page exists -> cannot be opened -> removed
+  mainPlayerMeta.querySelectorAll('.pm-group').forEach((g) => { if (!g.querySelector('.tag-chip')) g.remove(); });
+}
+
 function renderPlayerMeta(m) {
   if (!mainPlayerMeta) return;
   if (!m) { mainPlayerMeta.hidden = true; return; }
@@ -4111,7 +4153,7 @@ async function loadPlayerMeta(detail) {
     const page = await res.json();
     if (page && !page.error) rememberPageMeta(detail, page);   // its tags / stars / description become searchable
     if (token !== playerMetaToken) return;               // another video / closed meanwhile
-    if (page && !page.error) renderPlayerMeta(cleanPageMeta(detail, mergePlayerMeta(seed, cleanPageMeta(detail, page))));
+    if (page && !page.error) { renderPlayerMeta(cleanPageMeta(detail, mergePlayerMeta(seed, cleanPageMeta(detail, page)))); upgradePlainChips(detail); }
   } catch { /* the seed (if any) stays; metadata is a bonus */ }
 }
 
@@ -5263,6 +5305,7 @@ function refreshCategoryGridFromState() {
   const grid = feed.querySelector('.videos');
   if (!grid) return;
   const slot = grid.querySelector('.loading-row-slot');
+  if (window.tgConsolidateBdsm) window.tgConsolidateBdsm();
   const cats = categoriesState.categories || [];
 
   grid.querySelectorAll('.category-card, .cat-filter-empty').forEach(el => el.remove());
@@ -5273,6 +5316,7 @@ function refreshCategoryGridFromState() {
     grid.insertBefore(temp.firstElementChild, slot);
   }
   bindCategoryCards();
+  applyCategoryNameFilter();      // every rebuild keeps the active search / General-BDSM filter (otherwise all tiles flash back)
 }
 
 /** Show/hide category tiles by source filter + name search (categories only, not videos). */
@@ -5284,15 +5328,38 @@ function applyCategoryNameFilter() {
   const feed = results.querySelector(`.feed[data-site="${CATEGORIES_TAB}"]`);
   if (!feed) return;
   const cards = feed.querySelectorAll('.category-card');
+  const onlyBdsm = q.replace(/[^a-z0-9]/g, '') === 'bdsm' && !!feed.querySelector('.category-card[data-bdsm-all]');
   let visible = 0;
+  const alnum = t => (t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
+  const fits = [];
   cards.forEach(card => {
     const sid = card.getAttribute('data-source-id') || '';
     const name = card.getAttribute('data-name') || '';
     const sourceOk = filter === 'all' || feedOfSource(sid).id === filter;
     const nameOk = !q || searchWordsMatch(name, queryWords(q));
-    const show = sourceOk && nameOk;
-    card.style.display = show ? '' : 'none';
-    if (show) visible++;
+    card._fit = sourceOk && nameOk && (!onlyBdsm || card.hasAttribute('data-bdsm-all'));
+    card._show = card._fit;
+    if (card._fit) fits.push(card);
+  });
+  if (q) {
+    // A search returns ONE unified card per name (per General / BDSM): an exact name beats partial matches,
+    // and the same name from several websites collapses into a single card (it opens the mixed feed).
+    const qn = alnum(q);
+    const exact = fits.filter(c => alnum(c.getAttribute('data-name')) === qn);
+    const pool = exact.length ? exact : fits;
+    const best = new Map();
+    pool.forEach(c => {
+      const key = feedOfSource(c.getAttribute('data-source-id') || '').id + '|' + alnum(c.getAttribute('data-name'));
+      const cur = best.get(key);
+      const score = x => (x.hasAttribute('data-bdsm-all') ? 2 : 0) + (x.querySelector('.thumb[style*="--bg"]') ? 1 : 0);
+      if (!cur || score(c) > score(cur)) best.set(key, c);
+    });
+    const keep = new Set(best.values());
+    cards.forEach(c => { c._show = keep.has(c); });
+  }
+  cards.forEach(card => {
+    card.style.display = card._show ? '' : 'none';
+    if (card._show) visible++;
   });
 
   let empty = feed.querySelector('.cat-filter-empty');
@@ -5430,7 +5497,7 @@ async function searchCategoriesByName(query) {
 
     // 2) Direct category URL from slug → category tile (if page has content)
     await Promise.all(sources.map(async (src) => {
-      if (!slug) return;
+      if (!slug || slug === 'bdsm') return;                    // 'bdsm' = the one combined BDSM card, no per-site / video-based tiles
       const url = src.feedUrl(slug);
       try {
         const res = await fetch('/api/scrape', {
@@ -5724,10 +5791,10 @@ function catalogCardHtml(c, kind) {
   const feed = feedOfSource(c.sourceId);
   return `<a class="card category-card${kind === 'pornstars' ? ' portrait' : ''}" href="#" data-link="${escapeHtml(c.link)}"
              data-name="${escapeHtml(c.name || '')}" data-source-id="${escapeHtml(c.sourceId)}"
-             data-group="${escapeHtml(c.group || '')}" title="${name}">
+             data-group="${escapeHtml(c.group || '')}"${c.members ? ` data-members="${escapeHtml(JSON.stringify(c.members))}"` : ''} title="${name}">
     <div class="thumb"${c.thumbnail ? ` style="--bg:url(&quot;${ph}&quot;)"` : ''}>
       <img src="${ph}" loading="lazy" decoding="async" alt="${name}" referrerpolicy="no-referrer" onerror="this.style.opacity=0">
-      <span class="site-label s-${escapeHtml(feed.id)}">${escapeHtml(feed.name)}</span>
+      <span class="site-label s-${escapeHtml(feed.id)}">${c.members ? `🔗 ${c.members.length} sites` : escapeHtml(feed.name)}</span>
     </div>
     <div class="info"><div class="title">${name}</div>${c.video_count ? `<div class="meta">${Number(c.video_count).toLocaleString()} videos</div>` : ''}</div>
   </a>`;
@@ -5774,6 +5841,27 @@ function renderCatalog(kind) {
   bindCatalogControls(kind);
 }
 
+/** Same star on several websites -> one card with every page as `members`; a name that exists on one site only stays as it is. */
+function catalogUnify(items) {
+  const norm = t => (t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
+  const byName = new Map(), order = [];
+  items.forEach(c => {
+    const k = norm(c.name);
+    if (!k) { order.push({ list: [c] }); return; }
+    let g = byName.get(k);
+    if (!g) { g = { list: [] }; byName.set(k, g); order.push(g); }
+    g.list.push(c);
+  });
+  return order.flatMap(g => {
+    const sites = new Map();
+    g.list.forEach(c => { if (!sites.has(c.sourceId)) sites.set(c.sourceId, c); });
+    if (sites.size < 2) return g.list;
+    const best = g.list.find(c => c.thumbnail) || g.list[0];
+    const members = [...sites.values()].map(c => ({ link: c.link, sid: c.sourceId, label: ((SOURCES.find(x => x.id === c.sourceId)) || {}).name || c.sourceId }));
+    return [{ ...best, members, group: [...new Set([...sites.values()].map(c => c.group))].join(' ') }];
+  });
+}
+
 function refreshCatalogGrid(kind) {
   const cfg = CATALOGS[kind], st = catalogState[kind];
   const feed = results.querySelector(`.feed[data-site="${cfg.tab}"]`);
@@ -5781,7 +5869,7 @@ function refreshCatalogGrid(kind) {
   if (!grid) return;
   const slot = grid.querySelector('.loading-row-slot');
   grid.querySelectorAll('.category-card, .cat-filter-empty').forEach(el => el.remove());
-  const sorted = st.items.slice().sort((a, b) =>
+  const sorted = catalogUnify(st.items).sort((a, b) =>
     (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base', numeric: true }));
   const temp = document.createElement('div');
   temp.innerHTML = sorted.map(c => catalogCardHtml(c, kind)).join('');
@@ -5797,7 +5885,7 @@ function applyCatalogFilter(kind) {
   if (!feed) return 0;
   let visible = 0;
   feed.querySelectorAll('.category-card').forEach(card => {
-    const ok = (st.filter === 'all' || card.getAttribute('data-group') === st.filter)
+    const ok = (st.filter === 'all' || (card.getAttribute('data-group') || '').split(' ').includes(st.filter))
       && catMatch(card.getAttribute('data-name'), st.q);
     card.style.display = ok ? '' : 'none';
     if (ok) visible++;
@@ -6861,7 +6949,7 @@ async function loadMoreMixed(tabKey, opts = {}) {
         const key = (it.link || '').split('?')[0];
         if (!key || ss.seen.has(key)) return;
         ss.seen.add(key);
-        fresh.push({ ...it, _host: hostOf(g.site), _label: g.label, _sourceId: g.sourceId, _feed: g.feedId });
+        fresh.push({ ...it, _host: hostOf(g.site), _label: g.label, _sourceId: g.sourceId, _feed: bdsmAwareFeed(it, g.feedId) });
       });
       if (!fresh.length) {
         st.emptyCount++;
@@ -7803,7 +7891,7 @@ function ingestWebSearchJson(st, json) {
       ...it,
       _host: hostOf(it._site || it.link || ''),
       _label: src ? src.name : hostOf(it._site || '').replace(/^www\./, ''),
-      _feed: sf.id,
+      _feed: bdsmAwareFeed(it, sf.id),
       _sourceId: src ? src.id : '',
     });
   }
@@ -8075,7 +8163,7 @@ async function loadMoreWebSearch(initial = false) {
             : (hostOf(it.link || '').includes('bdsmhole') ? FEEDS[1] : FEEDS[0]);
           st.items.push({ ...it, _score: 1, _host: hostOf(data.page || it.link || ''),
             _label: src ? src.name : hostOf(data.page || '').replace(/^www\./, ''),
-            _feed: sf.id, _sourceId: src ? src.id : '' });
+            _feed: bdsmAwareFeed(it, sf.id), _sourceId: src ? src.id : '' });
         }
         const next = data.next_page;
         if ((data.items || []).length && next && next !== j.url && !seenPages.has(next)) {
@@ -9807,12 +9895,14 @@ function render() {
   /** The Tags & Genres list = tags that are NOT already a category tile (Superporn / BDSMHole categories live in Categories, mixed there). */
   function buildGroups() {
     const items = (data && data.items) || [];
-    const catKeys = new Set(items.filter((it) => it.sid === 'superporn' || it.sid === 'bdsmhole').map((it) => normKey(it.name)));   // names that are already category tiles (General or BDSM)
+    const isCat = (it) => (it.sid === 'superporn' || it.sid === 'bdsmhole') && !it.tag;            // an image tile of the Categories page
+    const catKeys = new Set(items.filter(isCat).map((it) => normKey(it.name)));
     const map = new Map();
     items.forEach((it) => {
-      if (it.sid === 'superporn' || it.sid === 'bdsmhole') return;      // those are the Categories tiles
-      const k = normKey(it.name) || it.link;
-      if (catKeys.has(k)) return;                                       // same name already exists in Categories
+      if (isCat(it)) return;                                            // lives in Categories
+      const nk = normKey(it.name) || it.link;
+      if (catKeys.has(nk)) return;                                      // same name already exists in Categories
+      const k = (it.sid === 'bdsmhole' ? 'bdsm:' : '') + nk;            // BDSMHole tags stay separate from the General ones
       let g = map.get(k);
       if (!g) { g = { key: k, name: it.name, letter: it.letter, members: [], sids: [] }; map.set(k, g); }
       g.members.push(it);
@@ -9824,7 +9914,7 @@ function render() {
   async function loadAll(force) {
     if (!force && data && (data.loading || (data.done && Date.now() - data.at < 15 * 60000))) return;
     const d = data = { at: Date.now(), items: [], seen: new Set(), pending: 0, loading: true, done: false, failed: 0 };
-    const add = (list, sid) => (list || []).forEach((c) => {
+    const add = (list, sid, isTag) => (list || []).forEach((c) => {
       // key = full link minus hash: some sites carry the tag identity in the
       // query string (pornvideobb /zone_video/?cat=<name>), the path alone would
       // collapse all of them into one entry
@@ -9832,7 +9922,7 @@ function render() {
       if (!key || !name || d.seen.has(key)) return;
       try { if (typeof isAllVideosLink === 'function' && isAllVideosLink(key)) return; } catch (e) {}
       d.seen.add(key);
-      d.items.push({ name, link, sid, thumb: c.thumbnail || '', letter: letterOf(name) });
+      d.items.push({ name, link, sid, tag: !!isTag, thumb: c.thumbnail || '', letter: letterOf(name) });
     });
     const job = async (sid, startUrl, extra) => {
       try {
@@ -9844,7 +9934,7 @@ function render() {
           const j = await res.json();
           if (j.error) { if (!i) throw new Error(j.error); break; }
           const before = d.items.length;
-          add(j.categories, sid);
+          add(j.categories, sid, !!(extra && extra.mode === 'tags'));
           if (i > 0 && d.items.length === before) break;           // a page with nothing new = the end
           schedule();
           url = j.next_page || (!extra && typeof guessNextUrl === 'function' ? guessNextUrl(url, i + 2) : '') || '';
@@ -9859,6 +9949,7 @@ function render() {
     (typeof COMBINED_CATEGORY_SOURCES !== 'undefined' ? COMBINED_CATEGORY_SOURCES : []).forEach((s) => jobs.push([s.id, s.indexUrl, null]));
     if (typeof PORN_TAGS_URL !== 'undefined') jobs.push(['fullporno', PORN_TAGS_URL, { mode: 'tags' }]);
     if (typeof PVB_TAGS_URL !== 'undefined') jobs.push(['pornvideobb', PVB_TAGS_URL, { mode: 'tags' }]);
+    jobs.push(['bdsmhole', 'https://www.bdsmhole.com/tags/', { mode: 'tags' }]);      // BDSMHole tags that are not category tiles (fails quietly if the page does not exist)
     d.pending = jobs.length;
     jobs.forEach((j) => job(j[0], j[1], j[2]));
   }
@@ -9884,6 +9975,95 @@ function render() {
       return by ? Object.keys(GEN).filter((x) => by[x]).map((x) => ({ link: by[x], sid: x, label: GEN[x] })) : null;
     } catch (e) { return null; }
   };
+
+  // ---- player chips: look a plain tag name up in the site's own tag index
+  window.tgWarm = () => { try { loadAll(false); } catch (e) {} };
+  window.tgFindLink = (name, sid) => { const k = normKey(name); const it = ((data && data.items) || []).find((x) => x.sid === sid && normKey(x.name) === k); return it ? it.link : null; };
+  window.tgIndexDone = () => !!(data && data.done && !data.loading && data.items.length);
+
+  // ---- tags that are not categories become Categories tiles (General / BDSM), image = snapshot of one of their videos
+  const THUMB_KEY = 'tg-tag-thumbs-v1'; let thumbCache = {};
+  try { thumbCache = JSON.parse(localStorage.getItem(THUMB_KEY) || '{}'); } catch (e) {}
+  const saveThumbs = () => { try { const ks = Object.keys(thumbCache); if (ks.length > 1500) ks.slice(0, 300).forEach((k) => delete thumbCache[k]); localStorage.setItem(THUMB_KEY, JSON.stringify(thumbCache)); } catch (e) {} };
+  const hostSid = (u) => /pornvideobb\./i.test(u) ? 'pornvideobb' : /bdsmhole\./i.test(u) ? 'bdsmhole' : 'freesexvideos';
+  function tagTiles() {
+    return buildGroups().map((g) => {
+      const m = g.members.find((x) => x.sid === 'fullporno') || g.members[0];
+      return { name: g.name, link: m.link, sourceId: hostSid(m.link), thumbnail: thumbCache[g.key] || m.thumb || '', tag: true, tagKey: g.key };
+    });
+  }
+  /** The "BDSM" category of the General sites (Superporn / FreeSexVideos / PornVideoBB) -> ONE tile in the BDSM filter that opens one mixed feed. */
+  window.tgConsolidateBdsm = function () {
+    try {
+      if (typeof categoriesState === 'undefined' || !categoriesState.categories) return;
+      const LAB = { superporn: 'Superporn', fullporno: 'FreeSexVideos', pornvideobb: 'PornVideoBB', bdsmhole: 'BDSMHole' };
+      const siteOf = (u) => /superporn\./i.test(u) ? 'superporn' : /pornvideobb\./i.test(u) ? 'pornvideobb' : /bdsmhole\./i.test(u) ? 'bdsmhole' : /freesexvideos\./i.test(u) ? 'fullporno' : '';
+      const by = {};
+      const take = (u) => { const sid = siteOf(u || ''); if (sid && !by[sid]) by[sid] = u; };
+      categoriesState.categories.forEach((c) => { if (!c.bdsmAll && normKey(c.name) === 'bdsm') take(c.link); });          // category tiles called "BDSM"
+      const g = allGroups().get(normKey('BDSM')); if (g) g.members.forEach((m) => take(m.link));                           // + tags called "BDSM" (FreeSexVideos / PornVideoBB)
+      const sids = Object.keys(LAB).filter((x) => by[x]);
+      if (sids.length < 1) return;
+      window.__bdsmAllMembers = sids.map((x) => ({ link: by[x], sid: x, label: LAB[x] }));
+      const list = categoriesState.categories.filter((c) => c.bdsmAll || normKey(c.name) !== 'bdsm');                      // every separate "BDSM" card goes away
+      if (!list.some((c) => c.bdsmAll)) list.push({ name: 'BDSM', link: by[sids[0]], sourceId: 'bdsmhole', thumbnail: thumbCache['bdsm-all'] || '', tag: true, tagKey: 'bdsm-all', bdsmAll: true });
+      if (list.length !== categoriesState.categories.length) categoriesState.categories = list;
+    } catch (e) {}
+  };
+  window.tgMergeIntoCategories = function () {
+    try {
+      const feed = document.querySelector(`.feed[data-site="${CATEGORIES_TAB}"]`);
+      if (!feed || typeof categoriesState === 'undefined' || !categoriesState.categories) return;
+      const fid = (c) => feedOfSource(c.sourceId || 'superporn').id + '|' + normKey(c.name);
+      const have = new Set(categoriesState.categories.map(fid));
+      window.tgConsolidateBdsm();
+      const add = tagTiles().filter((t) => !have.has(fid(t)) && normKey(t.name) !== 'bdsm');
+      if (!add.length) { refreshCategoryGridFromState(); window.tgSnapTiles(); return; }
+      categoriesState.categories.push(...add);
+      window.tgConsolidateBdsm();
+      sortCategoriesAZ(categoriesState.categories);
+      refreshCategoryGridFromState();
+      if (typeof applyCategoryNameFilter === 'function') applyCategoryNameFilter();
+      window.tgSnapTiles();
+    } catch (e) {}
+  };
+  const snap = { q: [], run: 0, tried: new Set() };
+  async function snapOne(card) {
+    const key = card.dataset.tagkey, link = card.dataset.link;
+    if (!key || snap.tried.has(key)) return; snap.tried.add(key);
+    try {
+      const res = await fetch('/api/scrape', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ urls: [link] }) });
+      const d = ((await res.json()).results || [])[0];
+      const it = ((d && d.items) || []).find((x) => x.thumbnail); if (!it) return;
+      thumbCache[key] = it.thumbnail; saveThumbs();
+      const rec = categoriesState.categories.find((c) => c.tag && c.tagKey === key); if (rec) rec.thumbnail = it.thumbnail;
+      document.querySelectorAll('.category-card[data-tagkey]').forEach((c) => {
+        if (c.dataset.tagkey !== key) return;
+        const t = c.querySelector('.thumb'), im = c.querySelector('img');
+        if (t) t.style.setProperty('--bg', `url("${it.thumbnail}")`);
+        if (im) { im.src = it.thumbnail; im.style.opacity = 1; }
+        c.removeAttribute('data-snap');
+      });
+    } catch (e) {}
+  }
+  const pumpSnap = () => { while (snap.run < 2 && snap.q.length) { snap.run++; snapOne(snap.q.shift()).finally(() => { snap.run--; pumpSnap(); }); } };
+  let snapIO = null;
+  window.tgSnapTiles = function () {            // snapshots are fetched lazily, only for tiles that scroll into view
+    if (!('IntersectionObserver' in window)) return;
+    if (!snapIO) snapIO = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { snapIO.unobserve(e.target); snap.q.push(e.target); pumpSnap(); } }), { rootMargin: '300px' });
+    document.querySelectorAll('.category-card[data-snap]').forEach((c) => snapIO.observe(c));
+  };
+  let mergeTimer = null, lastN = -1;
+  function startTileSync() {
+    window.tgMergeIntoCategories();
+    if (mergeTimer) return;
+    mergeTimer = setInterval(() => {
+      if (!document.querySelector(`.feed[data-site="${CATEGORIES_TAB}"]`)) return;
+      const n = data && data.items ? data.items.length : 0;
+      if (n !== lastN) { lastN = n; window.tgMergeIntoCategories(); }
+      if (data && data.done && !data.loading) { clearInterval(mergeTimer); mergeTimer = null; window.tgMergeIntoCategories(); }
+    }, 2500);
+  }
 
   // ---------------------------------------------------------------- view
   const viewEl = () => document.getElementById('tgView');
@@ -9996,7 +10176,7 @@ function render() {
   window.tgOnCategoriesRendered = function () {                // called by renderCategories() every time the Categories page is drawn
     const feed = document.querySelector(`.feed[data-site="${CATEGORIES_TAB}"]`);
     if (!feed) return;
-    setTimeout(() => { try { loadAll(false); } catch (e) {} }, 1500);   // so shared tags are already known when a category is tapped
+    setTimeout(() => { try { loadAll(false); startTileSync(); } catch (e) {} }, 1200);   // load tag lists in the background and merge them into Categories
     if (!feed.querySelector('.cat-view-switch')) {
       const hdr = feed.querySelector('.feed-header'); if (!hdr) return;
       hdr.insertAdjacentHTML('afterend', `<div class="cat-view-switch" role="tablist" aria-label="Categories view">
