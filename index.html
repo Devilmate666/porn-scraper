@@ -1334,6 +1334,11 @@ body.fav-panel-open { overflow: hidden; }
 #favPanel .fav-close { width: 2.1rem; height: 2.1rem; min-width: 2.1rem; max-width: 2.1rem; }
 #favPanel .fav-x { width: 1.9rem; height: 1.9rem; min-width: 1.9rem; max-width: 1.9rem; }
 #favPanel .fav-x svg { display: block; flex: none; }
+/* Mobile: the global `button { min-height: 42px }` (<=700px) stretched every small round button into an oval. */
+.fav-btn, .hist-x, #favPanel .fav-close, #favPanel .fav-x { min-height: 0; box-sizing: border-box; padding: 0; aspect-ratio: 1 / 1; flex: none; }
+.fav-btn, .hist-x { min-width: 2rem; max-width: 2rem; max-height: 2rem; }
+#favPanel .fav-close { min-height: 2.1rem; max-height: 2.1rem; }
+#favPanel .fav-x { min-height: 1.9rem; max-height: 1.9rem; }
 </style>
 <base target="_blank">
 <base target="_blank">
