@@ -5132,6 +5132,7 @@ async function openPornTags(forceRefresh = false, opts = {}) {
       </div>
     </div>`;
   if (typeof window.tgRenderPage === 'function') window.tgRenderPage(forceRefresh);
+  else window.tgPendingRender = true;            // opened from a #/tags link before the Tags & Genres block has loaded
   if (!opts.skipPush) pushNav({ view: 'porntags' });
   setTimeout(updateNetworkBarActive, 0);
 }
@@ -9980,6 +9981,7 @@ function render() {
 
   // ---------------------------------------------------------------- page (🏷️ Tags & Genres button, see openPornTags)
   window.tgRenderPage = function (force) { build(); loadAll(!!force); render(); };
+  if (window.tgPendingRender && activeTab === PORN_TAGS_TAB) { window.tgPendingRender = false; window.tgRenderPage(false); }
   window.tgOnCategoriesRendered = function () { loadAll(false); };   // the Superporn tiles need the lists for their merged feeds
   const wait = setInterval(() => { if (F() && F().onChange) { clearInterval(wait); F().onChange(() => { const v = viewEl(); if (v) { v.querySelectorAll('.tg-card').forEach(paint); updateChips(); } }); } }, 200);
 })();
