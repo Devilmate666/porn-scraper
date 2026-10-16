@@ -123,6 +123,11 @@ function chipsOf(anchors: HTMLElement[], base: string): Chip[] {
   }
   return out;
 }
+const slugOf = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+/** Names without links on the page -> chips linked to the site's own listing for that name. */
+function linkedChips(names: string[], toUrl: (slug: string) => string): Chip[] {
+  return plainChips(names).map((c) => { const sl = slugOf(c.name); return { name: c.name, link: sl ? toUrl(sl) : null }; });
+}
 function plainChips(names: string[]): Chip[] {
   const out: Chip[] = [], seen = new Set<string>();
   for (const raw of names) { const n = cleanName(raw); if (n && !seen.has(n.toLowerCase())) { seen.add(n.toLowerCase()); out.push({ name: n, link: null }); } }
@@ -148,7 +153,7 @@ function siteMetadata(root: HTMLElement, host: string, url: string, title: strin
       if (kind) add(kind, chipsOf(links, url));
     }
     const tags = metaVals(root, "video:tag").flatMap((v) => v.split(/[,;]/));
-    if (tags.length) g.tags = plainChips(tags);
+    if (tags.length) g.tags = linkedChips(tags, (sl) => `https://www.freesexvideos.xxx/search/${sl}/`);   // not every tag has a /tags/ page
     site.description = null;          // the page has no story, only a generic "Watch X on Free Sex Videos" line
     // views / votes of THIS video live in its own action bar (the generic scan would pick a related video's)
     site.views = site.rating = null;
@@ -239,7 +244,7 @@ function siteMetadata(root: HTMLElement, host: string, url: string, title: strin
       if (kind && links.length) g[kind] = chipsOf(links, url);
     }
     const genres = metaVals(root, "video:tag").flatMap((v) => v.split(/[,;]/));
-    if (genres.length) g.categories = plainChips(genres);   // the site's own genre list; the page's Tags row is separate
+    if (genres.length) g.categories = linkedChips(genres, (sl) => `https://www.bdsmhole.com/category/${sl}/`);   // the site's own genre list; the page's Tags row is separate
   } else return {};
   if (Object.keys(g).length) site.groups = g;
   return site;
@@ -249,13 +254,13 @@ function siteMetadata(root: HTMLElement, host: string, url: string, title: strin
 function dedupeGroups(groups: Record<string, any[]>) {
   for (const k of Object.keys(groups)) {
     const seen = new Set<string>();
-    groups[k] = groups[k].filter((x) => { const key = x.name.toLowerCase(); if (seen.has(key)) return false; seen.add(key); return true; });
+    groups[k] = groups[k].filter((x) => { const key = normT(x.name); if (!key || seen.has(key)) return false; seen.add(key); return true; });
   }
   const people = new Set<string>();
-  for (const k of ["models", "studios", "uploaders"]) for (const x of groups[k] || []) people.add(x.name.toLowerCase());
-  if (groups.categories) groups.categories = groups.categories.filter((x) => !people.has(x.name.toLowerCase()));
-  const cats = new Set((groups.categories || []).map((x) => x.name.toLowerCase()));
-  if (groups.tags) groups.tags = groups.tags.filter((x) => !people.has(x.name.toLowerCase()) && !cats.has(x.name.toLowerCase()));
+  for (const k of ["models", "studios", "uploaders"]) for (const x of groups[k] || []) people.add(normT(x.name));
+  if (groups.categories) groups.categories = groups.categories.filter((x) => !people.has(normT(x.name)));
+  const cats = new Set((groups.categories || []).map((x) => normT(x.name)));
+  if (groups.tags) groups.tags = groups.tags.filter((x) => !people.has(normT(x.name)) && !cats.has(normT(x.name)));
   for (const k of Object.keys(groups)) if (!groups[k].length) delete groups[k];
 }
 
