@@ -1,0 +1,13 @@
+{
+  "name": "porn-archive-api",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "node-html-parser": "^6.1.13"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240909.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.5.0"
+  }
+}

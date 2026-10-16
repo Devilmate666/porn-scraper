@@ -1,0 +1,7 @@
+node_modules/
+static/
+tunnel.log
+__pycache__/
+*.pyc
+.wrangler/
+deploy.log
