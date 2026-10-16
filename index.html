@@ -1339,6 +1339,81 @@ body.fav-panel-open { overflow: hidden; }
 .fav-btn, .hist-x { min-width: 2rem; max-width: 2rem; max-height: 2rem; }
 #favPanel .fav-close { min-height: 2.1rem; max-height: 2.1rem; }
 #favPanel .fav-x { min-height: 1.9rem; max-height: 1.9rem; }
+
+/* =====================================================================================
+   PHONES (<= 700px): compact layout - 2 video cards per row, slimmer header / filters /
+   cards / bottom bar, so far more fits on screen. (Desktop rules above are untouched.)
+   ===================================================================================== */
+@media (max-width: 700px) {
+  body { padding: .3rem .35rem .8rem; }
+  header { gap: .4rem; margin-bottom: .4rem; }
+  .app > header.section-nav-sticky { padding: .3rem 0; }
+  .brand { gap: .45rem; }
+  .brand svg { width: 26px; height: 26px; }
+  .brand-name { font-size: .95rem; letter-spacing: .12em; }
+  .brand-sub { display: none; }
+
+  /* buttons / nav chips */
+  .action, button { min-height: 34px; }
+  .site-actions { gap: .3rem; }
+  .site-actions .action { min-height: 34px; padding: .35rem .65rem; font-size: .72rem; border-radius: 999px; }
+  .site-tab { padding: .35rem .7rem; font-size: .72rem; }
+
+  /* pinned filter area */
+  .feed-controls-sticky { padding: .35rem .45rem; gap: .3rem; max-height: min(30vh, 13rem); }
+  .mix-filters { gap: .3rem; }
+  .mix-filter-row { padding: .22rem .35rem; gap: .3rem; border-radius: .7rem; }
+  .mix-filter-row .mix-filter-label { flex-basis: 3.6rem; min-height: 1.6rem; padding: 0 .3rem; font-size: .58rem; }
+  button.mix-filter-chip { min-height: 1.7rem; padding: .22rem .6rem; font-size: .68rem; }
+  .badges { gap: .25rem; }
+  .badges span { font-size: .6rem; padding: .15rem .45rem; }
+
+  /* search boxes */
+  .search-bar, .feed > .search-bar { padding: .4rem .5rem; gap: .35rem; }
+  .search-bar input, .feed > .search-bar input, .cat-search-bar input, .tg-tools input { padding: .5rem .85rem; font-size: 16px; }
+  .cat-search-bar, .cat-filter-bar { padding: .4rem .5rem; gap: .3rem; }
+  .tg-search-sticky { padding: .4rem .5rem; margin: 0 -.5rem; }
+  .tg-view { padding-left: .5rem; padding-right: .5rem; }
+
+  /* feed + cards: TWO per row */
+  .feed { border-radius: .9rem; }
+  .videos, .section-loading { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .4rem; padding: .4rem; }
+  .card { border-radius: .6rem; }
+  .card:hover { transform: none; box-shadow: none; }
+  .info { padding: .35rem .45rem .45rem; }
+  .title { font-size: .7rem; line-height: 1.25; margin-bottom: .2rem; }
+  .meta { font-size: .58rem; gap: .15rem .45rem; }
+  .site-label { top: .3rem; left: .3rem; padding: .1rem .4rem; font-size: .55rem; }
+  .site-label.card-net { max-width: calc(100% - 2.6rem); }
+  .cam-card, .category-card { border-radius: .6rem; }
+  .category-card .title { font-size: .7rem; }
+  .tg-grid { gap: .4rem; }
+  .tg-card .info { padding: .4rem .45rem .5rem; }
+  .studio-list.series-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .4rem; padding: .4rem; }
+  .cams-grid { gap: .4rem; padding: .4rem; }
+  .loading-row { padding: .8rem; font-size: .72rem; }
+
+  /* player */
+  .main-player { border-radius: .9rem; margin-bottom: .6rem; }
+  .main-player-head { padding: .45rem .6rem; gap: .35rem; }
+  .main-player-close { padding: .4rem .7rem; font-size: .75rem; }
+
+  /* bottom bar */
+  :root { --favbar-h: 3rem; }
+  #favBar { padding: .3rem .45rem max(.3rem, env(safe-area-inset-bottom)); }
+  #favBar .fb-row { gap: .3rem; }
+  #favBar button.action { min-height: 34px; padding: .35rem .5rem; font-size: .7rem; }
+  .app { padding-bottom: calc(var(--favbar-h) + .6rem); }
+
+  /* library / my mix panel */
+  #favPanel .fav-panel-head { padding: .5rem var(--lib-pad) .35rem; }
+  #favPanel .fav-panel-title { font-size: 1.1rem; }
+  #favPanel .lib-ico { width: 2rem; height: 2rem; border-radius: .65rem; }
+  #favPanel .lib-sub { font-size: .66rem; }
+  #favPanel .lib-tools { padding: .2rem var(--lib-pad) .35rem; gap: .35rem; }
+  #favPanel .lib-card { border-radius: .6rem; }
+  #favPanel .lib-grid { gap: .2rem; }
+}
 </style>
 <base target="_blank">
 <base target="_blank">
