@@ -924,13 +924,20 @@
   @media (prefers-reduced-motion: reduce) { #sectionMenu .sm-sheet, #sectionMenu .sm-backdrop { animation: none; } .site-actions .action { transition: none; } }
 
 /* ===================== Categories: Tags & Genres view ===================== */
-.cat-view-switch { display: flex; gap: .5rem; padding: .75rem 1.4rem .15rem; flex-wrap: wrap; }
-.cat-view-switch button { border: 1px solid #232b3b; background: #131822; color: #a9b9d6; padding: .5rem 1.1rem; border-radius: 30px; font: inherit; font-size: .82rem; font-weight: 600; cursor: pointer; transition: .15s; }
-.cat-view-switch button:hover { background: #1c2330; border-color: #3a465e; color: #d5e0f5; }
-.cat-view-switch button.on { background: linear-gradient(145deg, #4f46e5, #6366f1); border-color: #7c8af8; color: #fff; box-shadow: 0 4px 14px -4px #4f46e5aa; }
-  .feed.tg-on > .cat-filter-bar, .feed.tg-on > .cat-search-bar, .feed.tg-on > .videos, .feed.tg-on > .sentinel { display: none !important; }
-  .tg-view { display: none; padding: .4rem 1.4rem 2rem; }
-  .feed.tg-on > .tg-view { display: block; }
+.tg-view { padding: .4rem 1.4rem 2rem; }
+.tg-card { display: block; background: #171d28; border: 1px solid #232b3b; border-radius: 1rem; overflow: hidden; cursor: pointer; color: inherit; text-decoration: none; transition: transform .15s, border-color .15s; }
+.tg-card:hover { transform: translateY(-3px); border-color: #4a5b7d; }
+.tg-card .thumb { position: relative; aspect-ratio: 16/9; background: #0b0e14; overflow: hidden; }
+.tg-card .thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 1; }
+.tg-card .info { padding: .6rem .75rem .7rem; }
+.tg-card .title { text-align: center; margin-bottom: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tg-card .tg-heart { position: absolute; right: .5rem; bottom: .5rem; z-index: 6; background: rgba(0,0,0,.55); }
+.tg-card.is-fav { border-color: #ff4d6d66; }
+.tg-card.is-fav .tg-heart svg { fill: #ff4d6d; stroke: #ff4d6d; }
+.tg-sec { scroll-margin-top: 9.5rem; padding: .3rem 0 1rem; }
+.tg-sec .tag-letter { width: 46px; margin-bottom: .6rem; }
+.tg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: .9rem; }
+@media (max-width: 600px) { .tg-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .6rem; } }
 .tg-tools { display: flex; flex-direction: column; gap: .6rem; padding: .5rem 0 .3rem; }
 .tg-tools input { width: 100%; background: #0c0f15; border: 1px solid #232b3b; color: #e2e8f0; padding: .65rem 1.1rem; border-radius: 30px; font: inherit; font-size: .88rem; outline: none; transition: .15s; }
 .tg-tools input:focus { border-color: #4f46e5; box-shadow: 0 0 0 3px #4f46e533; }
@@ -947,7 +954,6 @@
 .tg-status { display: flex; align-items: center; gap: .6rem; padding: .4rem 0 .6rem; font-size: .8rem; color: #8193b5; }
 .tg-spin { width: .9rem; height: .9rem; flex: none; border-radius: 50%; border: 2px solid #3a4770; border-top-color: #8b9cff; animation: mixSpin .8s linear infinite; }
 .tg-retry { background: #1e2432; border: 1px solid #2e3749; color: #d0daea; border-radius: 30px; padding: .25rem .8rem; font: inherit; font-size: .75rem; cursor: pointer; }
-.tg-list .tag-row { scroll-margin-top: 9.5rem; }
 .tg-pill { display: inline-flex; align-items: center; gap: .45rem; max-width: 100%; padding: .28rem .3rem .28rem .8rem; background: #1b2136; border: 1px solid transparent; border-radius: 999px;
   color: #c9d2ee; font-size: .88rem; font-weight: 600; text-decoration: none; cursor: pointer; transition: background .15s, border-color .15s, color .15s; -webkit-tap-highlight-color: transparent; }
 .tg-pill:hover { background: #262f55; color: #fff; }
@@ -963,7 +969,7 @@
 .tg-heart:hover { background: rgba(255,77,109,.22); transform: scale(1.1); }
 .tg-heart:focus-visible { outline: 2px solid #7c8af8; outline-offset: 2px; }
 .tg-pill.is-fav .tg-heart svg { fill: #ff4d6d; stroke: #ff4d6d; }
-@media (max-width: 600px) { .cat-view-switch, .tg-view { padding-left: .8rem; padding-right: .8rem; } .tg-pill { font-size: .82rem; } }
+@media (max-width: 600px) { .tg-view { padding-left: .8rem; padding-right: .8rem; } .tg-pill { font-size: .82rem; } }
 /* ===================== Favorites ===================== */
 
 /* heart on cards */
@@ -1328,6 +1334,7 @@ body.fav-panel-open { overflow: hidden; }
           <div class="site-actions">
             <button class="action" id="homeBtn" type="button" title="Back to the mixed home feed">🏠 Home</button>
             <button class="action" id="categoriesBtn" type="button">📁 Categories</button>
+            <button class="action" id="pornTagsBtn" type="button">🏷️ Tags &amp; Genres</button>
             <button class="action" id="pornSitesBtn" type="button">📺 Porn Series</button>
             <button class="action" id="networksBtn" type="button">🌐 Networks</button>
             <button class="action" id="pornstarsBtn" type="button">⭐ Pornstars</button>
@@ -1615,7 +1622,7 @@ function isSectionRootState(st) {
   if (!st) return false;
   return st.view === 'feed' || ['categories', 'pornsites', 'porntags', 'networks', 'pornstars', 'livecams', 'livechannels'].includes(st.view);
 }
-const SECTION_MENU_ITEMS = [['home', 'homeBtn'], ['categories', 'categoriesBtn'], ['pornsites', 'pornSitesBtn'], ['networks', 'networksBtn'],
+const SECTION_MENU_ITEMS = [['home', 'homeBtn'], ['categories', 'categoriesBtn'], ['porntags', 'pornTagsBtn'], ['pornsites', 'pornSitesBtn'], ['networks', 'networksBtn'],
   ['pornstars', 'pornstarsBtn'], ['livecams', 'camsBtn'], ['livechannels', 'chansBtn']];
 function sectionMenuEl() {
   let el = document.getElementById('sectionMenu');
@@ -2889,6 +2896,7 @@ function updateNetworkBarActive() {
   const sectionBtn = {
     home: 'homeBtn',
     categories: 'categoriesBtn',
+    porntags: 'pornTagsBtn',
     pornsites: 'pornSitesBtn',
     networks: 'networksBtn',
     pornstars: 'pornstarsBtn',
@@ -5111,53 +5119,22 @@ const openPornSites = (forceRefresh = false, opts = {}) => openStudioView(PORN_S
 const openNetworks  = (forceRefresh = false, opts = {}) => openStudioView(NETWORKS_TAB, forceRefresh, opts);
 
 /** FullPorno tags / categories listing — always available as "Porn Tags". */
+/** Tags & Genres: every tag + genre of every website as thumbnail tiles (built by the Tags & Genres block at the end). */
 async function openPornTags(forceRefresh = false, opts = {}) {
-  if (!forceRefresh && loadCategoryCache(PORN_TAGS_CACHE_KEY)) {
-    const data = {
-      ...(lastCategoriesData || {}),
-      categories: categoriesState.categories.slice(),
-      next_page: categoriesState.next_page,
-      page_num: categoriesState.page_num,
-      kind: 'porntags',
-    };
-    renderCategories(data, false, { kind: 'porntags' });
-    if (!opts.skipPush) pushNav({ view: 'porntags' });
-    setStatus(`Porn Tags — ${categoriesState.categories.length}`, false);
-    scheduleCategoryRecheck();
-    return;
-  }
-
-  if (busy) return;
-  busy = true;
-  if (pornTagsBtn) pornTagsBtn.disabled = true;
-  setStatus('Loading porn tags…', true);
-  showSectionLoading('porn tags and categories');
-
-  try {
-    const res = await fetch('/api/scrape-categories', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: PORN_TAGS_URL, mode: 'tags' }),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const json = await res.json();
-    if (json.error) throw new Error(json.error);
-    const cats = (json.categories || []).map(c => ({ ...c, sourceId: 'fullporno' }));
-    if (cats.length && !cats.some(c => c.letter)) {
-      throw new Error('Server is running an old scraper.py/app.py (image-based result). Replace both files and restart the server.');
-    }
-    const data = { ...json, categories: cats, next_page: '', kind: 'porntags' };
-    renderCategories(data, false, { kind: 'porntags' });
-    if (!opts.skipPush) pushNav({ view: 'porntags' });
-    setStatus(`Porn Tags — ${cats.length}`, false);
-    scheduleCategoryRecheck();
-  } catch (err) {
-    rescueSearchBar(); results.innerHTML = `<div class="empty">⚠️ ${escapeHtml(err.message)}</div>`;
-    setStatus('Porn tags load error', false);
-  } finally {
-    busy = false;
-    if (pornTagsBtn) pornTagsBtn.disabled = false;
-  }
+  hideSearchBar();
+  activeTab = PORN_TAGS_TAB;
+  results.innerHTML = `<div class="feed" data-site="${PORN_TAGS_TAB}">
+      <div class="feed-header section-intro">
+        <div>
+          <div class="feed-name">🏷️ Tags &amp; Genres</div>
+          <div class="feed-url">Tags and genres from every website</div>
+        </div>
+      </div>
+    </div>`;
+  if (typeof window.tgRenderPage === 'function') window.tgRenderPage(forceRefresh);
+  else window.tgPendingRender = true;            // opened from a #/tags link before the Tags & Genres block has loaded
+  if (!opts.skipPush) pushNav({ view: 'porntags' });
+  setTimeout(updateNetworkBarActive, 0);
 }
 
 function bindCategorySourceFilters() {
@@ -6571,6 +6548,7 @@ if (networksBtn) networksBtn.addEventListener('click', (e) => enterNavSection('n
 if (pornstarsBtn) pornstarsBtn.addEventListener('click', (e) => enterNavSection('pornstars', () => openCatalog('pornstars', { force: !!e.shiftKey }), !!e.shiftKey, e.currentTarget));
 
 categoriesBtn.addEventListener('click', (e) => enterNavSection('categories', () => openCategories(!!e.shiftKey), !!e.shiftKey, e.currentTarget));
+if (pornTagsBtn) pornTagsBtn.addEventListener('click', (e) => enterNavSection('porntags', () => openPornTags(!!e.shiftKey), !!e.shiftKey, e.currentTarget));
 if (pornSitesBtn) {
   pornSitesBtn.addEventListener('click', (e) => enterNavSection('pornsites', () => openPornSites(!!e.shiftKey), !!e.shiftKey, e.currentTarget));
 }
@@ -9704,21 +9682,18 @@ function render() {
 })();
 </script>
 <script>
-/* ===================== Categories: "Tags & Genres" view =====================
-   One separate A-Z list with every category + tag from all websites (Superporn, BDSMHole, FreeSexVideos, PornVideoBB).
+/* ===================== "Tags & Genres" page (its own section button) =====================
+   One separate A-Z grid of thumbnail tiles with every category + tag from all websites (Superporn, BDSMHole, FreeSexVideos, PornVideoBB).
    A tag that exists on several websites is ONE entry (one badge per website) and opens ONE combined feed;
    its heart saves/unsaves the per-website category favorites (type "category").
    Names that are also a Superporn category (with FreeSexVideos / PornVideoBB matches) are merged into that
    Superporn tile's combined feed and left out of this list (BDSMHole is never merged). */
 (function () {
   'use strict';
-  const VKEY = 'pa_cat_view_v1';
   const SITE_NAMES = { superporn: 'Superporn', bdsmhole: 'BDSMHole', fullporno: 'FreeSexVideos', pornvideobb: 'PornVideoBB' };
   const HEART = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>';
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const F = () => window.Favorites;
-  let catView = 'tiles';
-  try { if (localStorage.getItem(VKEY) === 'tags') catView = 'tags'; } catch (e) {}
   const tg = { site: 'all', q: '', saved: false };
   let data = null, raf = 0;
 
@@ -9847,30 +9822,81 @@ function render() {
     jobs.forEach((j) => job(j[0], j[1], j[2]));
   }
 
+  // ---------------------------------------------------------------- thumbnails: the first video of the tag's own feed
+  const TKEY = 'pa_tg_thumbs_v1', TTTL = 7 * 86400000;
+  const PIX = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
+  let thumbs = {}, thumbsAt = Date.now(), saveT = 0, inflight = 0, io = null;
+  try { const t = JSON.parse(localStorage.getItem(TKEY) || 'null'); if (t && t.map && Date.now() - t.at < TTTL) { thumbs = t.map; thumbsAt = t.at; } } catch (e) {}
+  const tried = new Set(), queue = [];
+  const thumbOf = (g) => thumbs[g.key] || (g.members.find((m) => m.thumb) || {}).thumb || '';
+  function saveThumbs() {
+    clearTimeout(saveT);
+    saveT = setTimeout(() => { try { localStorage.setItem(TKEY, JSON.stringify({ at: thumbsAt, map: thumbs })); } catch (e) {} }, 800);
+  }
+  function setTileThumb(key, url) {
+    const v = viewEl(); if (!v) return;
+    v.querySelectorAll(`.tg-card[data-key="${CSS.escape(key)}"] img`).forEach((img) => { img.style.opacity = ''; img.src = url; });
+  }
+  function pump() {
+    while (inflight < 2 && queue.length) {
+      const gs = queue.splice(Math.max(0, queue.length - 8)).map((k) => groupMap.get(k)).filter(Boolean);   // newest (on screen) first
+      if (!gs.length) continue;
+      inflight++;
+      fetch('/api/scrape', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ urls: gs.map((g) => g.members[0].link) }) })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j) => {
+          ((j && j.results) || []).forEach((res, i) => {
+            const it = res && (res.items || []).find((x) => x && x.thumbnail);
+            if (it && gs[i]) { thumbs[gs[i].key] = it.thumbnail; setTileThumb(gs[i].key, it.thumbnail); }
+          });
+          saveThumbs();
+        })
+        .catch(() => {})
+        .finally(() => { inflight--; pump(); });
+    }
+  }
+  function observeThumbs(v) {
+    if (!('IntersectionObserver' in window)) return;
+    if (!io) io = new IntersectionObserver((entries) => {
+      entries.forEach((e) => {
+        if (!e.isIntersecting) return;
+        io.unobserve(e.target);
+        const k = e.target.dataset.key;
+        if (k && !thumbs[k] && !tried.has(k)) { tried.add(k); queue.push(k); }
+      });
+      pump();
+    }, { rootMargin: '600px 0px' });
+    io.disconnect();
+    v.querySelectorAll('.tg-card').forEach((t) => { if (!thumbs[t.dataset.key] && !tried.has(t.dataset.key)) io.observe(t); });
+  }
+
   // ---------------------------------------------------------------- view
   const viewEl = () => document.getElementById('tgView');
   const isFav = (it) => !!(F() && F().hasCategory(it.link));
   const favCount = (g) => g.members.filter(isFav).length;
   const anyFav = (g) => favCount(g) > 0;
   const allFav = (g) => favCount(g) === g.members.length;
-  function pillHtml(g) {
-    const on = anyFav(g);
-    return `<a href="#" class="tg-pill${on ? ' is-fav' : ''}" data-key="${esc(g.key)}" title="${esc(g.name)}">` +
-      `<span class="tg-name">${esc(g.name)}</span>` +
-      `<span class="tg-heart" role="button" tabindex="0" aria-pressed="${on}" aria-label="${on ? 'Remove from favorites' : 'Add to favorites'}">${HEART}</span></a>`;
+  function tileHtml(g) {
+    const on = anyFav(g), th = thumbOf(g);
+    let fid = '';
+    try { fid = feedOfSource(g.sids[0]).id; } catch (e) {}
+    return `<div class="tg-card${on ? ' is-fav' : ''}" role="link" tabindex="0" data-key="${esc(g.key)}" title="${esc(g.name)}">` +
+      `<div class="thumb"><img src="${esc(th || PIX)}" loading="lazy" alt="${esc(g.name)}" referrerpolicy="no-referrer" onerror="this.style.opacity=0">` +
+      `<span class="site-label s-${esc(fid)}">${esc(g.sids.map((x) => SITE_NAMES[x] || x).join(' + '))}</span>` +
+      `<span class="tg-heart" role="button" tabindex="0" aria-pressed="${on}" aria-label="${on ? 'Remove from favorites' : 'Add to favorites'}">${HEART}</span></div>` +
+      `<div class="info"><div class="title">${esc(g.name)}</div></div></div>`;
   }
   function build() {
-    const feed = document.querySelector(`.feed[data-site="${CATEGORIES_TAB}"]`);
+    const feed = document.querySelector(`.feed[data-site="${PORN_TAGS_TAB}"]`);
     if (!feed || viewEl()) return;
-    const sw = feed.querySelector('.cat-view-switch');
-    sw.insertAdjacentHTML('afterend', `<div class="tg-view" id="tgView">
+    feed.querySelector('.feed-header').insertAdjacentHTML('afterend', `<div class="tg-view" id="tgView">
       <div class="tg-tools">
         <input id="tgSearch" type="search" placeholder="Search tags & genres (e.g. milf, bondage)…" autocomplete="off" aria-label="Search tags and genres">
         <div class="tg-chips" id="tgChips"></div>
       </div>
       <div class="tg-az" id="tgAz"></div>
       <div class="tg-status" id="tgStatus"></div>
-      <div class="tag-cloud tg-list" id="tgList"></div>
+      <div class="tg-list" id="tgList"></div>
     </div>`);
     const v = viewEl(), s = v.querySelector('#tgSearch');
     s.value = tg.q;
@@ -9884,13 +9910,13 @@ function render() {
     });
     v.querySelector('#tgAz').addEventListener('click', (e) => {
       const b = e.target.closest('[data-l]'); if (!b) return;
-      const row = v.querySelector(`.tag-row[data-letter="${CSS.escape(b.dataset.l)}"]`); if (row) row.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      const row = v.querySelector(`.tg-sec[data-letter="${CSS.escape(b.dataset.l)}"]`); if (row) row.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
     v.querySelector('#tgStatus').addEventListener('click', (e) => { if (e.target.closest('[data-retry]')) { loadAll(true); render(); } });
     const list = v.querySelector('#tgList');
     list.addEventListener('click', (e) => {
       const h = e.target.closest('.tg-heart');
-      const p = e.target.closest('.tg-pill'); if (!p) return;
+      const p = e.target.closest('.tg-card'); if (!p) return;
       e.preventDefault();
       const g = groupMap.get(p.dataset.key); if (!g) return;
       if (h) {
@@ -9904,11 +9930,14 @@ function render() {
       }
       openGroup(g);
     });
-    list.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target.closest('.tg-heart')) { e.preventDefault(); e.target.closest('.tg-heart').click(); } });
+    list.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const t = e.target.closest('.tg-heart') || (e.target.classList.contains('tg-card') ? e.target : null);
+      if (t) { e.preventDefault(); t.click(); }
+    });
   }
   function openGroup(g) {
     try {
-      if (activeTab === CATEGORIES_TAB) { categoriesState.scrollY = window.scrollY; saveCategoryCache(COMBINED_CAT_CACHE_KEY); }
       const first = g.members[0];
       if (first.sid && first.sid !== activeSourceId) { activeSourceId = first.sid; activeFeedId = feedOfSource(first.sid).id; renderSiteTabs(); }
       if (g.members.length === 1) { openCategoryFeed(first.link, g.name); return; }
@@ -9939,7 +9968,8 @@ function render() {
     const groups = new Map();
     items.forEach((g) => { if (!groups.has(g.letter)) groups.set(g.letter, []); groups.get(g.letter).push(g); });
     const letters = [...groups.keys()].sort((a, b) => (a === '#' ? -1 : b === '#' ? 1 : a.localeCompare(b)));
-    v.querySelector('#tgList').innerHTML = letters.map((L) => `<div class="tag-row" data-letter="${esc(L)}"><div class="tag-letter">${esc(L)}</div><div class="tag-list">${groups.get(L).map(pillHtml).join('')}</div></div>`).join('');
+    v.querySelector('#tgList').innerHTML = letters.map((L) => `<div class="tg-sec" data-letter="${esc(L)}"><div class="tag-letter">${esc(L)}</div><div class="tg-grid">${groups.get(L).map(tileHtml).join('')}</div></div>`).join('');
+    observeThumbs(v);
     v.querySelector('#tgAz').innerHTML = letters.map((L) => `<button type="button" data-l="${esc(L)}">${esc(L)}</button>`).join('');
     const st = v.querySelector('#tgStatus');
     if (data.loading) st.innerHTML = `<span class="tg-spin"></span><span>Loading tags & genres from all websites… ${items.length} so far</span>`;
@@ -9949,32 +9979,11 @@ function render() {
   }
   function schedule() { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; render(); }); }
 
-  // ---------------------------------------------------------------- switch (Categories | Tags & Genres)
-  function applyView(feed) {
-    feed.classList.toggle('tg-on', catView === 'tags');
-    feed.querySelectorAll('.cat-view-switch button').forEach((b) => { const on = b.dataset.catview === catView; b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); });
-    if (catView === 'tags') { build(); loadAll(false); render(); }
-  }
-  window.tgOnCategoriesRendered = function () {                // called by renderCategories() every time the Categories page is drawn
-    const feed = document.querySelector(`.feed[data-site="${CATEGORIES_TAB}"]`);
-    if (!feed) return;
-    if (!feed.querySelector('.cat-view-switch')) {
-      const hdr = feed.querySelector('.feed-header'); if (!hdr) return;
-      hdr.insertAdjacentHTML('afterend', `<div class="cat-view-switch" role="tablist" aria-label="Categories view">
-        <button type="button" role="tab" data-catview="tiles">📁 Categories</button>
-        <button type="button" role="tab" data-catview="tags">🏷️ Tags &amp; Genres</button></div>`);
-      feed.querySelector('.cat-view-switch').addEventListener('click', (e) => {
-        const b = e.target.closest('[data-catview]'); if (!b || b.dataset.catview === catView) return;
-        catView = b.dataset.catview;
-        try { localStorage.setItem(VKEY, catView); } catch (er) {}
-        applyView(feed);
-        window.scrollTo({ top: 0, behavior: 'instant' });
-      });
-    }
-    applyView(feed);
-    loadAll(false);                                             // the Superporn tiles need it for their merged feeds
-  };
-  const wait = setInterval(() => { if (F() && F().onChange) { clearInterval(wait); F().onChange(() => { const v = viewEl(); if (v) { v.querySelectorAll('.tg-pill').forEach(paint); updateChips(); } }); } }, 200);
+  // ---------------------------------------------------------------- page (🏷️ Tags & Genres button, see openPornTags)
+  window.tgRenderPage = function (force) { build(); loadAll(!!force); render(); };
+  if (window.tgPendingRender && activeTab === PORN_TAGS_TAB) { window.tgPendingRender = false; window.tgRenderPage(false); }
+  window.tgOnCategoriesRendered = function () { loadAll(false); };   // the Superporn tiles need the lists for their merged feeds
+  const wait = setInterval(() => { if (F() && F().onChange) { clearInterval(wait); F().onChange(() => { const v = viewEl(); if (v) { v.querySelectorAll('.tg-card').forEach(paint); updateChips(); } }); } }, 200);
 })();
 </script>
 </body>
