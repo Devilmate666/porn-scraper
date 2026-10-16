@@ -2086,9 +2086,10 @@ window.addEventListener('popstate', (e) => {
     if (k && k === navViewKey(currentNavState(true)) && !pageIsLocked() && !scrollRestoring) entryScroll.set(navIdx, Math.round(window.scrollY));
   } catch (_) {}
   if (exiting) return;                                            // Exit was chosen: the browser is leaving the app
+  const cancelledLoad = cancelFeedLoad();                          // a feed still loading: Back leaves it at once
   const fromIdx = navIdx;
   const goingBack = to === -1 || to < fromIdx;
-  if (goingBack && !(mainPlayer && mainPlayer.classList.contains('active')) && (sectionMenuOpen || isSectionRootState(currentNavState(true)))) {
+  if (goingBack && !cancelledLoad && !(mainPlayer && mainPlayer.classList.contains('active')) && (sectionMenuOpen || isSectionRootState(currentNavState(true)))) {
     // Back on a section's main page does not walk through the history: it asks where to go (other sections, or Exit).
     // The Back is undone by putting the same page on top of the history again - nothing is re-rendered, nothing moves.
     const keep = { ...currentNavState(true), ts: Date.now(), sid: NAV_SID, idx: fromIdx };
@@ -3274,6 +3275,29 @@ function scheduleCategoryRecheck() {
   }, 120);
 }
 
+/* A category feed that is still loading already owns a history entry, so Back works right away:
+   it cancels the request and shows the page underneath (see the popstate handler). */
+let feedLoadCtl = null;
+function startFeedLoad(navPartial, opts) {
+  const ctl = new AbortController();
+  feedLoadCtl = ctl;
+  busy = true;
+  if (!opts.skipPush) pushNav(navPartial);
+  return ctl;
+}
+function endFeedLoad(ctl) {
+  if (feedLoadCtl !== ctl) return;                     // cancelled by Back: busy was already released
+  feedLoadCtl = null;
+  busy = false;
+}
+function cancelFeedLoad() {
+  if (!feedLoadCtl) return false;
+  try { feedLoadCtl.abort(); } catch (_) {}
+  feedLoadCtl = null;
+  busy = false;
+  return true;
+}
+
 async function openCategoryFeed(link, name, opts = {}) {
   if (busy) return;
 
@@ -3307,7 +3331,7 @@ async function openCategoryFeed(link, name, opts = {}) {
     scheduleRecheck(cachedKey);
     return;
   }
-  busy = true;
+  const ctl = startFeedLoad({ view: 'category-feed', sourceId: activeSourceId, feedUrl: link, categoryName: name }, opts);
   setStatus(`Scraping "${name}"…`, true);
   showSectionLoading(`"${name}"`);
 
@@ -3315,7 +3339,8 @@ async function openCategoryFeed(link, name, opts = {}) {
     const res = await fetch('/api/scrape', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ urls: [link] })
+      body: JSON.stringify({ urls: [link] }),
+      signal: ctl.signal,
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
@@ -3346,20 +3371,15 @@ async function openCategoryFeed(link, name, opts = {}) {
 
     saveCategoryCache();
 
+    if (ctl.signal.aborted) return;
     activeTab = key;
     renderFeed(key);
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
-    if (!opts.skipPush) {
-      pushNav({
-        view: 'category-feed',
-        sourceId: activeSourceId,
-        feedUrl: key,
-        categoryName: name,
-      });
-    }
+    if (!opts.skipPush && key !== link) replaceNav({ view: 'category-feed', sourceId: activeSourceId, feedUrl: key, categoryName: name });
     const total = data.items?.length || 0;
     setStatus(`"${name}" — ${total} preview${total !== 1 ? 's' : ''}`, false);
   } catch (err) {
+    if (ctl.signal.aborted) return;
     rescueSearchBar(); results.innerHTML = `<div class="empty">⚠️ ${escapeHtml(err.message)}
       <div style="margin-top:1rem;"><button class="back-btn" id="backToCategoriesBtn2" type="button">← Categories</button></div>
     </div>`;
@@ -3370,7 +3390,7 @@ async function openCategoryFeed(link, name, opts = {}) {
     });
     setStatus('Category feed error', false);
   } finally {
-    busy = false;
+    endFeedLoad(ctl);
   }
 }
 
@@ -3403,14 +3423,16 @@ async function openTagMix(key, name, members, opts = {}) {
     return;
   }
 
-  busy = true;
+  if (!have) tagMixes.set(key, { name, members });          // lets Forward reopen the entry pushed below
+  const ctl = startFeedLoad({ view: 'category-feed', sourceId: activeSourceId, feedUrl: key, categoryName: shownName }, opts);
   setStatus(`Scraping "${name}" from ${labels.length} website${labels.length !== 1 ? 's' : ''}…`, true);
   showSectionLoading(`"${name}"`);
   try {
     const res = await fetch('/api/scrape', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ urls: members.map(m => m.link) })
+      body: JSON.stringify({ urls: members.map(m => m.link) }),
+      signal: ctl.signal,
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
@@ -3446,13 +3468,14 @@ async function openTagMix(key, name, members, opts = {}) {
     siteData.set(key, { page: key, page_title: name, error: '', items: shuffleArray(batch) });
     siteState.set(key, { next_page: more ? 'tagmix' : '', page_num: 1, loading: false, exhausted: !more, emptyCount: 0, retryCount: 0, error: false });
 
+    if (ctl.signal.aborted) return;
     activeTab = key;
     renderFeed(key);
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
-    if (!opts.skipPush) pushNav({ view: 'category-feed', sourceId: activeSourceId, feedUrl: key, categoryName: shownName });
     setStatus(`"${name}" — ${batch.length} preview${batch.length !== 1 ? 's' : ''}`, false);
     scheduleRecheck(key);
   } catch (err) {
+    if (ctl.signal.aborted) return;
     rescueSearchBar(); results.innerHTML = `<div class="empty">⚠️ ${escapeHtml(err.message)}
       <div style="margin-top:1rem;"><button class="back-btn" id="backToCategoriesBtn2" type="button">← Categories</button></div>
     </div>`;
@@ -3463,7 +3486,7 @@ async function openTagMix(key, name, members, opts = {}) {
     });
     setStatus('Category feed error', false);
   } finally {
-    busy = false;
+    endFeedLoad(ctl);
   }
 }
 
@@ -9713,9 +9736,10 @@ function render() {
   // FreeSexVideos / PornVideoBB categories (never BDSMHole) into ONE combined feed,
   // and those merged entries leave the Tags & Genres list
   const MERGE_INTO_SP = ['fullporno', 'pornvideobb'];
-  let groupMap = new Map(), mergedBySp = new Map();
+  const MERGE_CACHE_KEY = 'pa_sp_merge_v1', MERGE_CACHE_TTL = 24 * 3600000;
+  let groupMap = new Map();
   function buildGroups() {
-    const map = new Map(), merged = new Map();
+    const map = new Map();
     ((data && data.items) || []).forEach((it) => {
       const k = mergeKey(it.name) || it.link;
       let g = map.get(k);
@@ -9728,7 +9752,6 @@ function render() {
       const others = g.members.filter((m) => MERGE_INTO_SP.includes(m.sid));
       if (!sp.length || !others.length) continue;
       const members = [...sp, ...others];
-      sp.forEach((m) => merged.set(linkKey(m.link), { key: k, name: sp[0].name, members }));
       const rest = g.members.filter((m) => !members.includes(m));
       if (!rest.length) { map.delete(k); continue; }
       g.members = rest;
@@ -9737,32 +9760,52 @@ function render() {
       g.letter = rest[0].letter;
     }
     groupMap = map;
-    mergedBySp = merged;
     return [...map.values()];
+  }
+  // FreeSexVideos + PornVideoBB category lists (all a Superporn tile needs), from this load or the saved copy
+  function mergeCandidates() {
+    const d = data;
+    if (d && d.mergeDone) return d.items.filter((it) => MERGE_INTO_SP.includes(it.sid));
+    try {
+      const c = JSON.parse(localStorage.getItem(MERGE_CACHE_KEY) || 'null');
+      if (c && Date.now() - c.at < MERGE_CACHE_TTL && c.items && c.items.length) return c.items.map((x) => ({ name: x.n, link: x.l, sid: x.s }));
+    } catch (e) {}
+    return null;
+  }
+  function saveMergeCache(d) {
+    const items = d.items.filter((it) => MERGE_INTO_SP.includes(it.sid));
+    if (!MERGE_INTO_SP.every((sid) => items.some((it) => it.sid === sid))) return;   // a website failed: keep the older copy
+    try { localStorage.setItem(MERGE_CACHE_KEY, JSON.stringify({ at: Date.now(), items: items.map((it) => ({ n: it.name, l: it.link, s: it.sid })) })); } catch (e) {}
   }
   // Superporn category tile -> combined feed with its merged FreeSexVideos / PornVideoBB categories
   window.tgOpenSuperporn = async function (link, name) {
     try {
       loadAll(false);
-      const d = data;
-      if (d && d.loading && d.ready) {
+      let cands = mergeCandidates();
+      if (!cands && data && data.mergeReady) {                  // first visit only: wait (briefly) for the two small lists
+        const tab = activeTab, idx = navIdx;
         setStatus(`Loading "${name}"…`, true);
-        await Promise.race([d.ready, new Promise((r) => setTimeout(r, 8000))]);
+        await Promise.race([data.mergeReady, new Promise((r) => setTimeout(r, 4000))]);
+        if (activeTab !== tab || navIdx !== idx || sectionMenuOpen) return;   // the user went somewhere else meanwhile
+        cands = mergeCandidates() || (data ? data.items.filter((it) => MERGE_INTO_SP.includes(it.sid)) : []);
       }
-      buildGroups();
-      const m = mergedBySp.get(linkKey(link));
-      if (m && m.members.length > 1) {
-        openTagMix(TAGMIX_PREFIX + 'sp-' + m.key.replace(/\s+/g, '-'), name || m.name, m.members.map((x) => ({ link: x.link, sid: x.sid, label: SITE_NAMES[x.sid] || x.sid })));
+      const k = mergeKey(name), seen = new Set([linkKey(link)]);
+      const others = (cands || []).filter((c) => mergeKey(c.name) === k && !seen.has(linkKey(c.link)) && seen.add(linkKey(c.link)));
+      if (others.length) {
+        const members = [{ link, sid: 'superporn' }, ...others].map((x) => ({ link: x.link, sid: x.sid, label: SITE_NAMES[x.sid] || x.sid }));
+        openTagMix(TAGMIX_PREFIX + 'sp-' + k.replace(/\s+/g, '-'), name, members);
         return;
       }
     } catch (e) { console.error('[tags&genres] superporn merge', e); }
     openCategoryFeed(link, name);
   };
+
   async function loadAll(force) {
     if (!force && data && (data.loading || (data.done && Date.now() - data.at < 15 * 60000))) return;
     const d = data = { at: Date.now(), items: [], seen: new Set(), pending: 0, loading: true, done: false, failed: 0 };
-    let markReady;
-    d.ready = new Promise((r) => { markReady = r; });
+    let markMergeReady;
+    d.mergeReady = new Promise((r) => { markMergeReady = r; });
+    d.doneBy = {};
     const add = (list, sid) => (list || []).forEach((c) => {
       // key = full link minus hash: some sites carry the tag identity in the
       // query string (pornvideobb /zone_video/?cat=<name>), the path alone would
@@ -9789,8 +9832,10 @@ function render() {
           url = j.next_page || (!extra && typeof guessNextUrl === 'function' ? guessNextUrl(url, i + 2) : '') || '';
         }
       } catch (e) { d.failed++; }
+      d.doneBy[sid] = true;
+      if (!d.mergeDone && MERGE_INTO_SP.every((x) => d.doneBy[x])) { d.mergeDone = true; saveMergeCache(d); markMergeReady(); }
       d.pending--;
-      if (d.pending <= 0) { d.loading = false; d.done = true; markReady(); }
+      if (d.pending <= 0) { d.loading = false; d.done = true; }
       d.items.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }) || a.sid.localeCompare(b.sid));
       schedule();
     };
