@@ -939,7 +939,7 @@
 .tg-sec-bar { display: flex; flex-wrap: wrap; gap: .5rem; }
 .tg-sec-bar .n { font-size: .68rem; opacity: .65; margin-left: .3rem; font-family: ui-monospace, monospace; }
 .tg-skel { pointer-events: none; }
-.tg-skel .thumb, .tg-skel .title { background: linear-gradient(90deg, #141a26 25%, #1f2738 50%, #141a26 75%); background-size: 200% 100%; animation: tgShim 1.2s linear infinite; }
+.tg-skel .thumb, .tg-skel .title, .tg-card .thumb.tg-wait { background: linear-gradient(90deg, #141a26 25%, #1f2738 50%, #141a26 75%); background-size: 200% 100%; animation: tgShim 1.2s linear infinite; }
 .tg-skel .title { border-radius: 6px; width: 60%; margin: 0 auto; }
 @keyframes tgShim { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 .tg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: .9rem; }
@@ -9850,7 +9850,14 @@ function render() {
   const TKEY = 'pa_tg_thumbs_v2', TTTL = 7 * 86400000;
   const PIX = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
   let thumbs = {}, thumbsAt = Date.now(), saveT = 0, inflight = 0, io = null;
-  try { const t = JSON.parse(localStorage.getItem(TKEY) || 'null'); if (t && t.map && Date.now() - t.at < TTTL) { thumbs = t.map; thumbsAt = t.at; } } catch (e) {}
+  try {
+    let t = JSON.parse(localStorage.getItem(TKEY) || 'null');
+    if (!t) {                                                      // keep the thumbnails saved before tiles were split into General / BDSM
+      const o = JSON.parse(localStorage.getItem('pa_tg_thumbs_v1') || 'null');
+      if (o && o.map) t = { at: o.at, map: Object.fromEntries(Object.entries(o.map).map(([k, u]) => ['general:' + k, u])) };
+    }
+    if (t && t.map && Date.now() - t.at < TTTL) { thumbs = t.map; thumbsAt = t.at; }
+  } catch (e) {}
   const tried = new Set(), queue = [];
   const thumbOf = (g) => thumbs[g.key] || (g.members.find((m) => m.thumb) || {}).thumb || '';
   function saveThumbs() {
@@ -9859,10 +9866,13 @@ function render() {
   }
   function setTileThumb(key, url) {
     const v = viewEl(); if (!v) return;
-    v.querySelectorAll(`.tg-card[data-key="${CSS.escape(key)}"] img`).forEach((img) => { img.style.opacity = ''; img.src = url; });
+    v.querySelectorAll(`.tg-card[data-key="${CSS.escape(key)}"] img`).forEach((img) => {
+      img.parentElement.classList.remove('tg-wait');
+      if (url) { img.style.opacity = ''; img.src = url; }
+    });
   }
   function pump() {
-    while (inflight < 2 && queue.length) {
+    while (inflight < 3 && queue.length) {
       const gs = queue.splice(Math.max(0, queue.length - 8)).map((k) => groupMap.get(k)).filter(Boolean);   // newest (on screen) first
       if (!gs.length) continue;
       inflight++;
@@ -9873,9 +9883,10 @@ function render() {
             const it = res && (res.items || []).find((x) => x && x.thumbnail);
             if (it && gs[i]) { thumbs[gs[i].key] = it.thumbnail; setTileThumb(gs[i].key, it.thumbnail); }
           });
+          gs.forEach((g) => { if (!thumbs[g.key]) setTileThumb(g.key, ''); });
           saveThumbs();
         })
-        .catch(() => {})
+        .catch(() => { gs.forEach((g) => { if (!thumbs[g.key]) setTileThumb(g.key, ''); }); })
         .finally(() => { inflight--; pump(); });
     }
   }
@@ -9903,7 +9914,7 @@ function render() {
   function tileHtml(g) {
     const on = anyFav(g), th = thumbOf(g);
     return `<div class="tg-card${on ? ' is-fav' : ''}" role="link" tabindex="0" data-key="${esc(g.key)}" title="${esc(g.name)}">` +
-      `<div class="thumb"><img src="${esc(th || PIX)}" loading="lazy" alt="${esc(g.name)}" referrerpolicy="no-referrer" onerror="this.style.opacity=0">` +
+      `<div class="thumb${thumbs[g.key] || tried.has(g.key) ? '' : ' tg-wait'}"><img src="${esc(th || PIX)}" loading="lazy" alt="${esc(g.name)}" referrerpolicy="no-referrer" onerror="this.style.opacity=0">` +
       (tg.sec === 'all' ? `<span class="site-label s-${g.sec}">${SEC_NAMES[g.sec]}</span>` : '') +
       `<span class="tg-heart" role="button" tabindex="0" aria-pressed="${on}" aria-label="${on ? 'Remove from favorites' : 'Add to favorites'}">${HEART}</span></div>` +
       `<div class="info"><div class="title">${esc(g.name)}</div></div></div>`;
