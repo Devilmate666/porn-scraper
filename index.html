@@ -936,6 +936,12 @@
 .tg-card.is-fav .tg-heart svg { fill: #ff4d6d; stroke: #ff4d6d; }
 .tg-sec { scroll-margin-top: 9.5rem; padding: .3rem 0 1rem; }
 .tg-sec .tag-letter { width: 46px; margin-bottom: .6rem; }
+.tg-sec-bar { display: flex; flex-wrap: wrap; gap: .5rem; }
+.tg-sec-bar .n { font-size: .68rem; opacity: .65; margin-left: .3rem; font-family: ui-monospace, monospace; }
+.tg-skel { pointer-events: none; }
+.tg-skel .thumb, .tg-skel .title { background: linear-gradient(90deg, #141a26 25%, #1f2738 50%, #141a26 75%); background-size: 200% 100%; animation: tgShim 1.2s linear infinite; }
+.tg-skel .title { border-radius: 6px; width: 60%; margin: 0 auto; }
+@keyframes tgShim { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 .tg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: .9rem; }
 @media (max-width: 600px) { .tg-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .6rem; } }
 .tg-tools { display: flex; flex-direction: column; gap: .6rem; padding: .5rem 0 .3rem; }
@@ -1547,7 +1553,7 @@ function nameFor(url) {
   const s = sites.find(x => x.url === url);
   if (s) return s.name;
   const src = sourceForUrl(url);
-  if (src) return src.name;
+  if (src) return feedOfSource(src.id).name;
   return hostOf(url);
 }
 
@@ -3415,7 +3421,7 @@ async function openTagMix(key, name, members, opts = {}) {
     try { history.replaceState({ ...history.state, scrollY: window.scrollY }, '', location.href); } catch {}
   }
   const labels = [...new Set(members.map(m => m.label))];
-  const shownName = `${name} · ${labels.join(' + ')}`;
+  const shownName = name;
 
   const have = tagMixes.get(key);
   if (!opts.force && have && have.members.length === members.length && siteData.has(key) && siteState.has(key)) {
@@ -4456,7 +4462,7 @@ async function openCategories(forceRefresh = false, opts = {}) {
   if (busy) return;
   busy = true;
   if (categoriesBtn) categoriesBtn.disabled = true;
-  setStatus('Loading Superporn + BDSMHole categories…', true);
+  setStatus('Loading categories…', true);
   showSectionLoading('categories');
 
   try {
@@ -4500,7 +4506,7 @@ async function openCategories(forceRefresh = false, opts = {}) {
     };
     renderCategories(data, false, { kind: 'categories' });
     if (!opts.skipPush) pushNav({ view: 'categories' });
-    setStatus(`Categories — ${merged.length} from Superporn + BDSMHole`, false);
+    setStatus(`Categories — ${merged.length}`, false);
     scheduleCategoryRecheck();
   } catch (err) {
     rescueSearchBar(); results.innerHTML = `<div class="empty">⚠️ ${escapeHtml(err.message)}</div>`;
@@ -5526,11 +5532,11 @@ async function loadSourceFeed(sourceId, { force = false, skipPush = false } = {}
 
     const key = data.page || src.url;
     if (!sites.find(s => s.url === key || s.url === src.url)) {
-      sites.unshift({ name: src.name, url: key, sourceId: src.id });
+      sites.unshift({ name: feedOfSource(src.id).name, url: key, sourceId: src.id });
     } else {
       sites = sites.map(s =>
         (s.sourceId === src.id || s.url === src.url)
-          ? { name: src.name, url: key, sourceId: src.id }
+          ? { name: feedOfSource(src.id).name, url: key, sourceId: src.id }
           : s
       );
     }
@@ -7680,7 +7686,7 @@ function sectionScope() {
   const key = activeTab;
   if (!key || isMixKey(key) || key === WEBSEARCH_TAB || key.startsWith('__') || isListTab(key)) return null;
   const src = SOURCES.find(s => s.url === key);
-  if (src) return { kind: 'site', name: src.name, url: key };
+  if (src) return { kind: 'site', name: feedOfSource(src.id).name, url: key };
   const entry = sites.find(s => s.url === key);
   if (!entry) return null;
   const kind = { pornstars: 'model', networks: 'studio', pornsites: 'studio', categories: 'category', porntags: 'tag' }[navSection] || '';
@@ -9694,7 +9700,9 @@ function render() {
   const HEART = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>';
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const F = () => window.Favorites;
-  const tg = { site: 'all', q: '', saved: false };
+  const SECKEY = 'pa_tg_sec_v1';
+  const tg = { site: 'all', q: '', saved: false, sec: 'all' };          // sec: all | general | bdsm (BDSMHole)
+  try { const x = localStorage.getItem(SECKEY); if (x === 'general' || x === 'bdsm') tg.sec = x; } catch (e) {}
   let data = null, raf = 0;
 
   // ---------------------------------------------------------------- data
@@ -9713,12 +9721,14 @@ function render() {
   const MERGE_INTO_SP = ['fullporno', 'pornvideobb'];
   const MERGE_CACHE_KEY = 'pa_sp_merge_v1', MERGE_CACHE_TTL = 24 * 3600000;
   let groupMap = new Map();
+  const secOf = (sid) => (sid === 'bdsmhole' ? 'bdsm' : 'general');
+  const SEC_NAMES = { general: 'General', bdsm: 'BDSM' };
   function buildGroups() {
     const map = new Map();
     ((data && data.items) || []).forEach((it) => {
-      const k = mergeKey(it.name) || it.link;
+      const sec = secOf(it.sid), k = sec + ':' + (mergeKey(it.name) || it.link);   // BDSMHole never shares a tile with the other sites
       let g = map.get(k);
-      if (!g) { g = { key: k, name: it.name, letter: it.letter, members: [], sids: [] }; map.set(k, g); }
+      if (!g) { g = { key: k, sec, name: it.name, letter: it.letter, members: [], sids: [] }; map.set(k, g); }
       g.members.push(it);
       if (!g.sids.includes(it.sid)) g.sids.push(it.sid);
     });
@@ -9775,9 +9785,23 @@ function render() {
     openCategoryFeed(link, name);
   };
 
+  const LKEY = 'pa_tg_list_v1', LTTL = 24 * 3600000;
+  function cachedList() {
+    try { const c = JSON.parse(localStorage.getItem(LKEY) || 'null'); if (c && Array.isArray(c.items) && c.items.length && Date.now() - c.at < LTTL) return c; } catch (e) {}
+    return null;
+  }
+  function saveList(d) {
+    try { localStorage.setItem(LKEY, JSON.stringify({ at: d.at, items: d.items.map(({ name, link, sid, thumb }) => ({ name, link, sid, thumb })) })); } catch (e) {}
+  }
   async function loadAll(force) {
-    if (!force && data && (data.loading || (data.done && Date.now() - data.at < 15 * 60000))) return;
-    const d = data = { at: Date.now(), items: [], seen: new Set(), pending: 0, loading: true, done: false, failed: 0 };
+    if (!force && data && (data.loading || (data.done && data.items.length))) return;
+    const c = !force && !data && cachedList();
+    if (c) {                                                       // saved copy (24 h): the page shows at once
+      data = { at: c.at, items: c.items.map((it) => ({ ...it, letter: letterOf(it.name) })), seen: new Set(), pending: 0, total: 0,
+               loading: false, done: true, failed: 0, mergeDone: true, mergeReady: Promise.resolve(), doneBy: {} };
+      return;
+    }
+    const d = data = { at: Date.now(), items: [], seen: new Set(), pending: 0, total: 0, loading: true, done: false, failed: 0 };
     let markMergeReady;
     d.mergeReady = new Promise((r) => { markMergeReady = r; });
     d.doneBy = {};
@@ -9810,20 +9834,20 @@ function render() {
       d.doneBy[sid] = true;
       if (!d.mergeDone && MERGE_INTO_SP.every((x) => d.doneBy[x])) { d.mergeDone = true; saveMergeCache(d); markMergeReady(); }
       d.pending--;
-      if (d.pending <= 0) { d.loading = false; d.done = true; }
       d.items.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }) || a.sid.localeCompare(b.sid));
+      if (d.pending <= 0) { d.loading = false; d.done = true; if (d.items.length && !d.failed) saveList(d); }
       schedule();
     };
     const jobs = [];
     (typeof COMBINED_CATEGORY_SOURCES !== 'undefined' ? COMBINED_CATEGORY_SOURCES : []).forEach((s) => jobs.push([s.id, s.indexUrl, null]));
     if (typeof PORN_TAGS_URL !== 'undefined') jobs.push(['fullporno', PORN_TAGS_URL, { mode: 'tags' }]);
     if (typeof PVB_TAGS_URL !== 'undefined') jobs.push(['pornvideobb', PVB_TAGS_URL, { mode: 'tags' }]);
-    d.pending = jobs.length;
+    d.pending = d.total = jobs.length;
     jobs.forEach((j) => job(j[0], j[1], j[2]));
   }
 
   // ---------------------------------------------------------------- thumbnails: the first video of the tag's own feed
-  const TKEY = 'pa_tg_thumbs_v1', TTTL = 7 * 86400000;
+  const TKEY = 'pa_tg_thumbs_v2', TTTL = 7 * 86400000;
   const PIX = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
   let thumbs = {}, thumbsAt = Date.now(), saveT = 0, inflight = 0, io = null;
   try { const t = JSON.parse(localStorage.getItem(TKEY) || 'null'); if (t && t.map && Date.now() - t.at < TTTL) { thumbs = t.map; thumbsAt = t.at; } } catch (e) {}
@@ -9878,11 +9902,9 @@ function render() {
   const allFav = (g) => favCount(g) === g.members.length;
   function tileHtml(g) {
     const on = anyFav(g), th = thumbOf(g);
-    let fid = '';
-    try { fid = feedOfSource(g.sids[0]).id; } catch (e) {}
     return `<div class="tg-card${on ? ' is-fav' : ''}" role="link" tabindex="0" data-key="${esc(g.key)}" title="${esc(g.name)}">` +
       `<div class="thumb"><img src="${esc(th || PIX)}" loading="lazy" alt="${esc(g.name)}" referrerpolicy="no-referrer" onerror="this.style.opacity=0">` +
-      `<span class="site-label s-${esc(fid)}">${esc(g.sids.map((x) => SITE_NAMES[x] || x).join(' + '))}</span>` +
+      (tg.sec === 'all' ? `<span class="site-label s-${g.sec}">${SEC_NAMES[g.sec]}</span>` : '') +
       `<span class="tg-heart" role="button" tabindex="0" aria-pressed="${on}" aria-label="${on ? 'Remove from favorites' : 'Add to favorites'}">${HEART}</span></div>` +
       `<div class="info"><div class="title">${esc(g.name)}</div></div></div>`;
   }
@@ -9891,6 +9913,7 @@ function render() {
     if (!feed || viewEl()) return;
     feed.querySelector('.feed-header').insertAdjacentHTML('afterend', `<div class="tg-view" id="tgView">
       <div class="tg-tools">
+        <div class="badges tg-sec-bar" id="tgSecBar" role="tablist" aria-label="Show"></div>
         <input id="tgSearch" type="search" placeholder="Search tags & genres (e.g. milf, bondage)…" autocomplete="off" aria-label="Search tags and genres">
         <div class="tg-chips" id="tgChips"></div>
       </div>
@@ -9908,6 +9931,12 @@ function render() {
       if (c.dataset.tgs === 'saved') tg.saved = !tg.saved; else { tg.site = c.dataset.tgs; }
       render();
     });
+    v.querySelector('#tgSecBar').addEventListener('click', (e) => {
+      const c = e.target.closest('[data-tgsec]'); if (!c || c.dataset.tgsec === tg.sec) return;
+      tg.sec = c.dataset.tgsec;
+      try { localStorage.setItem(SECKEY, tg.sec); } catch (e2) {}
+      render();
+    });
     v.querySelector('#tgAz').addEventListener('click', (e) => {
       const b = e.target.closest('[data-l]'); if (!b) return;
       const row = v.querySelector(`.tg-sec[data-letter="${CSS.escape(b.dataset.l)}"]`); if (row) row.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -9922,7 +9951,7 @@ function render() {
       if (h) {
         e.stopPropagation();
         const remove = allFav(g);                                   // all of its sources saved -> unsave them, otherwise save the missing ones
-        g.members.forEach((m) => { if (remove ? isFav(m) : !isFav(m)) F().toggleCategory(m.link, g.name, SITE_NAMES[m.sid] || '', m.thumb); });
+        g.members.forEach((m) => { if (remove ? isFav(m) : !isFav(m)) F().toggleCategory(m.link, g.name, SEC_NAMES[g.sec], m.thumb); });
         F().toast(!remove ? `♥ Added “${g.name}” to Tags & genres` : `Removed “${g.name}”`);
         paint(p);
         if (tg.saved) render(); else updateChips();
@@ -9955,27 +9984,42 @@ function render() {
   function updateChips() {
     const v = viewEl(); if (!v || !data) return;
     const groups = buildGroups();
-    const saved = groups.filter(anyFav).length;
-    const h = `<button type="button" class="tg-chip tg-chip-fav${tg.saved ? ' on' : ''}" data-tgs="saved">♥ Saved <span class="n">${saved}</span></button>`;
-    v.querySelector('#tgChips').innerHTML = h;
+    const n = { all: groups.length, general: 0, bdsm: 0 };
+    groups.forEach((g) => { n[g.sec]++; });
+    const chip = (id, label) => {
+      const state = tg.sec === id ? 'active' : (tg.sec === 'all' ? '' : 'dim');
+      return `<span data-tgsec="${id}" role="tab" aria-selected="${tg.sec === id}" class="chip-btn ${id === 'all' ? '' : 'chip-' + id} ${state}">${label}${data.loading ? '' : `<span class="n">${n[id]}</span>`}</span>`;
+    };
+    v.querySelector('#tgSecBar').innerHTML = chip('all', 'All') + chip('general', 'General') + chip('bdsm', 'BDSM');
+    const saved = groups.filter((g) => (tg.sec === 'all' || g.sec === tg.sec) && anyFav(g)).length;
+    v.querySelector('#tgChips').innerHTML = `<button type="button" class="tg-chip tg-chip-fav${tg.saved ? ' on' : ''}" data-tgs="saved">♥ Saved <span class="n">${saved}</span></button>`;
   }
+  const SKEL = '<div class="tg-card tg-skel"><div class="thumb"></div><div class="info"><div class="title">&nbsp;</div></div></div>'.repeat(18);
   function render() {
     const v = viewEl(); if (!v) return;
-    if (!data) { loadAll(false); return; }
+    if (!data) loadAll(false);
+    if (!data) return;
     updateChips();                                                  // also rebuilds groupMap
+    const st = v.querySelector('#tgStatus'), list = v.querySelector('#tgList');
+    if (data.loading) {                                             // placeholders until every list is in, then the whole sorted page at once
+      if (!list.querySelector('.tg-skel')) { list.innerHTML = `<div class="tg-sec"><div class="tg-grid">${SKEL}</div></div>`; v.querySelector('#tgAz').innerHTML = ''; }
+      st.innerHTML = `<span class="tg-spin"></span><span>Loading tags &amp; genres… ${data.total - data.pending} of ${data.total} lists</span>`;
+      return;
+    }
     const q = tg.q.trim().toLowerCase().split(/\s+/).filter(Boolean);
-    const items = [...groupMap.values()].filter((g) => (!tg.saved || anyFav(g)) && q.every((w) => g.name.toLowerCase().includes(w)));
+    const items = [...groupMap.values()]
+      .filter((g) => (tg.sec === 'all' || g.sec === tg.sec) && (!tg.saved || anyFav(g)) && q.every((w) => g.name.toLowerCase().includes(w)))
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }) || a.sec.localeCompare(b.sec));
     const groups = new Map();
     items.forEach((g) => { if (!groups.has(g.letter)) groups.set(g.letter, []); groups.get(g.letter).push(g); });
     const letters = [...groups.keys()].sort((a, b) => (a === '#' ? -1 : b === '#' ? 1 : a.localeCompare(b)));
-    v.querySelector('#tgList').innerHTML = letters.map((L) => `<div class="tg-sec" data-letter="${esc(L)}"><div class="tag-letter">${esc(L)}</div><div class="tg-grid">${groups.get(L).map(tileHtml).join('')}</div></div>`).join('');
+    list.innerHTML = letters.map((L) => `<div class="tg-sec" data-letter="${esc(L)}"><div class="tag-letter">${esc(L)}</div><div class="tg-grid">${groups.get(L).map(tileHtml).join('')}</div></div>`).join('');
     observeThumbs(v);
     v.querySelector('#tgAz').innerHTML = letters.map((L) => `<button type="button" data-l="${esc(L)}">${esc(L)}</button>`).join('');
-    const st = v.querySelector('#tgStatus');
-    if (data.loading) st.innerHTML = `<span class="tg-spin"></span><span>Loading tags & genres from all websites… ${items.length} so far</span>`;
-    else if (!data.items.length) st.innerHTML = `<span>Could not load any tags or genres.</span> <button type="button" class="tg-retry" data-retry="1">Try again</button>`;
+    const what = tg.sec === 'all' ? '' : ` · ${SEC_NAMES[tg.sec]}`;
+    if (!data.items.length) st.innerHTML = `<span>Could not load any tags or genres.</span> <button type="button" class="tg-retry" data-retry="1">Try again</button>`;
     else if (!items.length) st.innerHTML = `<span>${tg.saved && !q.length ? 'Nothing saved yet. Tap the ♥ on any tag.' : 'No matching tags or genres.'}</span>`;
-    else st.innerHTML = `<span>${items.length} tag${items.length === 1 ? '' : 's'} &amp; genres${data.failed ? ` · ${data.failed} website${data.failed === 1 ? '' : 's'} could not load` : ''}</span>${data.failed ? ' <button type="button" class="tg-retry" data-retry="1">Retry</button>' : ''}`;
+    else st.innerHTML = `<span>${items.length} tag${items.length === 1 ? '' : 's'} &amp; genres${what}${data.failed ? ' · some lists could not load' : ''}</span>${data.failed ? ' <button type="button" class="tg-retry" data-retry="1">Retry</button>' : ''}`;
   }
   function schedule() { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; render(); }); }
 
