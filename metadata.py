@@ -389,6 +389,15 @@ def _chips(anchors, base):
     return out
 
 
+def _linked(names, to_url):
+    """Names without links on the page -> chips linked to the site's own listing for that name."""
+    out = []
+    for c in _plain(names):
+        slug = re.sub(r"[^a-z0-9]+", "-", c["name"].lower()).strip("-")
+        out.append({"name": c["name"], "link": to_url(slug) if slug else None})
+    return out
+
+
 def _plain(names):
     out, seen = [], set()
     for n in names:
@@ -420,7 +429,7 @@ def _site_metadata(soup, host, url, title):
                 g.setdefault(kind, []).extend(_chips(links, url))
         tags = [x for v in _meta(soup, "video:tag") for x in re.split(r"[,;]", v)]
         if tags:
-            g["tags"] = _plain(tags)
+            g["tags"] = _linked(tags, lambda sl: f"https://www.freesexvideos.xxx/search/{sl}/")   # not every tag has a /tags/ page
         site["description"] = None            # the page has no story, only a generic "Watch X on Free Sex Videos" line
         # views / votes of THIS video live in its own action bar (the generic scan would pick a related video's)
         site["views"] = site["rating"] = None
@@ -546,7 +555,7 @@ def _site_metadata(soup, host, url, title):
                 g[kind] = _chips(links, url)
         genres = [x for v in _meta(soup, "video:tag") for x in re.split(r"[,;]", v)]
         if genres:
-            g["categories"] = _plain(genres)    # the site's own genre list; the page's Tags row is separate
+            g["categories"] = _linked(genres, lambda sl: f"https://www.bdsmhole.com/category/{sl}/")   # the site's own genre list; the page's Tags row is separate
     else:
         return {}
     if g:
@@ -559,17 +568,17 @@ def _dedupe_groups(groups):
     for k in list(groups):
         seen, keep = set(), []
         for x in groups[k]:
-            key = x["name"].lower()
-            if key not in seen:
+            key = _norm(x["name"])
+            if key and key not in seen:
                 seen.add(key)
                 keep.append(x)
         groups[k] = keep
-    people = {x["name"].lower() for k in ("models", "studios", "uploaders") for x in groups.get(k, [])}
+    people = {_norm(x["name"]) for k in ("models", "studios", "uploaders") for x in groups.get(k, [])}
     if groups.get("categories"):
-        groups["categories"] = [x for x in groups["categories"] if x["name"].lower() not in people]
-    cats = {x["name"].lower() for x in groups.get("categories", [])}
+        groups["categories"] = [x for x in groups["categories"] if _norm(x["name"]) not in people]
+    cats = {_norm(x["name"]) for x in groups.get("categories", [])}
     if groups.get("tags"):
-        groups["tags"] = [x for x in groups["tags"] if x["name"].lower() not in people | cats]
+        groups["tags"] = [x for x in groups["tags"] if _norm(x["name"]) not in people | cats]
     return {k: v for k, v in groups.items() if v}
 
 

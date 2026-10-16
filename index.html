@@ -3976,22 +3976,59 @@ function updateDescMore() {
   requestAnimationFrame(measure);       // once the panel has been laid out
 }
 
+/* Names a site shows without a link (older cached answers too): link them to that site's own listing. */
+const PM_UNLINKED = [
+  { host: /(^|\.)bdsmhole\.com$/i, kind: 'categories', url: sl => `https://www.bdsmhole.com/category/${sl}/` },
+  { host: /(^|\.)freesexvideos\.xxx$/i, kind: 'tags', url: sl => `https://www.freesexvideos.xxx/search/${sl}/` },
+];
+const pmKey = s => String(s || '').toLowerCase().replace(/[\W_]+/gu, ' ').trim();
+
+/** No name twice: inside a group, and genres / tags never repeat a star, studio, uploader or each other. */
+function dedupePlayerGroups(groups) {
+  const seen = new Set();
+  const order = ['models', 'studios', 'uploaders', 'platform', 'categories', 'tags'];
+  const rank = k => { const i = order.indexOf(k); return i < 0 ? order.length : i; };
+  const kept = new Map();
+  for (const g of [...groups].sort((a, b) => rank(a.kind) - rank(b.kind))) {
+    const shared = ['categories', 'tags'].includes(g.kind);
+    const own = new Set();
+    kept.set(g, (g.items || []).filter(it => {
+      const k = pmKey(it && it.name);
+      if (!k || own.has(k) || (shared && seen.has(k))) return false;
+      own.add(k);
+      return true;
+    }));
+    for (const k of own) seen.add(k);
+  }
+  return groups.map(g => ({ ...g, items: kept.get(g) })).filter(g => g.items.length);
+}
+
 /** PornVideoBB lists the same words as Genres and Tags: show them once, as Genres (also fixes cached answers). */
 function cleanPageMeta(detail, m) {
   try {
     if (m && Array.isArray(m.groups) && isSuperLink(detail)) m.groups = m.groups.filter(g => g.kind !== 'uploaders');
-    if (!m || !Array.isArray(m.groups) || !/pornvideobb\./i.test(new URL(detail).hostname)) return m;
-    const has = k => m.groups.some(g => g.kind === k && g.items && g.items.length);
-    m.groups = has('categories')
-      ? m.groups.filter(g => g.kind !== 'tags')
-      : m.groups.map(g => g.kind === 'tags' ? { ...g, kind: 'categories' } : g);
+    if (!m || !Array.isArray(m.groups)) return m;
+    const host = new URL(detail).hostname;
+    if (/pornvideobb\./i.test(host)) {
+      const has = k => m.groups.some(g => g.kind === k && g.items && g.items.length);
+      m.groups = has('categories')
+        ? m.groups.filter(g => g.kind !== 'tags')
+        : m.groups.map(g => g.kind === 'tags' ? { ...g, kind: 'categories' } : g);
+    }
+    const fix = PM_UNLINKED.find(r => r.host.test(host));
+    if (fix) m.groups = m.groups.map(g => g.kind !== fix.kind ? g : { ...g, items: (g.items || []).map(it => {
+      if (!it || it.link || !it.name) return it;
+      const sl = String(it.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      return sl ? { ...it, link: fix.url(sl) } : it;
+    }) });
+    m.groups = dedupePlayerGroups(m.groups);
   } catch (e) { /* leave as is */ }
   return m;
 }
 
 async function loadPlayerMeta(detail) {
   const token = ++playerMetaToken;
-  const seed = playerMetaFromItem(cardItemByLink.get(detail));
+  const seed = cleanPageMeta(detail, playerMetaFromItem(cardItemByLink.get(detail)));
   if (seed) renderPlayerMeta(seed);
   const _it = cardItemByLink.get(detail);
   if (_it && (_it._cam || _it._chan)) return;           // everything is already on the card
