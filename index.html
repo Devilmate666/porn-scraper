@@ -2372,12 +2372,18 @@ function openMetaLink(link, name, kind) {
 /* Genre / tag clicked on a video card or under the player.
    Scope follows the filter that is on: All -> every website mixed (BDSMHole included), General -> Superporn + FreeSexVideos +
    PornVideoBB mixed, BDSM -> BDSMHole alone. A chip of the other section never leaks across (it keeps its own section). */
+/** Library -> open item: show the loading screen AT ONCE. The Library panel only hides itself, so without this the page
+ *  underneath (e.g. Categories) showed again during the same-name lookup before the real feed appeared. */
+function showOpeningScreen(name) {
+  try { showSectionLoading(`"${name || 'Videos'}"`); window.scrollTo({ top: 0, left: 0, behavior: 'instant' }); } catch (e) {}
+}
 async function openMixedGenre(link, name, allSites = false) {
   const src = sourceForUrl(link);
   const own = src ? feedOfSource(src.id).id : 'general';
   let scope = !homeFilter ? 'all' : (homeFilter === 'general' || homeFilter === 'bdsm') ? homeFilter : feedOfSource(homeFilter).id;
   if (allSites) scope = 'all';                                   // Library: every website, whatever Home is filtered to
   else if (scope !== 'all' && scope !== own) scope = own;
+  if (allSites) showOpeningScreen(name);
   const plain = () => {
     if (src) { activeSourceId = src.id; activeFeedId = feedOfSource(src.id).id; renderSiteTabs(); }
     openCategoryFeed(link, name || 'Videos');
@@ -2406,6 +2412,7 @@ async function openMixedStar(link, name, allSites = false) {
   let scope = !homeFilter ? 'all' : (homeFilter === 'general' || homeFilter === 'bdsm') ? homeFilter : feedOfSource(homeFilter).id;
   if (allSites) scope = 'all';                                   // Library: every website, whatever Home is filtered to
   else if (scope !== 'all' && scope !== own) scope = own;
+  if (allSites) showOpeningScreen(name);
   const plain = () => {
     if (src) { activeSourceId = src.id; activeFeedId = feedOfSource(src.id).id; renderSiteTabs(); }
     openCategoryFeed(link, name || 'Videos');
@@ -2462,6 +2469,7 @@ async function networkMembersFor(link, name, clickedSid) {
 }
 async function openMixedNetwork(link, name) {
   const src = sourceForUrl(link);
+  showOpeningScreen(name);
   const plain = () => {
     if (src) { activeSourceId = src.id; activeFeedId = feedOfSource(src.id).id; renderSiteTabs(); }
     openCategoryFeed(link, name || 'Videos');
