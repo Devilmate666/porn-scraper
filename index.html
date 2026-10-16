@@ -1329,6 +1329,11 @@ body.fav-panel-open { overflow: hidden; }
 @media (min-width: 1700px) { #favPanel { --lib-pad: max(1.5rem, calc((100vw - 2000px) / 2)); } }
 @media (min-width: 2300px) { #favPanel { --lib-pad: max(2rem, calc((100vw - 2600px) / 2)); } }
 @media (min-width: 3000px) { #favPanel { --lib-pad: max(2.5rem, calc((100vw - 3300px) / 2)); } }
+/* Library round buttons: always a perfect circle (never squeezed into an oval by a flex row or the cards' padding) */
+#favPanel .fav-close, #favPanel .fav-x { flex: none; box-sizing: border-box; padding: 0; margin: 0; aspect-ratio: 1 / 1; min-width: 0; line-height: 1; }
+#favPanel .fav-close { width: 2.1rem; height: 2.1rem; min-width: 2.1rem; max-width: 2.1rem; }
+#favPanel .fav-x { width: 1.9rem; height: 1.9rem; min-width: 1.9rem; max-width: 1.9rem; }
+#favPanel .fav-x svg { display: block; flex: none; }
 </style>
 <base target="_blank">
 <base target="_blank">
