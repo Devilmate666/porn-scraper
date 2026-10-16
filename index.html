@@ -1502,6 +1502,9 @@ const PORN_TAGS_CACHE_KEY = '__porn_tags__';
 // PornVideoBB tags (genres of https://2023.pornvideobb.com/tags/)
 const PVB_TAGS_URL = 'https://2023.pornvideobb.com/tags/';
 
+// BDSMHole tags (https://www.bdsmhole.com/tags/ -> /tag/<slug>/ feeds). Shown in Tags & Genres under the BDSM filter only.
+const BDSM_TAGS_URL = 'https://www.bdsmhole.com/tags/';
+
 // FullPorno single-source listing kinds share one rendering / paging path
 const isFpKind = (kind) => kind === 'pornsites' || kind === 'porntags';
 const isFpTab = (tab) => tab === PORN_SITES_TAB || tab === PORN_TAGS_TAB;
@@ -9689,11 +9692,12 @@ function render() {
 </script>
 <script>
 /* ===================== "Tags & Genres" page (its own section button) =====================
-   One separate A-Z grid of thumbnail tiles with every category + tag from all websites (Superporn, BDSMHole, FreeSexVideos, PornVideoBB).
-   A tag that exists on several websites is ONE entry (one badge per website) and opens ONE combined feed;
+   One separate A-Z grid of thumbnail TILES for every TAG of all websites (FreeSexVideos, PornVideoBB = General; BDSMHole = BDSM).
+   Anything that already exists in the Categories tab (Superporn / BDSMHole categories) is NOT repeated here: the category
+   lists are loaded only to know which names to leave out.
+   A tag that exists on several General websites is ONE entry (one badge per website) and opens ONE combined feed;
    its heart saves/unsaves the per-website category favorites (type "category").
-   Names that are also a Superporn category (with FreeSexVideos / PornVideoBB matches) are merged into that
-   Superporn tile's combined feed and left out of this list (BDSMHole is never merged). */
+   BDSMHole tags are never mixed with the General ones: they live under the BDSM filter (same as in Categories). */
 (function () {
   'use strict';
   const SITE_NAMES = { superporn: 'Superporn', bdsmhole: 'BDSMHole', fullporno: 'FreeSexVideos', pornvideobb: 'PornVideoBB' };
@@ -9723,27 +9727,29 @@ function render() {
   let groupMap = new Map();
   const secOf = (sid) => (sid === 'bdsmhole' ? 'bdsm' : 'general');
   const SEC_NAMES = { general: 'General', bdsm: 'BDSM' };
+  // true  = a General category also hides a same-named BDSMHole tag (and the other way round)
+  // false = a name is only left out of the SAME filter (General vs BDSM) it already appears in on the Categories tab
+  const DEDUPE_ACROSS_SECTIONS = false;
+  const isCat = (it) => it.kind === 'cat';
   function buildGroups() {
     const map = new Map();
-    ((data && data.items) || []).forEach((it) => {
-      const sec = secOf(it.sid), k = sec + ':' + (mergeKey(it.name) || it.link);   // BDSMHole never shares a tile with the other sites
+    const items = (data && data.items) || [];
+    // names that live on the Categories tab -> never repeated as a tag
+    const catKeys = { general: new Set(), bdsm: new Set(), any: new Set() };
+    items.filter(isCat).forEach((it) => {
+      const k = mergeKey(it.name); if (!k) return;
+      catKeys[secOf(it.sid)].add(k); catKeys.any.add(k);
+    });
+    items.forEach((it) => {
+      if (isCat(it)) return;                                          // categories stay on the Categories tab
+      const sec = secOf(it.sid), mk = mergeKey(it.name);
+      if (mk && (DEDUPE_ACROSS_SECTIONS ? catKeys.any : catKeys[sec]).has(mk)) return;   // already a category
+      const k = sec + ':' + (mk || it.link);                          // BDSMHole never shares a tile with the other sites
       let g = map.get(k);
       if (!g) { g = { key: k, sec, name: it.name, letter: it.letter, members: [], sids: [] }; map.set(k, g); }
       g.members.push(it);
       if (!g.sids.includes(it.sid)) g.sids.push(it.sid);
     });
-    for (const [k, g] of map) {
-      const sp = g.members.filter((m) => m.sid === 'superporn');
-      const others = g.members.filter((m) => MERGE_INTO_SP.includes(m.sid));
-      if (!sp.length || !others.length) continue;
-      const members = [...sp, ...others];
-      const rest = g.members.filter((m) => !members.includes(m));
-      if (!rest.length) { map.delete(k); continue; }
-      g.members = rest;
-      g.sids = [...new Set(rest.map((m) => m.sid))];
-      g.name = rest[0].name;
-      g.letter = rest[0].letter;
-    }
     groupMap = map;
     return [...map.values()];
   }
@@ -9785,13 +9791,13 @@ function render() {
     openCategoryFeed(link, name);
   };
 
-  const LKEY = 'pa_tg_list_v1', LTTL = 24 * 3600000;
+  const LKEY = 'pa_tg_list_v2', LTTL = 24 * 3600000;
   function cachedList() {
     try { const c = JSON.parse(localStorage.getItem(LKEY) || 'null'); if (c && Array.isArray(c.items) && c.items.length && Date.now() - c.at < LTTL) return c; } catch (e) {}
     return null;
   }
   function saveList(d) {
-    try { localStorage.setItem(LKEY, JSON.stringify({ at: d.at, items: d.items.map(({ name, link, sid, thumb }) => ({ name, link, sid, thumb })) })); } catch (e) {}
+    try { localStorage.setItem(LKEY, JSON.stringify({ at: d.at, items: d.items.map(({ name, link, sid, thumb, kind }) => ({ name, link, sid, thumb, kind })) })); } catch (e) {}
   }
   async function loadAll(force) {
     if (!force && data && (data.loading || (data.done && data.items.length))) return;
@@ -9805,7 +9811,7 @@ function render() {
     let markMergeReady;
     d.mergeReady = new Promise((r) => { markMergeReady = r; });
     d.doneBy = {};
-    const add = (list, sid) => (list || []).forEach((c) => {
+    const add = (list, sid, kind) => (list || []).forEach((c) => {
       // key = full link minus hash: some sites carry the tag identity in the
       // query string (pornvideobb /zone_video/?cat=<name>), the path alone would
       // collapse all of them into one entry
@@ -9813,9 +9819,9 @@ function render() {
       if (!key || !name || d.seen.has(key)) return;
       try { if (typeof isAllVideosLink === 'function' && isAllVideosLink(key)) return; } catch (e) {}
       d.seen.add(key);
-      d.items.push({ name, link, sid, thumb: c.thumbnail || '', letter: letterOf(name) });
+      d.items.push({ name, link, sid, kind, thumb: c.thumbnail || '', letter: letterOf(name) });
     });
-    const job = async (sid, startUrl, extra) => {
+    const job = async (sid, startUrl, extra, kind) => {
       try {
         let url = startUrl; const visited = new Set();
         for (let i = 0; i < 40 && url && !visited.has(url); i++) {
@@ -9825,7 +9831,7 @@ function render() {
           const j = await res.json();
           if (j.error) { if (!i) throw new Error(j.error); break; }
           const before = d.items.length;
-          add(j.categories, sid);
+          add(j.categories, sid, kind);
           if (i > 0 && d.items.length === before) break;           // a page with nothing new = the end
           schedule();
           url = j.next_page || (!extra && typeof guessNextUrl === 'function' ? guessNextUrl(url, i + 2) : '') || '';
@@ -9839,11 +9845,14 @@ function render() {
       schedule();
     };
     const jobs = [];
-    (typeof COMBINED_CATEGORY_SOURCES !== 'undefined' ? COMBINED_CATEGORY_SOURCES : []).forEach((s) => jobs.push([s.id, s.indexUrl, null]));
-    if (typeof PORN_TAGS_URL !== 'undefined') jobs.push(['fullporno', PORN_TAGS_URL, { mode: 'tags' }]);
-    if (typeof PVB_TAGS_URL !== 'undefined') jobs.push(['pornvideobb', PVB_TAGS_URL, { mode: 'tags' }]);
+    // category lists: loaded only so their names can be left out of the tags (kind 'cat')
+    (typeof COMBINED_CATEGORY_SOURCES !== 'undefined' ? COMBINED_CATEGORY_SOURCES : []).forEach((s) => jobs.push([s.id, s.indexUrl, null, 'cat']));
+    // tag lists (kind 'tag')
+    if (typeof PORN_TAGS_URL !== 'undefined') jobs.push(['fullporno', PORN_TAGS_URL, { mode: 'tags' }, 'tag']);
+    if (typeof PVB_TAGS_URL !== 'undefined') jobs.push(['pornvideobb', PVB_TAGS_URL, { mode: 'tags' }, 'tag']);
+    if (typeof BDSM_TAGS_URL !== 'undefined') jobs.push(['bdsmhole', BDSM_TAGS_URL, { mode: 'tags' }, 'tag']);
     d.pending = d.total = jobs.length;
-    jobs.forEach((j) => job(j[0], j[1], j[2]));
+    jobs.forEach((j) => job(j[0], j[1], j[2], j[3]));
   }
 
   // ---------------------------------------------------------------- thumbnails: the first video of the tag's own feed
