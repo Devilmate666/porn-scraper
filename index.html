@@ -254,6 +254,7 @@
   .card-star[data-meta-link]:hover { color: #fde68a; text-decoration: underline; }
   .site-label.s-general { background: #e11d48; }
   .site-label.s-bdsm    { background: #7c3aed; }
+  .site-label.s-all     { background: linear-gradient(90deg, #e11d48, #7c3aed); }
   .site-label.s-superporn     { background: #e11d48; }
   .site-label.s-pornvideobb   { background: #0891b2; }
   .site-label.s-freesexvideos { background: #d97706; }
@@ -934,7 +935,7 @@
 .tg-card .tg-heart { position: absolute; right: .5rem; bottom: .5rem; z-index: 6; background: rgba(0,0,0,.55); }
 .tg-card.is-fav { border-color: #ff4d6d66; }
 .tg-card.is-fav .tg-heart svg { fill: #ff4d6d; stroke: #ff4d6d; }
-.tg-sec { scroll-margin-top: 9.5rem; padding: .3rem 0 1rem; }
+.tg-sec { scroll-margin-top: 12rem; padding: .3rem 0 1rem; }
 .tg-sec .tag-letter { width: 46px; margin-bottom: .6rem; }
 .tg-sec-bar { display: flex; flex-wrap: wrap; gap: .5rem; }
 .tg-sec-bar .n { font-size: .68rem; opacity: .65; margin-left: .3rem; font-family: ui-monospace, monospace; }
@@ -944,7 +945,12 @@
 @keyframes tgShim { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 .tg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: .9rem; }
 @media (max-width: 600px) { .tg-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .6rem; } }
-.tg-tools { display: flex; flex-direction: column; gap: .6rem; padding: .5rem 0 .3rem; }
+.tg-tools { display: contents; }   /* children sit directly in .tg-view so the search bar can stick for the whole list */
+.tg-tools > .tg-sec-bar { margin: .5rem 0 .6rem; }
+.tg-tools > .tg-chips { margin: .6rem 0 .3rem; }
+.tg-search-sticky { position: sticky; top: calc(var(--nav-h, 3.4rem) + var(--controls-h, 4rem) - 2px); z-index: 44;
+  margin: 0 -1.4rem; padding: .55rem 1.4rem; background: #0d121c; border-bottom: 1px solid #1e2738; }
+@media (max-width: 600px) { .tg-search-sticky { margin: 0 -.8rem; padding: .55rem .8rem; } }
 .tg-tools input { width: 100%; background: #0c0f15; border: 1px solid #232b3b; color: #e2e8f0; padding: .65rem 1.1rem; border-radius: 30px; font: inherit; font-size: .88rem; outline: none; transition: .15s; }
 .tg-tools input:focus { border-color: #4f46e5; box-shadow: 0 0 0 3px #4f46e533; }
 .tg-tools input::placeholder { color: #5b6a84; }
@@ -1282,6 +1288,47 @@ body.fav-panel-open { overflow: hidden; }
 .hist-x:hover { background: #7f1d3a; border-color: #ff4d6d88; }
 .hist-x:focus-visible { outline: 2px solid #7c8af8; outline-offset: 2px; }
 
+
+/* =====================================================================================
+   DESKTOP & BIG SCREENS (>= 1000px). Phones / tablets (<= 900px) are untouched.
+   - the video grid fills the width with as many cards as fit (was a fixed 2 columns)
+   - the app container grows on wide monitors, the library / history / bottom bar follow it
+   - the player never gets taller than the screen; text scales up on 2K / 4K displays
+   ===================================================================================== */
+@media (min-width: 1000px) {
+  body { padding: 1.5rem 2rem 2rem; }
+  .videos, .section-loading { grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 1.1rem; padding: 1.3rem 1.6rem; }
+  .tg-grid { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
+  .cams-grid { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+  .studio-list.series-grid { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+  .feed-header, .cat-search-bar, .cat-filter-bar { padding-left: 1.6rem; padding-right: 1.6rem; }
+  .main-player { max-width: min(100%, 1500px); margin-left: auto; margin-right: auto; }
+  .main-player-body { max-height: min(76vh, 1000px); }
+}
+@media (min-width: 1700px) {
+  .app, #favBar .fb-row, #favPanel .mix-grid, #histPanel .hp-scroll > div { max-width: min(2200px, 100%); }
+  .videos, .section-loading { grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: 1.2rem; }
+  .main-player { max-width: min(100%, 1700px); }
+}
+@media (min-width: 2300px) {
+  html { font-size: 112.5%; }                      /* 2K / ultrawide: everything in rem grows 12% */
+  .app, #favBar .fb-row, #favPanel .mix-grid, #histPanel .hp-scroll > div { max-width: min(2900px, 100%); }
+  .videos, .section-loading { grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
+  .main-player { max-width: min(100%, 2000px); }
+}
+@media (min-width: 3000px) {
+  html { font-size: 125%; }                        /* 4K */
+  .app, #favBar .fb-row, #favPanel .mix-grid, #histPanel .hp-scroll > div { max-width: min(3600px, 100%); }
+  .videos, .section-loading { grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); }
+  .main-player { max-width: min(100%, 2400px); }
+}
+@media (min-width: 1000px) and (hover: hover) {
+  .card { transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease; }
+  .card:hover { box-shadow: 0 10px 28px -14px rgba(0,0,0,.9); }
+}
+@media (min-width: 1700px) { #favPanel { --lib-pad: max(1.5rem, calc((100vw - 2000px) / 2)); } }
+@media (min-width: 2300px) { #favPanel { --lib-pad: max(2rem, calc((100vw - 2600px) / 2)); } }
+@media (min-width: 3000px) { #favPanel { --lib-pad: max(2.5rem, calc((100vw - 3300px) / 2)); } }
 </style>
 <base target="_blank">
 <base target="_blank">
@@ -1482,8 +1529,12 @@ const CATALOGS = {
   // Networks = studio sections (see STUDIO_VIEWS); only Pornstars uses the tile catalog
   pornstars: {
     tab: PORNSTARS_TAB, view: 'pornstars', icon: '⭐', title: 'Pornstars', noun: 'pornstar',
+    mergeByName: true,     // ONE card per pornstar name (all her websites behind it)
     sources: [
-      { id: 'freesexvideos', group: 'general', indexUrl: CAT_URLS.pornstars },
+      { id: 'superporn',     group: 'general', indexUrl: 'https://www.superporn.com/pornstars',        mode: 'models' },
+      { id: 'pornvideobb',   group: 'general', indexUrl: 'https://2023.pornvideobb.com/porn_actor/',   mode: 'models' },
+      { id: 'freesexvideos', group: 'general', indexUrl: CAT_URLS.pornstars,                           mode: 'models' },
+      { id: 'bdsmhole',      group: 'bdsm',    indexUrl: 'https://www.bdsmhole.com/pornstars/',        mode: 'models' },   // BDSM filter
     ],
   },
 };
@@ -2071,6 +2122,33 @@ function clearActiveSearch() {
   return true;
 }
 
+/* Search inside a section's own list (Categories, Tags & Genres, Series, Networks, Pornstars, Live cams / channels).
+   Typing pushes ONE history entry (see the input listeners); the first Back must only clear the search box and stay on the
+   page - the Back after that is the normal one (the "Where to?" menu). */
+const SECTION_SEARCH_IDS = ['categorySearchInput', 'tagSearchInput', 'studioSearchInput', 'catalogSearchInput', 'tgSearch'];
+function inSearchableSection() {
+  return isListTab(activeTab) || activeTab === NETWORKS_TAB || !!kindOfCatalogTab(activeTab)
+    || activeTab === LIVECAMS_TAB || activeTab === LIVECHANNELS_TAB;
+}
+function sectionSearchBoxes() {
+  return SECTION_SEARCH_IDS.map(id => document.getElementById(id)).filter(el => el && results.contains(el));
+}
+function sectionSearchHasText() {
+  if (!inSearchableSection()) return false;
+  return (searchInput.value || '').trim() !== '' || sectionSearchBoxes().some(el => (el.value || '').trim() !== '');
+}
+function clearSectionSearch() {
+  clearTimeout(liveTimer);
+  const hadMain = (searchInput.value || '').trim() !== '';
+  searchInput.value = '';
+  sectionSearchBoxes().forEach(el => {
+    if ((el.value || '').trim() === '') return;
+    el.value = '';
+    el.dispatchEvent(new Event('input', { bubbles: true }));       // each list filters itself on 'input'
+  });
+  if (hadMain && (activeTab === LIVECAMS_TAB || activeTab === LIVECHANNELS_TAB || liveMirrorInput())) onLiveInput();
+}
+
 window.addEventListener('popstate', (e) => {
   // A suggestion dropdown gets its own history entry with the SAME URL as the
   // current page. Back therefore removes only the dropdown entry; no section,
@@ -2105,7 +2183,29 @@ window.addEventListener('popstate', (e) => {
   const cancelledLoad = cancelFeedLoad();                          // a feed still loading: Back leaves it at once
   const fromIdx = navIdx;
   const goingBack = to === -1 || to < fromIdx;
+  // searching inside a section list: this Back only removes the search entry and clears the box (stay on the page)
+  // Back #1 inside a section that has search text ALWAYS clears the search first and stays on the page;
+  // Back #2 (no text left) opens the "Where to?" menu. This also covers a search whose history entry was lost
+  // (text restored after returning from a category/star page, or a suggestion dropdown stacked on top).
+  if (goingBack && !cancelledLoad && !sectionMenuOpen && !(mainPlayer && mainPlayer.classList.contains('active')) && sectionSearchHasText()) {
+    if (feedSearchEntryActive) {
+      if (to >= 0) navIdx = to;                                    // the search's own entry was just popped
+    } else {
+      // no entry belongs to the search: undo this Back by putting the same page on top again (nothing re-renders)
+      const keep = { ...currentNavState(true), ts: Date.now(), sid: NAV_SID, idx: fromIdx };
+      navIdx = fromIdx;
+      navSilent = true;
+      forgetEntryScrollFrom(fromIdx + 1);
+      try { history.pushState(keep, '', stateToHash(keep)); } catch (_) {}
+      setTimeout(() => { navSilent = false; }, 90);
+    }
+    feedSearchEntryActive = false;
+    clearSectionSearch();
+    if (suggestHistoryOpen && window.closeSuggestBox) window.closeSuggestBox(true);   // close a dropdown left open
+    return;
+  }
   if (goingBack && !cancelledLoad && !(mainPlayer && mainPlayer.classList.contains('active')) && (sectionMenuOpen || isSectionRootState(currentNavState(true)))) {
+    feedSearchEntryActive = false;                                  // a later search starts a fresh history entry
     // Back on a section's main page does not walk through the history: it asks where to go (other sections, or Exit).
     // The Back is undone by putting the same page on top of the history again - nothing is re-rendered, nothing moves.
     const keep = { ...currentNavState(true), ts: Date.now(), sid: NAV_SID, idx: fromIdx };
@@ -2169,9 +2269,12 @@ function statsHtml(item) {
 }
 
 /** Open a metadata link (genre / pornstar / series / uploader ...) exactly like a category tile. */
-function openMetaLink(link, name) {
+function openMetaLink(link, name, kind) {
   if (!link) return;
   if (link.startsWith('chan-cat:')) { openLiveChannels(false, { category: link.slice(9) }); return; }
+  // a genre / tag clicked on a video: ONE mixed feed of the same-named tag on every website of the active filter
+  if (kind === 'categories' || kind === 'tags') { openMixedGenre(link, name); return; }
+  if (kind === 'models' || kind === 'stars') { openMixedStar(link, name); return; }
   const src = sourceForUrl(link);
   if (src) {
     activeSourceId = src.id;
@@ -2180,6 +2283,117 @@ function openMetaLink(link, name) {
   }
   openCategoryFeed(link, name || 'Videos');
 }
+
+/* Genre / tag clicked on a video card or under the player.
+   Scope follows the filter that is on: All -> every website mixed (BDSMHole included), General -> Superporn + FreeSexVideos +
+   PornVideoBB mixed, BDSM -> BDSMHole alone. A chip of the other section never leaks across (it keeps its own section). */
+async function openMixedGenre(link, name, allSites = false) {
+  const src = sourceForUrl(link);
+  const own = src ? feedOfSource(src.id).id : 'general';
+  let scope = !homeFilter ? 'all' : (homeFilter === 'general' || homeFilter === 'bdsm') ? homeFilter : feedOfSource(homeFilter).id;
+  if (allSites) scope = 'all';                                   // Library: every website, whatever Home is filtered to
+  else if (scope !== 'all' && scope !== own) scope = own;
+  const plain = () => {
+    if (src) { activeSourceId = src.id; activeFeedId = feedOfSource(src.id).id; renderSiteTabs(); }
+    openCategoryFeed(link, name || 'Videos');
+  };
+  let members = null;
+  try {
+    if (typeof window.tgMixMembers === 'function') {
+      const tok = ++mixedGenreToken;
+      setStatus(`Finding "${name}" on every website…`, true);
+      members = await window.tgMixMembers(link, name, scope, src ? src.id : '');
+      if (tok !== mixedGenreToken) return;                               // a newer click replaced this one
+    }
+  } catch (e) { console.error('[mixed genre]', e); }
+  if (!members || members.length < 2) { plain(); return; }                 // only one website has it: normal feed
+  const first = members[0];
+  if (first.sid) { activeSourceId = first.sid; activeFeedId = feedOfSource(first.sid).id; renderSiteTabs(); }
+  const key = TAGMIX_PREFIX + 'vc-' + scope + '-' + (members.key || normKeyOf(name)).replace(/\s+/g, '-');
+  openTagMix(key, name, members);
+}
+let mixedGenreToken = 0;
+
+/* Pornstar clicked on a video (card chip / details under the player): same rule as the Pornstars tab. */
+async function openMixedStar(link, name, allSites = false) {
+  const src = sourceForUrl(link);
+  const own = src ? feedOfSource(src.id).id : 'general';
+  let scope = !homeFilter ? 'all' : (homeFilter === 'general' || homeFilter === 'bdsm') ? homeFilter : feedOfSource(homeFilter).id;
+  if (allSites) scope = 'all';                                   // Library: every website, whatever Home is filtered to
+  else if (scope !== 'all' && scope !== own) scope = own;
+  const plain = () => {
+    if (src) { activeSourceId = src.id; activeFeedId = feedOfSource(src.id).id; renderSiteTabs(); }
+    openCategoryFeed(link, name || 'Videos');
+  };
+  let members = null;
+  try {
+    const tok = ++mixedGenreToken;
+    setStatus(`Finding "${name}" on every website…`, true);
+    members = await starMembersFor(link, name, scope, src ? src.id : '');
+    if (tok !== mixedGenreToken) return;
+  } catch (e) { console.error('[mixed star]', e); }
+  if (!members || members.length < 2) { plain(); return; }
+  const first = members[0];
+  if (first.sid) { activeSourceId = first.sid; activeFeedId = feedOfSource(first.sid).id; renderSiteTabs(); }
+  openTagMix(TAGMIX_PREFIX + 'star-' + scope + '-' + members.key, name, members);
+}
+/* Networks / series: the same-named network on every website (lists of both sections are indexed once, then cached 30 min). */
+const networkIndexCache = { at: 0, sections: null, promise: null };
+async function loadNetworkIndex() {
+  if (networkIndexCache.sections && Date.now() - networkIndexCache.at < 30 * 60000) return networkIndexCache.sections;
+  if (networkIndexCache.promise) return networkIndexCache.promise;
+  networkIndexCache.promise = (async () => {
+    const all = [];
+    await Promise.all(NETWORK_SOURCES.map(async (src) => {
+      let url = src.url(), pages = 0;
+      while (url && pages < 8) {
+        try { const r = await fetchStudioPage(url, src.mode, src.group); all.push(...r.sections); url = r.next; } catch (e) { break; }
+        pages++;
+      }
+    }));
+    networkIndexCache.sections = all; networkIndexCache.at = Date.now();
+    return all;
+  })().finally(() => { networkIndexCache.promise = null; });
+  return networkIndexCache.promise;
+}
+async function networkMembersFor(link, name, clickedSid) {
+  const k = normKeyOf(name);
+  if (!k) return null;
+  let list = [];
+  try { list = await Promise.race([loadNetworkIndex(), new Promise((r) => setTimeout(() => r([]), 9000))]); } catch (e) {}
+  const extra = [];
+  try { extra.push(...studioState.sections); Object.values(studioStash).forEach((x) => { if (x && x.state && x.state.sections) extra.push(...x.state.sections); }); } catch (e) {}
+  const seen = new Set([trimLinkKey(link)]);
+  const members = [{ link, sid: clickedSid || '', label: clickedSid ? siteNameOf(clickedSid) : hostOf(link) }];
+  [...list, ...extra].forEach((sec) => {
+    if (!sec || !sec.link || normKeyOf(sec.name) !== k) return;
+    const lk = trimLinkKey(sec.link); if (seen.has(lk)) return;
+    seen.add(lk);
+    const src = sourceForUrl(sec.link);
+    members.push({ link: sec.link, sid: src ? src.id : '', label: src ? siteNameOf(src.id) : hostOf(sec.link) });
+  });
+  members.key = k;
+  return members;
+}
+async function openMixedNetwork(link, name) {
+  const src = sourceForUrl(link);
+  const plain = () => {
+    if (src) { activeSourceId = src.id; activeFeedId = feedOfSource(src.id).id; renderSiteTabs(); }
+    openCategoryFeed(link, name || 'Videos');
+  };
+  let members = null;
+  try {
+    const tok = ++mixedGenreToken;
+    setStatus(`Finding "${name}" on every website…`, true);
+    members = await networkMembersFor(link, name, src ? src.id : '');
+    if (tok !== mixedGenreToken) return;
+  } catch (e) { console.error('[mixed network]', e); }
+  if (!members || members.length < 2) { plain(); return; }
+  const first = members[0];
+  if (first.sid) { activeSourceId = first.sid; activeFeedId = feedOfSource(first.sid).id; renderSiteTabs(); }
+  openTagMix(TAGMIX_PREFIX + 'net-' + String(members.key).replace(/\s+/g, '-'), name, members);
+}
+const normKeyOf = (n) => String(n || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
 
 const feedKeyByLink = new Map();      // link a feed was opened with -> the key its data is stored under
 const cardItemByLink = new Map();      // video link -> scraped item (seeds the player details instantly)
@@ -2438,7 +2652,7 @@ function cardTagActivate(e) {
   const t = e.target.closest && e.target.closest('a.card [data-meta-link]');
   if (!t || typeof results === 'undefined' || !results.contains(t)) return false;
   e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
-  closePlayerAndOpen(t.getAttribute('data-meta-link'), t.getAttribute('data-meta-name'));
+  closePlayerAndOpen(t.getAttribute('data-meta-link'), t.getAttribute('data-meta-name'), t.classList.contains('card-bgenre') ? 'categories' : t.classList.contains('card-star') ? 'stars' : (t.getAttribute('data-meta-kind') || ''));
   return true;
 }
 document.addEventListener('click', cardTagActivate, true);
@@ -3098,7 +3312,19 @@ function bindCategoryCards() {
         activeFeedId = feedOfSource(sid).id;
         renderSiteTabs();
       }
-      if (link && sid === 'superporn' && typeof window.tgOpenSuperporn === 'function') { window.tgOpenSuperporn(link, name); return; }
+      // a pornstar card behind several websites (per the active filter): ONE combined feed of all her videos
+      const memRaw = card.getAttribute('data-members');
+      if (memRaw && card.classList.contains('portrait')) {
+        try {
+          const members = JSON.parse(memRaw);
+          if (members.length > 1) {
+            const st = catalogState.pornstars, scope = (st && st.filter) || 'all';
+            openTagMix(TAGMIX_PREFIX + 'star-' + scope + '-' + starKey(name), name, members);
+            return;
+          }
+        } catch (e) { console.error('[pornstar mix]', e); }
+      }
+      if (link && sid === 'superporn' && !card.classList.contains('portrait') && typeof window.tgOpenSuperporn === 'function') { window.tgOpenSuperporn(link, name); return; }
       if (link) openCategoryFeed(link, name);
     });
   });
@@ -3122,6 +3348,38 @@ function observeCategorySentinel() {
   });
 }
 
+/** Static end-of-list row (no spinner). One per grid; removed again when the menu/filter changes. */
+function showListEndRow(container, cls) {
+  if (!container || container.querySelector('.' + cls)) return;
+  const el = document.createElement('div');
+  el.className = 'loading-row search-end ' + cls;
+  el.innerHTML = '<div style="opacity:.6;">🏁 End of list</div>';
+  container.insertBefore(el, container.querySelector('.loading-row-slot'));
+}
+/** Run fn (which rebuilds/filters the grid) and keep the card the user is looking at exactly where it was (no page jump). */
+function withScrollAnchor(fn) {
+  let link = null, top = 0;
+  const vh = window.innerHeight || document.documentElement.clientHeight;
+  for (const c of results.querySelectorAll('.category-card')) {
+    if (c.style.display === 'none') continue;
+    const r = c.getBoundingClientRect();
+    if (r.bottom > 0 && r.top < vh) { link = c.getAttribute('data-link'); top = r.top; break; }
+  }
+  fn();
+  if (link == null) return;
+  const el = results.querySelector('.category-card[data-link="' + CSS.escape(link) + '"]');
+  if (!el || el.style.display === 'none') return;
+  const d = el.getBoundingClientRect().top - top;
+  if (Math.abs(d) > 1) window.scrollBy({ top: d, left: 0, behavior: 'instant' });
+}
+
+/** Turn a loader row into a calm, spinner-free end marker (the list is finished, infinite scroll stops). */
+function markListEnd(loader, text) {
+  if (!loader || !loader.isConnected) return;
+  loader.className = 'loading-row search-end';
+  loader.innerHTML = `<div style="opacity:.6;">🏁 ${text || 'End of list'}</div>`;
+}
+
 async function loadNextCategoriesPage() {
   if (!isListTab(activeTab)) return;
   const st = categoriesState;
@@ -3133,10 +3391,15 @@ async function loadNextCategoriesPage() {
   const grid = feed.querySelector('.videos');
   const slot = grid.querySelector('.loading-row-slot');
 
-  // Build list of next URLs to fetch (combined categories = one per source)
+  // Build list of next URLs to fetch (combined categories = one per source).
+  // Only the sources of the ACTIVE menu (All / General / BDSM) are loaded - loading the hidden ones is what kept the
+  // "Loading more…" row and page jumps going at the end of the BDSM list.
+  const catFilter = kind === 'categories' ? (st.filterSource || 'all') : 'all';
+  const inFilter = (id) => catFilter === 'all' || feedOfSource(id).id === catFilter;
   const jobs = [];
   if (kind === 'categories' && st.nextBySource && Object.keys(st.nextBySource).length) {
     for (const src of COMBINED_CATEGORY_SOURCES) {
+      if (!inFilter(src.id)) continue;
       const next = st.nextBySource[src.id];
       if (next) jobs.push({ sourceId: src.id, url: next });
     }
@@ -3147,11 +3410,15 @@ async function loadNextCategoriesPage() {
     });
   }
   if (!jobs.length) {
-    st.exhausted = true;
+    // this menu is finished (another menu may still have pages, so only mark the whole list done when nothing is left)
+    const othersLeft = st.nextBySource && Object.values(st.nextBySource).some(Boolean);
+    if (!othersLeft) st.exhausted = true;
+    showListEndRow(grid, 'cat-list-end');
     return;
   }
 
   st.loading = true;
+  const oldEnd = grid.querySelector('.cat-list-end'); if (oldEnd) oldEnd.remove();
   const loader = document.createElement('div');
   loader.className = 'loading-row';
   loader.innerHTML = `<div class="mini-spinner"></div><div>Loading more categories…</div>`;
@@ -3161,6 +3428,7 @@ async function loadNextCategoriesPage() {
   const existing = new Set((st.categories || []).map(c => (c.link || '').split('?')[0]));
   const uniqueNew = [];
   let anyNext = false;
+  let lastNxt = '';
 
   try {
     await Promise.all(jobs.map(async (job) => {
@@ -3179,16 +3447,20 @@ async function loadNextCategoriesPage() {
           if (st.nextBySource) st.nextBySource[job.sourceId] = '';
           return;
         }
+        let fresh = 0;
         for (const c of (data.categories || [])) {
           const key = (c.link || '').split('?')[0];
           if (!key || existing.has(key)) continue;
           existing.add(key);
+          fresh++;
           uniqueNew.push({
             ...c,
             sourceId: c.sourceId || job.sourceId || (isFpKind(kind) ? 'fullporno' : job.sourceId),
           });
         }
-        const nxt = data.next_page || guessNextUrl(job.url, nextPageNum + 1) || '';
+        // nothing new on this page = this source is finished (don't keep guessing further pages)
+        const nxt = fresh ? (data.next_page || guessNextUrl(job.url, nextPageNum + 1) || '') : '';
+        lastNxt = nxt;
         if (st.nextBySource) {
           st.nextBySource[job.sourceId] = nxt;
         }
@@ -3201,8 +3473,6 @@ async function loadNextCategoriesPage() {
 
     if (!uniqueNew.length) {
       st.emptyCount = (st.emptyCount || 0) + 1;
-      loader.innerHTML = `<div style="opacity:.6;">No more categories</div>`;
-      setTimeout(() => loader.remove(), 1200);
       // Update next pointers
       if (st.nextBySource) {
         anyNext = Object.values(st.nextBySource).some(Boolean);
@@ -3210,8 +3480,13 @@ async function loadNextCategoriesPage() {
       } else {
         st.next_page = '';
       }
-      if (st.emptyCount >= 3 || !anyNext) st.exhausted = true;
-      else {
+      if (!anyNext) st.exhausted = true;
+      const scopeHasMore = !!st.nextBySource && COMBINED_CATEGORY_SOURCES.some(src => inFilter(src.id) && st.nextBySource[src.id]);
+      if (!scopeHasMore) {
+        loader.remove();
+        showListEndRow(grid, 'cat-list-end');          // static end row, no spinner
+      } else {
+        loader.remove();
         st.page_num = nextPageNum;
         scheduleCategoryRecheck();
       }
@@ -3225,6 +3500,7 @@ async function loadNextCategoriesPage() {
     // Append cards (same pattern as video infinite scroll)
     st.categories = (st.categories || []).concat(uniqueNew);
     if (!isFpKind(kind)) sortCategoriesAZ(st.categories);
+    withScrollAnchor(() => {
     if (st === categoriesState) {
       refreshCategoryGridFromState();
     } else {
@@ -3247,13 +3523,14 @@ async function loadNextCategoriesPage() {
         countBadge.textContent = `🗂️ ${n} ${nn}${n !== 1 ? 's' : ''}`;
       }
     }
+    });   // end withScrollAnchor
 
     st.page_num = nextPageNum;
     if (st.nextBySource) {
       anyNext = Object.values(st.nextBySource).some(Boolean);
       st.next_page = Object.values(st.nextBySource).find(Boolean) || '';
     } else {
-      st.next_page = anyNext ? st.next_page : '';
+      st.next_page = anyNext ? (lastNxt || st.next_page) : '';
     }
     if (!anyNext && !st.next_page) st.exhausted = true;
 
@@ -3989,7 +4266,7 @@ function renderPlayerMeta(m) {
     const [icon, label, cls] = PM_GROUPS[g.kind] || ['🔗', g.label || g.kind, ''];
     const chips = g.items.map(it => it.link
       ? `<span class="tag-chip ${cls}" role="link" tabindex="0" data-meta-link="${escapeHtml(it.link)}"
-           data-meta-name="${escapeHtml(it.name)}" title="Open ${escapeHtml(it.name)}">${escapeHtml(it.name)}</span>`
+           data-meta-kind="${escapeHtml(g.kind)}" data-meta-name="${escapeHtml(it.name)}" title="Open ${escapeHtml(it.name)}">${escapeHtml(it.name)}</span>`
       : `<span class="tag-chip pm-plain ${cls}">${escapeHtml(it.name)}</span>`).join('');
     return `<div class="pm-group"><div class="pm-label">${icon} ${label}</div><div class="pm-chips">${chips}</div></div>`;
   }).join('');
@@ -4086,11 +4363,11 @@ async function loadPlayerMeta(detail) {
   } catch { /* the seed (if any) stays; metadata is a bonus */ }
 }
 
-function closePlayerAndOpen(link, name) {
+function closePlayerAndOpen(link, name, kind) {
   try { if (document.fullscreenElement) document.exitFullscreen(); } catch {}
   resetMainPlayer();
   mainPlayer.classList.remove('active');
-  openMetaLink(link, name);
+  openMetaLink(link, name, kind);
 }
 
 if (mainPlayerMeta) {
@@ -4112,14 +4389,14 @@ if (mainPlayerMeta) {
       return;
     }
     const chip = e.target.closest('.tag-chip[data-meta-link]');
-    if (chip) closePlayerAndOpen(chip.getAttribute('data-meta-link'), chip.getAttribute('data-meta-name'));
+    if (chip) closePlayerAndOpen(chip.getAttribute('data-meta-link'), chip.getAttribute('data-meta-name'), chip.getAttribute('data-meta-kind'));
   });
   mainPlayerMeta.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' && e.key !== ' ') return;
     const chip = e.target.closest && e.target.closest('.tag-chip[data-meta-link]');
     if (!chip) return;
     e.preventDefault();
-    closePlayerAndOpen(chip.getAttribute('data-meta-link'), chip.getAttribute('data-meta-name'));
+    closePlayerAndOpen(chip.getAttribute('data-meta-link'), chip.getAttribute('data-meta-name'), chip.getAttribute('data-meta-kind'));
   });
 }
 
@@ -4265,7 +4542,7 @@ function observeSentinel(siteUrl) {
   document.querySelectorAll('.sentinel').forEach(s => sentinelObserver.observe(s));
 }
 
-const MAX_EMPTY = 3;
+const MAX_EMPTY = 1;   // one page with nothing new = end of the list (no repeated 'loading' retries)
 const MAX_RETRY = 4;
 
 function ensureState(siteUrl) {
@@ -4307,10 +4584,8 @@ async function loadNextPageForSite(siteUrl) {
     const data = await fetchNextWithRetry(nextUrl, nextPageNum);
     if (!data || !data.items || !data.items.length) {
       st.emptyCount++;
-      loader.innerHTML = `<div style="opacity:.6;">No more previews</div>`;
-      setTimeout(() => loader.remove(), 1500);
-      if (st.emptyCount >= MAX_EMPTY || !data?.next_page) st.exhausted = true;
-      else { st.next_page = data.next_page || ''; st.page_num = nextPageNum; scheduleRecheck(siteUrl); }
+      markListEnd(loader, 'End of list');
+      st.exhausted = true;
       st.loading = false;
       return;
     }
@@ -4337,9 +4612,8 @@ async function loadNextPageForSite(siteUrl) {
     // is invalid. Treat a page with zero genuinely new links as exhaustion.
     if (!freshItems.length) {
       st.emptyCount++;
-      if (st.emptyCount >= 1) st.exhausted = true;
-      loader.innerHTML = `<div style="opacity:.6;">No new previews</div>`;
-      setTimeout(() => loader.remove(), 900);
+      st.exhausted = true;
+      markListEnd(loader, 'End of list');
       st.page_num = nextPageNum;
       st.loading = false;
       return;
@@ -4645,6 +4919,7 @@ function bindStudioChips() {
   bar.querySelectorAll('[data-studio-group]').forEach(ch => {
     ch.onclick = () => {
       studioState.filter = ch.getAttribute('data-studio-group');
+      results.querySelectorAll('.studio-list-end').forEach(el => el.remove());
       bar.outerHTML = studioChipsHtml();
       bindStudioChips();
       applyStudioFilter();
@@ -4914,10 +5189,18 @@ async function loadNextStudioPage() {
     return;
   }
 
+  // Networks has a General / BDSM menu: only the ACTIVE menu's pages are loaded (hidden ones only caused an endless loader).
+  const netGroup = studioState.filter === 'bdsm' ? 'bdsm' : 'general';
+  if (tabAtStart === NETWORKS_TAB && !(st.nexts && st.nexts[netGroup])) {
+    showListEndRow(results.querySelector('.studio-list'), 'studio-list-end');   // static end row, no spinner
+    return;
+  }
+
   st.loading = true;
   const feed = results.querySelector(`.feed[data-site="${studioTab}"]`);
   const list = feed && feed.querySelector('.studio-list');
   const slot = list && list.querySelector('.loading-row-slot');
+  const oldStudioEnd = list && list.querySelector('.studio-list-end'); if (oldStudioEnd) oldStudioEnd.remove();
   const loader = document.createElement('div');
   loader.className = 'loading-row';
   loader.innerHTML = `<div class="mini-spinner"></div><div>Loading more sites…</div>`;
@@ -4929,7 +5212,7 @@ async function loadNextStudioPage() {
   }
   try {
     const jobs = isNet
-      ? Object.entries(st.nexts || {}).filter(([, u]) => u).map(([g, u]) => ({ group: g, url: u, mode: networkMode(g) }))
+      ? Object.entries(st.nexts || {}).filter(([g, u]) => u && g === netGroup).map(([g, u]) => ({ group: g, url: u, mode: networkMode(g) }))
       : [{ group: '', url: st.next_page, mode: 'sites' }];
     const got = await Promise.all(jobs.map(async (j) => {
       try { return { j, r: await fetchStudioPage(j.url, j.mode, j.group) }; }
@@ -5174,6 +5457,7 @@ function applyCategorySourceFilter(filter, opts = {}) {
     if (inp) { inp.value = categoriesState.nameQuery; clearTimeout(inp._catTimer); }
   }
   categoriesState.filterSource = filter;
+  results.querySelectorAll('.cat-list-end').forEach(el => el.remove());   // a new menu may still have pages
 
   const bar = document.getElementById('catFilterBar');
   if (bar) {
@@ -5636,13 +5920,14 @@ async function fetchCatalogPage(kind, i, url) {
   try {
     const res = await fetch('/api/scrape-categories', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify(src.mode ? { url, mode: src.mode } : { url }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (data.error) throw new Error(data.error);
     for (const c of (data.categories || [])) {
-      const key = (c.link || '').split('?')[0];
+      // pornvideobb carries the star in the query string (?actor=Name): keep it in the key
+      const key = hostOf(c.link || '').includes('pornvideobb') ? (c.link || '') : (c.link || '').split('?')[0];
       if (!key || isAllVideosLink(key) || st.seen.has(key)) continue;
       st.seen.add(key);
       st.items.push({ ...c, sourceId: src.id, group: src.group });
@@ -5657,17 +5942,57 @@ async function fetchCatalogPage(kind, i, url) {
   return added;
 }
 
+/* ---- Pornstars: one card per name. The cards depend on the filter that is on:
+        All     -> one card per name across all 4 websites (BDSMHole included)
+        General -> one card per name across Superporn + PornVideoBB + FreeSexVideos
+        BDSM    -> BDSMHole stars only
+   so the same pornstar is never shown twice, and under BDSM her card only opens her BDSMHole videos. */
+const starKey = (name) => String(name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '');
+const siteNameOf = (sid) => ((SOURCES.find(x => x.id === sid) || {}).name) || sid || '';
+const trimLinkKey = (l) => String(l || '').split('#')[0].replace(/\/+$/, '').toLowerCase();
+
+function catalogGroups(kind) {
+  const cfg = CATALOGS[kind], st = catalogState[kind];
+  const pool = st.filter === 'all' ? st.items : st.items.filter(c => c.group === st.filter);
+  if (!cfg.mergeByName) return pool.map(c => ({ ...c, members: [c] }));
+  const order = (c) => cfg.sources.findIndex(x => x.id === c.sourceId);
+  const map = new Map();
+  pool.forEach(c => {
+    const k = starKey(c.name) || trimLinkKey(c.link);
+    let g = map.get(k);
+    if (!g) { g = { ...c, members: [], key: k }; map.set(k, g); }
+    g.members.push(c);
+  });
+  map.forEach(g => {
+    g.members.sort((a, b) => order(a) - order(b));
+    const m0 = g.members[0];
+    g.link = m0.link; g.sourceId = m0.sourceId; g.group = m0.group; g.name = m0.name;
+    g.thumbnail = (g.members.find(m => m.thumbnail) || {}).thumbnail || '';
+    const vc = g.members.reduce((a, m) => a + (Number(m.video_count) || 0), 0);
+    g.video_count = vc || null;
+  });
+  return [...map.values()];
+}
+
 function catalogCardHtml(c, kind) {
   const name = escapeHtml(c.name || 'Untitled');
   const ph = c.thumbnail ? escapeHtml(c.thumbnail)
     : 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
-  const feed = feedOfSource(c.sourceId);
+  const members = c.members || [c];
+  const sids = [...new Set(members.map(m => m.sourceId))];
+  // badge = General / BDSM only (never a website count); a star that is in both sections shows both names
+  const secs = [...new Set(members.map(m => m.group === 'bdsm' ? 'bdsm' : 'general'))];
+  const label = secs.length > 1 ? 'General · BDSM' : (secs[0] === 'bdsm' ? 'BDSM' : 'General');
+  const labelCls = secs.length > 1 ? 'all' : secs[0];
+  const labelTitle = sids.map(siteNameOf).join(' + ');
+  const mem = sids.length > 1 || members.length > 1
+    ? ` data-members="${escapeHtml(JSON.stringify(members.map(m => ({ link: m.link, sid: m.sourceId, label: siteNameOf(m.sourceId) }))))}"` : '';
   return `<a class="card category-card${kind === 'pornstars' ? ' portrait' : ''}" href="#" data-link="${escapeHtml(c.link)}"
              data-name="${escapeHtml(c.name || '')}" data-source-id="${escapeHtml(c.sourceId)}"
-             data-group="${escapeHtml(c.group || '')}" title="${name}">
+             data-group="${escapeHtml(c.group || '')}"${mem} title="${name}">
     <div class="thumb"${c.thumbnail ? ` style="--bg:url(&quot;${ph}&quot;)"` : ''}>
       <img src="${ph}" loading="lazy" alt="${name}" referrerpolicy="no-referrer" onerror="this.style.opacity=0">
-      <span class="site-label s-${escapeHtml(feed.id)}">${escapeHtml(feed.name)}</span>
+      <span class="site-label s-${escapeHtml(labelCls)}" title="${escapeHtml(labelTitle)}">${escapeHtml(label)}</span>
     </div>
     <div class="info"><div class="title">${name}</div>${c.video_count ? `<div class="meta">${Number(c.video_count).toLocaleString()} videos</div>` : ''}</div>
   </a>`;
@@ -5712,6 +6037,7 @@ function renderCatalog(kind) {
     </div>`;
   refreshCatalogGrid(kind);
   bindCatalogControls(kind);
+  autoFillCatalog(kind);
 }
 
 function refreshCatalogGrid(kind) {
@@ -5721,7 +6047,7 @@ function refreshCatalogGrid(kind) {
   if (!grid) return;
   const slot = grid.querySelector('.loading-row-slot');
   grid.querySelectorAll('.category-card, .cat-filter-empty').forEach(el => el.remove());
-  const sorted = st.items.slice().sort((a, b) =>
+  const sorted = catalogGroups(kind).sort((a, b) =>
     (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base', numeric: true }));
   const temp = document.createElement('div');
   temp.innerHTML = sorted.map(c => catalogCardHtml(c, kind)).join('');
@@ -5771,7 +6097,7 @@ function bindCatalogControls(kind) {
       st.filter = ch.getAttribute('data-cat-group') || 'all';
       bar.outerHTML = catalogChipsHtml(kind);
       bindCatalogControls(kind);
-      applyCatalogFilter(kind);
+      refreshCatalogGrid(kind);                                           // cards are merged per filter
     };
   });
   const input = document.getElementById('catalogSearchInput');
@@ -5807,7 +6133,7 @@ function observeCatalogSentinel(kind) {
   if (sent) { catalogObserver.unobserve(sent); catalogObserver.observe(sent); }   // re-arm after each load
 }
 
-async function loadMoreCatalog(kind) {
+async function loadMoreCatalog(kind, quiet) {
   const st = catalogState[kind];
   if (!st || st.loading || st.done) return 0;
   const jobs = Object.entries(st.next).filter(([, u]) => u);
@@ -5819,8 +6145,67 @@ async function loadMoreCatalog(kind) {
     added = r.reduce((a, b) => a + b, 0);
   } finally { st.loading = false; }
   if (!Object.values(st.next).some(Boolean)) st.done = true;
-  if (activeTab === CATALOGS[kind].tab) refreshCatalogGrid(kind);
+  if (!quiet && activeTab === CATALOGS[kind].tab) refreshCatalogGrid(kind);
   return added;
+}
+
+/** Pornstars: keep loading the remaining pages in the background so a name that exists on several websites ends up on ONE card. */
+async function autoFillCatalog(kind) {
+  const cfg = CATALOGS[kind], st = catalogState[kind];
+  if (!st || !cfg.mergeByName || st.autoFilling) return;
+  st.autoFilling = true;
+  let rounds = 0;
+  try {
+    while (!st.done && activeTab === cfg.tab && catalogState[kind] === st) {
+      while (st.loading) await new Promise(r => setTimeout(r, 150));
+      if (st.done) break;
+      await loadMoreCatalog(kind, true);
+      if (++rounds % 4 === 0 && activeTab === cfg.tab) refreshCatalogGrid(kind);
+      await new Promise(r => setTimeout(r, 300));
+    }
+  } finally {
+    st.autoFilling = false;
+    if (catalogState[kind] === st && activeTab === cfg.tab) refreshCatalogGrid(kind);
+  }
+}
+
+/** Star lists without opening the tab (used when a star chip on a video is clicked). Waits at most maxMs. */
+async function ensureStarLists(maxMs) {
+  const kind = 'pornstars', cfg = CATALOGS[kind], t0 = Date.now();
+  let st = catalogState[kind];
+  if (!st) {
+    st = catalogState[kind] = { items: [], seen: new Set(), next: {}, pages: {}, filter: 'all', q: '', loading: false, done: false, errors: [], searchToken: 0 };
+    st.init = Promise.all(cfg.sources.map((src, i) => fetchCatalogPage(kind, i, src.indexUrl)))
+      .then(() => { if (!Object.values(st.next).some(Boolean)) st.done = true; });
+  }
+  if (st.init) await Promise.race([st.init, new Promise(r => setTimeout(r, maxMs))]);
+  else while (!st.items.length && !st.errors.length && catalogState[kind] === st && Date.now() - t0 < maxMs)   // the tab is still loading its first pages
+    await new Promise(r => setTimeout(r, 150));
+  while (!st.done && Date.now() - t0 < maxMs) {
+    if (st.loading || !(await loadMoreCatalog(kind, true))) await new Promise(r => setTimeout(r, 150));
+    if (!Object.values(st.next).some(Boolean)) st.done = true;
+  }
+  return st;
+}
+
+/** Same-named star on every website of `scope` (all | general | bdsm): [{ link, sid, label }], the clicked one first. */
+async function starMembersFor(link, name, scope, clickedSid) {
+  const st = await ensureStarLists(7000);
+  const k = starKey(name);
+  if (!st || !k) return null;
+  const seen = new Set([trimLinkKey(link)]);
+  const members = [{ link, sid: clickedSid, label: siteNameOf(clickedSid) }];
+  const order = (c) => CATALOGS.pornstars.sources.findIndex(x => x.id === c.sourceId);
+  st.items.filter(c => (scope === 'all' || c.group === scope) && starKey(c.name) === k)
+    .sort((a, b) => order(a) - order(b))
+    .forEach(c => {
+      const lk = trimLinkKey(c.link);
+      if (seen.has(lk)) return;
+      seen.add(lk);
+      members.push({ link: c.link, sid: c.sourceId, label: siteNameOf(c.sourceId) });
+    });
+  members.key = k;
+  return members;
 }
 
 /** Enter / Search: load every remaining page of every source, filtering as it goes. */
@@ -7214,7 +7599,7 @@ searchInput.addEventListener('input', () => {
 });
 document.addEventListener('input', (e) => {
   const input = e.target;
-  if (!input || !['categorySearchInput', 'tagSearchInput', 'studioSearchInput', 'catalogSearchInput'].includes(input.id)) return;
+  if (!input || !SECTION_SEARCH_IDS.includes(input.id)) return;
   if ((input.value || '').trim() && !feedSearchEntryActive) {
     pushNav(currentNavState());
     feedSearchEntryActive = true;
@@ -7222,7 +7607,7 @@ document.addEventListener('input', (e) => {
 });
 /* Clearing any search box (backspace, the x button, Esc) puts the page back at the top. */
 (function scrollToTopWhenSearchCleared() {
-  const IDS = ['searchInput', 'categorySearchInput', 'tagSearchInput', 'studioSearchInput', 'catalogSearchInput'];
+  const IDS = ['searchInput', 'categorySearchInput', 'tagSearchInput', 'studioSearchInput', 'catalogSearchInput', 'tgSearch'];
   const isSearch = (el) => el && IDS.includes(el.id);
   const hasText = (el) => (el.value || '').trim() !== '';
   // On Home, in a section and on search results an emptied box keeps the results (until the next search), so the page must stay put.
@@ -8897,9 +9282,18 @@ document.addEventListener('keydown', (e) => {
         case 'channel':
           if (link && typeof playInMainPlayer === 'function') playInMainPlayer(link, name); break;
         case 'star':
+          if (link && name && typeof openMixedStar === 'function') { openMixedStar(link, name, true); break; }   // all websites
+          if (link && typeof openMetaLink === 'function') openMetaLink(link, name);
+          else if (link && typeof openCategoryFeed === 'function') openCategoryFeed(link, name);
+          break;
+        case 'category':
+          if (link && name && typeof openMixedGenre === 'function' && !link.startsWith('chan-cat:')) { openMixedGenre(link, name, true); break; }   // all websites
+          if (link && typeof openMetaLink === 'function') openMetaLink(link, name);
+          else if (link && typeof openCategoryFeed === 'function') openCategoryFeed(link, name);
+          break;
         case 'series':
         case 'network':
-        case 'category':
+          if (link && name && typeof openMixedNetwork === 'function') { openMixedNetwork(link, name); break; }       // all websites
           if (link && typeof openMetaLink === 'function') openMetaLink(link, name);          // internal feed; handles source resolution + chan-cat
           else if (link && typeof openCategoryFeed === 'function') openCategoryFeed(link, name);
           else if (link) toast('Open this link in the browser');
@@ -9219,6 +9613,26 @@ document.addEventListener('keydown', (e) => {
     };
     return Promise.race([run(), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 45000))]);
   }
+  /** A saved star / tag / genre / network / series is fetched from EVERY website that has it (same name on all sources),
+   *  not only the site it was saved from. */
+  async function fetchMixStar(r, fetched) {
+    let members = null;
+    try {
+      const src = typeof sourceForUrl === 'function' ? sourceForUrl(r.link) : null, sid = src ? src.id : '';
+      if (r.name && r.type === 'star' && typeof starMembersFor === 'function') members = await starMembersFor(r.link, r.name, 'all', sid);
+      else if (r.name && r.type === 'category' && typeof window.tgMixMembers === 'function' && !String(r.link).startsWith('chan-cat:')) members = await window.tgMixMembers(r.link, r.name, 'all', sid);
+      else if (r.name && (r.type === 'network' || r.type === 'series') && typeof networkMembersFor === 'function') members = await networkMembersFor(r.link, r.name, sid);
+    } catch (e) { console.error('[mix source]', e); }
+    const links = (members && members.length ? members.map((m) => m.link) : [r.link]).filter(Boolean);
+    const out = [];
+    await Promise.all(links.map(async (link) => {
+      const k = normLink(link, false);
+      if (fetched.has(k)) return;                      // another saved star already pulled this page
+      fetched.add(k);
+      try { out.push(...(await fetchMixSource({ link }))); } catch (e) {}
+    }));
+    return out;
+  }
   /** (re)build the mix when what you saved changed or it is older than 15 min; returns true if it started over */
   function startMix(force) {
     const sig = mixSig();
@@ -9228,10 +9642,11 @@ document.addEventListener('keydown', (e) => {
       loading: srcs.length > 0, ready: !srcs.length, filter: mix ? mix.filter : 'all', at: Date.now() };
     addToMix(m, vids.map(videoToItem), { type: 'video', name: '♥ Saved' });
     const queue = shuf(srcs);
+    const fetchedLinks = new Set();
     const worker = async () => {
       while (queue.length && token === mixToken) {
         const r = queue.shift();
-        try { const its = await fetchMixSource(r); if (token !== mixToken) return; addToMix(m, its, r); if (!its.length) m.failed++; }
+        try { const its = await fetchMixStar(r, fetchedLinks); if (token !== mixToken) return; addToMix(m, its, r); if (!its.length) m.failed++; }
         catch (e) { if (token !== mixToken) return; m.failed++; }
         m.done++;
         if (m.done >= Math.min(m.total, 4)) m.ready = true;     // show the first wave quickly, the rest keeps arriving
@@ -9791,6 +10206,29 @@ function render() {
     openCategoryFeed(link, name);
   };
 
+  // Genre / tag clicked on a video: every same-named category OR tag of the websites in `scope` (all | general | bdsm).
+  // Returns [{ link, sid, label }] with the clicked link first, or null when the lists are not available.
+  const SCOPE_SIDS = { all: ['superporn', 'fullporno', 'pornvideobb', 'bdsmhole'], general: ['superporn', 'fullporno', 'pornvideobb'], bdsm: ['bdsmhole'] };
+  const SID_ALIAS = { freesexvideos: 'fullporno' };
+  window.tgMixMembers = async function (link, name, scope, clickedSid) {
+    loadAll(false);
+    if (data && data.allReady) await Promise.race([data.allReady, new Promise((r) => setTimeout(r, 7000))]);
+    if (!data || !data.items.length) return null;
+    const k = mergeKey(name); if (!k) return null;
+    const allowed = SCOPE_SIDS[scope] || SCOPE_SIDS.all;
+    const seen = new Set([linkKey(link)]);
+    const sid0 = SID_ALIAS[clickedSid] || clickedSid || '';
+    const members = [{ link, sid: clickedSid || sid0, label: SITE_NAMES[sid0] || clickedSid || '' }];
+    data.items.forEach((it) => {
+      if (!allowed.includes(it.sid) || mergeKey(it.name) !== k) return;
+      const lk = linkKey(it.link); if (seen.has(lk)) return;
+      seen.add(lk);
+      members.push({ link: it.link, sid: it.sid, label: SITE_NAMES[it.sid] || it.sid });
+    });
+    members.key = k;
+    return members;
+  };
+
   const LKEY = 'pa_tg_list_v2', LTTL = 24 * 3600000;
   function cachedList() {
     try { const c = JSON.parse(localStorage.getItem(LKEY) || 'null'); if (c && Array.isArray(c.items) && c.items.length && Date.now() - c.at < LTTL) return c; } catch (e) {}
@@ -9804,12 +10242,14 @@ function render() {
     const c = !force && !data && cachedList();
     if (c) {                                                       // saved copy (24 h): the page shows at once
       data = { at: c.at, items: c.items.map((it) => ({ ...it, letter: letterOf(it.name) })), seen: new Set(), pending: 0, total: 0,
-               loading: false, done: true, failed: 0, mergeDone: true, mergeReady: Promise.resolve(), doneBy: {} };
+               loading: false, done: true, failed: 0, mergeDone: true, mergeReady: Promise.resolve(), allReady: Promise.resolve(), doneBy: {} };
       return;
     }
     const d = data = { at: Date.now(), items: [], seen: new Set(), pending: 0, total: 0, loading: true, done: false, failed: 0 };
     let markMergeReady;
     d.mergeReady = new Promise((r) => { markMergeReady = r; });
+    let markAllReady;
+    d.allReady = new Promise((r) => { markAllReady = r; });
     d.doneBy = {};
     const add = (list, sid, kind) => (list || []).forEach((c) => {
       // key = full link minus hash: some sites carry the tag identity in the
@@ -9841,7 +10281,7 @@ function render() {
       if (!d.mergeDone && MERGE_INTO_SP.every((x) => d.doneBy[x])) { d.mergeDone = true; saveMergeCache(d); markMergeReady(); }
       d.pending--;
       d.items.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }) || a.sid.localeCompare(b.sid));
-      if (d.pending <= 0) { d.loading = false; d.done = true; if (d.items.length && !d.failed) saveList(d); }
+      if (d.pending <= 0) { d.loading = false; d.done = true; if (d.items.length && !d.failed) saveList(d); markAllReady(); }
       schedule();
     };
     const jobs = [];
@@ -9934,7 +10374,7 @@ function render() {
     feed.querySelector('.feed-header').insertAdjacentHTML('afterend', `<div class="tg-view" id="tgView">
       <div class="tg-tools">
         <div class="badges tg-sec-bar" id="tgSecBar" role="tablist" aria-label="Show"></div>
-        <input id="tgSearch" type="search" placeholder="Search tags & genres (e.g. milf, bondage)…" autocomplete="off" aria-label="Search tags and genres">
+        <div class="tg-search-sticky"><input id="tgSearch" type="search" placeholder="Search tags & genres (e.g. milf, bondage)…" autocomplete="off" aria-label="Search tags and genres"></div>
         <div class="tg-chips" id="tgChips"></div>
       </div>
       <div class="tg-az" id="tgAz"></div>

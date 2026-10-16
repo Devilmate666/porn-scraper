@@ -739,7 +739,7 @@ def scrape_categories_and_cache(url: str, mode: str = "categories", page_num: in
             data = scrape_superporn_pornstars(url, page_num=page_num)
         elif _host.endswith("pornvideobb.com") and re.match(r"^/porn[_-]actors?(/|$)", _path):
             data = scrape_pornvideobb_actors(url, page_num=page_num)
-        elif mode in ("models", "pornstars"):
+        elif mode in ("models", "pornstars") or (_host.endswith("bdsmhole.com") and re.match(r"^/pornstars(/|$)", _path)):
             data = scrape_models(url, page_num=page_num)
         elif mode == "sites":
             data = scrape_studio_sections(url)
@@ -799,6 +799,7 @@ LISTINGS = [
     ("https://www.freesexvideos.xxx/models/", "models",    3),   # Pornstars
     ("https://www.superporn.com/pornstars",   "models",    3),   # Pornstars (Superporn)
     ("https://2023.pornvideobb.com/porn_actor/", "models", 3),   # Pornstars (PornVideoBB)
+    ("https://www.bdsmhole.com/pornstars/",   "models",    3),   # Pornstars (BDSM Hole)
     ("https://www.freesexvideos.xxx/sites/",  "sites",     3),   # Networks (General)
     ("https://www.bdsmhole.com/studios/",     "categories", 2),  # Networks (BDSM)
     ("https://www.bdsmhole.com/categories/",  "categories", 2),
@@ -814,6 +815,7 @@ FEED_GROUPS = [
     ("https://www.freesexvideos.xxx/models/", "MAX_PORNSTAR_FEEDS", 12),
     ("https://www.superporn.com/pornstars",   "MAX_SP_PORNSTAR_FEEDS", 8),
     ("https://2023.pornvideobb.com/porn_actor/", "MAX_PVB_PORNSTAR_FEEDS", 8),
+    ("https://www.bdsmhole.com/pornstars/",   "MAX_BDSM_PORNSTAR_FEEDS", 8),
     ("https://www.superporn.com/series",      "MAX_SERIES_FEEDS", 6),
 ]
 

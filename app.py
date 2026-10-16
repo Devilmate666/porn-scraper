@@ -382,7 +382,8 @@ def api_scrape_categories():
             return jsonify(scrape_superporn_pornstars(url, page_num=data.get("page_num")))
         if host.endswith("pornvideobb.com") and re.match(r"^/porn[_-]actors?(/|$)", path):
             return jsonify(scrape_pornvideobb_actors(url, page_num=data.get("page_num")))
-        if mode in ("models", "pornstars") or (host.endswith("freesexvideos.xxx") and path.startswith("/models")):
+        if mode in ("models", "pornstars") or (host.endswith("freesexvideos.xxx") and path.startswith("/models")) \
+                or (host.endswith("bdsmhole.com") and re.match(r"^/pornstars(/|$)", path)):
             return jsonify(scrape_models(url, page_num=data.get("page_num")))
         if host.endswith("superporn.com") and re.match(r"^/categories(/\d+)?/?$", path):
             return jsonify(scrape_superporn_categories(url, page_num=data.get("page_num")))
