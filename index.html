@@ -935,7 +935,9 @@
 .tg-card.is-fav { border-color: #ff4d6d66; }
 .tg-card.is-fav .tg-heart svg { fill: #ff4d6d; stroke: #ff4d6d; }
 .tg-sec { scroll-margin-top: 9.5rem; padding: .3rem 0 1rem; }
-.tg-sec .tag-letter { margin-bottom: .6rem; }
+.tg-sec .tag-letter { width: 46px; margin-bottom: .6rem; }
+.tg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: .9rem; }
+@media (max-width: 600px) { .tg-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .6rem; } }
 .tg-tools { display: flex; flex-direction: column; gap: .6rem; padding: .5rem 0 .3rem; }
 .tg-tools input { width: 100%; background: #0c0f15; border: 1px solid #232b3b; color: #e2e8f0; padding: .65rem 1.1rem; border-radius: 30px; font: inherit; font-size: .88rem; outline: none; transition: .15s; }
 .tg-tools input:focus { border-color: #4f46e5; box-shadow: 0 0 0 3px #4f46e533; }
@@ -9965,7 +9967,7 @@ function render() {
     const groups = new Map();
     items.forEach((g) => { if (!groups.has(g.letter)) groups.set(g.letter, []); groups.get(g.letter).push(g); });
     const letters = [...groups.keys()].sort((a, b) => (a === '#' ? -1 : b === '#' ? 1 : a.localeCompare(b)));
-    v.querySelector('#tgList').innerHTML = letters.map((L) => `<div class="tg-sec" data-letter="${esc(L)}"><div class="tag-letter">${esc(L)}</div><div class="videos tg-grid">${groups.get(L).map(tileHtml).join('')}</div></div>`).join('');
+    v.querySelector('#tgList').innerHTML = letters.map((L) => `<div class="tg-sec" data-letter="${esc(L)}"><div class="tag-letter">${esc(L)}</div><div class="tg-grid">${groups.get(L).map(tileHtml).join('')}</div></div>`).join('');
     observeThumbs(v);
     v.querySelector('#tgAz').innerHTML = letters.map((L) => `<button type="button" data-l="${esc(L)}">${esc(L)}</button>`).join('');
     const st = v.querySelector('#tgStatus');
