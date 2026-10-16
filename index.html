@@ -3080,6 +3080,7 @@ function bindCategoryCards() {
         activeFeedId = feedOfSource(sid).id;
         renderSiteTabs();
       }
+      if (link && sid === 'superporn' && typeof window.tgOpenSuperporn === 'function') { window.tgOpenSuperporn(link, name); return; }
       if (link) openCategoryFeed(link, name);
     });
   });
@@ -9683,7 +9684,9 @@ function render() {
 /* ===================== Categories: "Tags & Genres" view =====================
    One separate A-Z list with every category + tag from all websites (Superporn, BDSMHole, FreeSexVideos, PornVideoBB).
    A tag that exists on several websites is ONE entry (one badge per website) and opens ONE combined feed;
-   its heart saves/unsaves the per-website category favorites (type "category"). */
+   its heart saves/unsaves the per-website category favorites (type "category").
+   Names that are also a Superporn category (with FreeSexVideos / PornVideoBB matches) are merged into that
+   Superporn tile's combined feed and left out of this list (BDSMHole is never merged). */
 (function () {
   'use strict';
   const VKEY = 'pa_cat_view_v1';
@@ -9703,22 +9706,63 @@ function render() {
   };
   // one tag / genre per NORMALIZED name: "Big Tits" on Superporn + "big-tits" on BDSMHole = one entry with two sources
   const normKey = (name) => String(name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ').trim();
-  let groupMap = new Map();
+  // plurals count as the same name ("Blondes" = "Blonde"), "ss" endings are kept ("Big Ass")
+  const mergeKey = (name) => normKey(name).split(' ').map((w) => (w.length > 3 ? w.replace(/([^s])s$/, '$1') : w)).join(' ');
+  const linkKey = (l) => String(l || '').split('#')[0].replace(/\/+$/, '').toLowerCase();
+  // Superporn is the main category list: a Superporn category absorbs the same-named
+  // FreeSexVideos / PornVideoBB categories (never BDSMHole) into ONE combined feed,
+  // and those merged entries leave the Tags & Genres list
+  const MERGE_INTO_SP = ['fullporno', 'pornvideobb'];
+  let groupMap = new Map(), mergedBySp = new Map();
   function buildGroups() {
-    const map = new Map();
+    const map = new Map(), merged = new Map();
     ((data && data.items) || []).forEach((it) => {
-      const k = normKey(it.name) || it.link;
+      const k = mergeKey(it.name) || it.link;
       let g = map.get(k);
       if (!g) { g = { key: k, name: it.name, letter: it.letter, members: [], sids: [] }; map.set(k, g); }
       g.members.push(it);
       if (!g.sids.includes(it.sid)) g.sids.push(it.sid);
     });
+    for (const [k, g] of map) {
+      const sp = g.members.filter((m) => m.sid === 'superporn');
+      const others = g.members.filter((m) => MERGE_INTO_SP.includes(m.sid));
+      if (!sp.length || !others.length) continue;
+      const members = [...sp, ...others];
+      sp.forEach((m) => merged.set(linkKey(m.link), { key: k, name: sp[0].name, members }));
+      const rest = g.members.filter((m) => !members.includes(m));
+      if (!rest.length) { map.delete(k); continue; }
+      g.members = rest;
+      g.sids = [...new Set(rest.map((m) => m.sid))];
+      g.name = rest[0].name;
+      g.letter = rest[0].letter;
+    }
     groupMap = map;
+    mergedBySp = merged;
     return [...map.values()];
   }
+  // Superporn category tile -> combined feed with its merged FreeSexVideos / PornVideoBB categories
+  window.tgOpenSuperporn = async function (link, name) {
+    try {
+      loadAll(false);
+      const d = data;
+      if (d && d.loading && d.ready) {
+        setStatus(`Loading "${name}"…`, true);
+        await Promise.race([d.ready, new Promise((r) => setTimeout(r, 8000))]);
+      }
+      buildGroups();
+      const m = mergedBySp.get(linkKey(link));
+      if (m && m.members.length > 1) {
+        openTagMix(TAGMIX_PREFIX + 'sp-' + m.key.replace(/\s+/g, '-'), name || m.name, m.members.map((x) => ({ link: x.link, sid: x.sid, label: SITE_NAMES[x.sid] || x.sid })));
+        return;
+      }
+    } catch (e) { console.error('[tags&genres] superporn merge', e); }
+    openCategoryFeed(link, name);
+  };
   async function loadAll(force) {
     if (!force && data && (data.loading || (data.done && Date.now() - data.at < 15 * 60000))) return;
     const d = data = { at: Date.now(), items: [], seen: new Set(), pending: 0, loading: true, done: false, failed: 0 };
+    let markReady;
+    d.ready = new Promise((r) => { markReady = r; });
     const add = (list, sid) => (list || []).forEach((c) => {
       // key = full link minus hash: some sites carry the tag identity in the
       // query string (pornvideobb /zone_video/?cat=<name>), the path alone would
@@ -9746,7 +9790,7 @@ function render() {
         }
       } catch (e) { d.failed++; }
       d.pending--;
-      if (d.pending <= 0) { d.loading = false; d.done = true; }
+      if (d.pending <= 0) { d.loading = false; d.done = true; markReady(); }
       d.items.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }) || a.sid.localeCompare(b.sid));
       schedule();
     };
@@ -9883,6 +9927,7 @@ function render() {
       });
     }
     applyView(feed);
+    loadAll(false);                                             // the Superporn tiles need it for their merged feeds
   };
   const wait = setInterval(() => { if (F() && F().onChange) { clearInterval(wait); F().onChange(() => { const v = viewEl(); if (v) { v.querySelectorAll('.tg-pill').forEach(paint); updateChips(); } }); } }, 200);
 })();
