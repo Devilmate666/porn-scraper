@@ -6130,7 +6130,9 @@ function renderCatalog(kind) {
     </div>`;
   refreshCatalogGrid(kind);
   bindCatalogControls(kind);
-  autoFillCatalog(kind);
+  if (!st.done && activeTab === cfg.tab) {
+    loadMoreCatalog(kind, true).then(() => refreshCatalogGrid(kind));
+  }
 }
 
 function refreshCatalogGrid(kind) {
@@ -6249,11 +6251,14 @@ async function autoFillCatalog(kind) {
   st.autoFilling = true;
   let rounds = 0;
   try {
-    while (!st.done && activeTab === cfg.tab && catalogState[kind] === st) {
+    // Load only a limited amount initially - don't auto-fill everything
+    // Only load up to 2 more pages per source, then stop auto-filling
+    const maxRounds = 2;
+    while (!st.done && activeTab === cfg.tab && catalogState[kind] === st && rounds < maxRounds) {
       while (st.loading) await new Promise(r => setTimeout(r, 150));
       if (st.done) break;
       await loadMoreCatalog(kind, true);
-      if (++rounds % 4 === 0 && activeTab === cfg.tab) refreshCatalogGrid(kind);
+      if (++rounds % 1 === 0 && activeTab === cfg.tab) refreshCatalogGrid(kind);
       await new Promise(r => setTimeout(r, 300));
     }
   } finally {
