@@ -3088,10 +3088,12 @@ function loadCategoryCache(key = COMBINED_CAT_CACHE_KEY) {
 }
 
 /** Sort categories A→Z by name (locale-aware, case/accent-insensitive, numeric-aware). */
-function sortCategoriesAZ(list) {
-  // No re-sorting any more: a newly loaded page used to be sorted in between the cards that were already on screen,
-  // so new cards appeared ABOVE the viewport. Cards now keep their arrival order and are only ever appended at the bottom.
-  return list;
+function sortCategoriesAZ(list, opts) {
+  // Only a COMPLETE list is sorted ({ full: true }): all pages are read before the first draw, so cards never get sorted in
+  // between tiles that are already on screen. Page-by-page appends (no opts) keep their arrival order.
+  if (!opts || !opts.full || !Array.isArray(list)) return list;
+  const nm = (c) => String(c.name || c.title || '');
+  return list.sort((x, y) => nm(x).localeCompare(nm(y), undefined, { sensitivity: 'base', numeric: true }) || String(x.sourceId || '').localeCompare(String(y.sourceId || '')));
 }
 
 function categoryCardHtml(cat) {
@@ -3161,11 +3163,11 @@ function renderCategories(data, append = false, opts = {}) {
 
   if (!append) {
     lastCategoriesData = data;
-    const categories = (data.categories || []).map(c => ({
+    const categories = (data.categories || []).filter(c => isPornSites || isTags || kind !== 'categories' || (!isSeriesCategory(c) && !isJunkCategory(c, null))).map(c => ({
       ...c,
       sourceId: c.sourceId || (isPornSites ? 'fullporno' : c.sourceId),
     }));
-    if (!isPornSites) sortCategoriesAZ(categories);
+    if (!isPornSites) sortCategoriesAZ(categories, { full: true });
     const prevFilter = categoriesState.filterSource || 'all';
     categoriesState = {
       next_page: data.next_page || '',
@@ -3747,7 +3749,9 @@ async function loadNextCategoriesPage() {
         for (const c of (data.categories || [])) {
           const key = (c.link || '').split('?')[0];
           if (!key || existing.has(key)) continue;
+          if (kind === 'categories' && isJunkCategory(c, job.url)) continue;
           existing.add(key);
+          if (kind === 'categories' && isSeriesCategory({ ...c, sourceId: c.sourceId || job.sourceId })) { fresh++; continue; }   // series live in Porn Series only
           fresh++;
           uniqueNew.push({
             ...c,
@@ -5052,25 +5056,43 @@ async function openCategories(forceRefresh = false, opts = {}) {
     const nextBySource = {};
     let anyError = null;
 
+    await Promise.race([seedSeriesNames(), new Promise((r) => setTimeout(r, 4000))]).catch(() => {});   // series names (first visit only) so they are left out below
+    let loadedCount = 0;
+    const take = (list, src) => {
+      let fresh = 0;
+      for (const c of (list || [])) {
+        const key = (c.link || '').split('?')[0];
+        if (!key || isAllVideosLink(key) || seen.has(key) || isJunkCategory(c, src.indexUrl)) continue;
+        seen.add(key); fresh++;
+        if (isSeriesCategory({ ...c, sourceId: src.id })) continue;      // series live in Porn Series only
+        merged.push({ ...c, sourceId: src.id }); loadedCount++;
+      }
+      return fresh;
+    };
+    const scrape = async (url) => {
+      const res = await fetch('/api/scrape-categories', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      if (json.error) throw new Error(json.error);
+      return json;
+    };
+    // every page of every source is read BEFORE the first draw (in parallel across sources), so the list can be sorted A-Z once
+    // and nothing is ever inserted above what is on screen; a page with nothing new ends a source
     await Promise.all(COMBINED_CATEGORY_SOURCES.map(async (src) => {
+      let url = src.indexUrl, page = 1;
+      nextBySource[src.id] = '';
       try {
-        const res = await fetch('/api/scrape-categories', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: src.indexUrl }),
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const json = await res.json();
-        if (json.error) throw new Error(json.error);
-        nextBySource[src.id] = json.next_page || '';
-        for (const c of (json.categories || [])) {
-          const key = (c.link || '').split('?')[0];
-          if (!key || isAllVideosLink(key) || seen.has(key)) continue;
-          seen.add(key);
-          merged.push({ ...c, sourceId: src.id });
+        for (; url && page <= 40; page++) {
+          const json = await scrape(url);
+          const fresh = take(json.categories, src);
+          if (page === 1 && !fresh && !(json.categories || []).length) break;
+          const nxt = fresh ? (json.next_page || guessNextUrl(url, page + 1) || '') : '';
+          url = nxt === url ? '' : nxt;
+          setStatus(`Loading categories… ${loadedCount}`, true);
         }
       } catch (err) {
-        anyError = err;
+        if (page === 1) anyError = err;
+        else nextBySource[src.id] = url || '';                            // later page failed: scrolling can try it again
       }
     }));
 
@@ -5190,6 +5212,56 @@ const NETWORK_SOURCES = [
 const networkMode = (group) => (NETWORK_SOURCES.find(x => x.group === group) || {}).mode || null;
 
 /** BDSMHole's "all videos" listing (/videos/, /videos/2/, /videos/3/ ...) is not a studio/category: never show it. */
+/* Porn Series are their own section: they are never repeated in the Categories list.
+   A category is a series when its link is a /series/ page or its name is a known series (names are remembered from the Porn Series list). */
+const SERIES_NAMES_KEY = 'pa_series_names_v1';
+const seriesNameKey = (n) => String(n || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+let seriesNames = null;
+function loadSeriesNames() {
+  if (seriesNames) return seriesNames;
+  seriesNames = new Set();
+  try { (JSON.parse(localStorage.getItem(SERIES_NAMES_KEY) || '[]') || []).forEach((n) => seriesNames.add(n)); } catch (e) {}
+  return seriesNames;
+}
+function rememberSeries(sections) {
+  const set = loadSeriesNames(); let added = false;
+  (sections || []).forEach((x) => { const k = seriesNameKey(x && (x.name || x.title)); if (k && !set.has(k)) { set.add(k); added = true; } });
+  if (added) { try { localStorage.setItem(SERIES_NAMES_KEY, JSON.stringify([...set])); } catch (e) {} }
+}
+/* Language-switcher links ("Français", "Deutsch" ...) that the page footer / header carries are not categories: they were
+   counted as endless "new" items, so the list never finished. Dropped by name, by a language-code path, or by a foreign host. */
+const LANG_NAMES = new Set(['english','francais','francaise','french','deutsch','german','espanol','spanish','italiano','italian','portugues','portuguese','nederlands','dutch','polski','polish','russian','turkce','svenska','dansk','norsk','suomi','cesky','magyar','romana','ellinika','japanese','chinese','korean','arabic','hindi','thai','vietnamese','indonesian','ukrainian','bulgarian','czech','greek','hungarian','romanian','swedish','danish','norwegian','finnish','turkish'].map((x) => x));
+const LANG_RE = /^\/(?:[a-z]{2}(?:-[a-z]{2})?)\/?$/i;
+function isJunkCategory(c, srcUrl) {
+  if (!c) return true;
+  const nm = seriesNameKey(c.name || c.title).replace(/ /g, '');
+  if (LANG_NAMES.has(nm)) return true;
+  try {
+    const u = new URL(c.link || '', srcUrl || 'https://x.invalid');
+    if (LANG_RE.test(u.pathname) || /[?&](lang|language|locale)=/i.test(u.search)) return true;
+    if (srcUrl) { const h = (x) => x.replace(/^www\./, '').toLowerCase(); if (h(u.hostname) !== h(new URL(srcUrl).hostname)) return true; }
+  } catch (e) {}
+  return false;
+}
+let seriesSeed = null;
+/** First visit (no series names known yet): read the Porn Series pages once so the Categories list can leave them out. Capped, never blocks for long. */
+function seedSeriesNames() {
+  if (loadSeriesNames().size) return Promise.resolve();
+  if (seriesSeed) return seriesSeed;
+  seriesSeed = (async () => {
+    let url = PORN_SITES_URL;
+    for (let i = 0; i < 12 && url; i++) {
+      try { const r = await fetchStudioPage(url, null, 'general'); rememberSeries(r.sections); url = r.next || ''; } catch (e) { break; }
+    }
+  })();
+  return seriesSeed;
+}
+function isSeriesCategory(c) {
+  if (!c) return false;
+  try { if (/\/series?(\/|$)/i.test(new URL(c.link || '', 'https://x.invalid').pathname)) return true; } catch (e) {}
+  if (c.sourceId === 'bdsmhole') return false;
+  return loadSeriesNames().has(seriesNameKey(c.name || c.title));
+}
 const isAllVideosLink = (l) => { try { return /^\/videos(\/\d+)?$/i.test(new URL(l, 'https://x.invalid').pathname.replace(/\/+$/, '') || '/'); } catch { return false; } };
 
 /** One page of one source -> { sections, next }. Tiles (no mode) become video-less sections. */
@@ -5528,6 +5600,7 @@ async function loadNextStudioPage() {
 
     const existing = new Set(st.sections.map(s => (s.link || '').split('?')[0]));
     const uniqueNew = [];
+    if (!isNet && studioView().key === 'pornsites') got.forEach(({ r, err }) => { if (!err && r) rememberSeries(r.sections); });
     for (const { j, r, err } of got) {
       let fresh = 0;
       if (!err) for (const s of r.sections) {
@@ -5838,7 +5911,10 @@ async function revealMoreCategories() {
   }
   const list = categoryViewList();
   const shown = st._shown || 0;
-  if (shown >= list.length) { loadNextCategoriesPage(); return; }
+  if (shown >= list.length) {
+    if (st.exhausted) { showListEndRow(grid, 'cat-list-end'); return; }   // finished: calm end row, no spinner, no more requests
+    loadNextCategoriesPage(); return;
+  }
   st._revealing = true;
   const key = categoryViewKey();
   const slot = grid.querySelector('.loading-row-slot');
