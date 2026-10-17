@@ -1623,6 +1623,7 @@ const CATALOGS = {
     ],
   },
 };
+const LIST_CHUNK = 30;   // tiles drawn per scroll step in Categories / Pornstars (the rest waits in memory)
 const catalogState = {};   // kind -> { items, seen, next, pages, filter, q, loading, done, errors, searchToken }
 const kindOfCatalogTab = (t) => Object.keys(CATALOGS).find(k => CATALOGS[k].tab === t) || null;
 
@@ -1992,6 +1993,43 @@ document.addEventListener('click', () => { saveEntryScroll(true); scrollFreezeUn
 document.addEventListener('keydown', (e) => { if (e.key === 'Enter') { saveEntryScroll(true); scrollFreezeUntil = performance.now() + 1200; } }, true);
 window.addEventListener('pagehide', () => saveEntryScroll(true));
 
+/* ---- ONE authoritative scroll memory for the section lists (Pornstars, Categories, Porn Series, Networks) ----
+   The position of a list is written ONLY while that list is really on screen (never during a feed load, never while a
+   restore runs, never while a video is open), so scrolling inside a pornstar's / category's video feed can no longer
+   change where the list will come back. Every restore of a list reads this one value. */
+const sectionScroll = new Map();                       // list tab -> scrollY where the user left that list
+const sectionTabOfView = (v) => ({ categories: CATEGORIES_TAB, pornsites: PORN_SITES_TAB, networks: NETWORKS_TAB, pornstars: PORNSTARS_TAB })[v] || null;
+function sectionListShown() {
+  const t = activeTab;
+  if (!t || ![CATEGORIES_TAB, PORN_SITES_TAB, NETWORKS_TAB, PORNSTARS_TAB].includes(t)) return null;
+  if (pageIsLocked() || scrollRestoring || feedLoadCtl) return null;
+  return results.querySelector(`.feed[data-site="${t}"]`) ? t : null;     // the list itself must be what is drawn
+}
+function rememberSectionScroll(force) {
+  const t = sectionListShown();
+  if (!t) return;
+  if (!force && (performance.now() < scrollFreezeUntil || navSilent)) return;
+  const y = Math.round(window.scrollY);
+  sectionScroll.set(t, y);
+  const k = kindOfCatalogTab(t);
+  if (k && catalogState[k]) catalogState[k].scrollY = y;
+  if (t === CATEGORIES_TAB) categoriesState.scrollY = y;
+  if (t === NETWORKS_TAB || t === PORN_SITES_TAB) studioState.scrollY = y;
+}
+let sectionScrollRaf = 0;
+window.addEventListener('scroll', () => {
+  if (sectionScrollRaf) return;
+  sectionScrollRaf = requestAnimationFrame(() => { sectionScrollRaf = 0; rememberSectionScroll(false); });
+}, { passive: true });
+document.addEventListener('pointerdown', () => rememberSectionScroll(true), true);
+document.addEventListener('click', () => rememberSectionScroll(true), true);       // the exact spot at the moment a card is tapped
+window.addEventListener('pagehide', () => rememberSectionScroll(true));
+/** A history state that points at a section list gets that list's own remembered position. */
+function withSectionScroll(state) {
+  const t = state && sectionTabOfView(state.view);
+  return (t && sectionScroll.has(t)) ? { ...state, scrollY: sectionScroll.get(t) } : state;
+}
+
 /** Put the page at y and keep it there until the content has finished building (a user touch or key cancels it at once). */
 function restoreScrollRobust(y) {
   y = Math.max(0, Math.round(y || 0));
@@ -2003,6 +2041,7 @@ function restoreScrollRobust(y) {
   evs.forEach(ev => window.addEventListener(ev, cancel, { once: true, passive: true }));
   let reserved = false;                                  // height reserved so the page is tall enough while it is still being built
   const finish = () => {
+    if (reserved && stop) results.style.minHeight = '';
     if (reserved && !stop) {                             // give the reserved height back once the real content is tall enough
       const before = results.style.minHeight;
       results.style.minHeight = '';
@@ -2078,6 +2117,7 @@ function postRestore(state) {
 }
 
 async function applyNavState(state) {
+  state = withSectionScroll(state);
   navSection = sectionForState(state);
   await applyNavStateInner(state);
   if (state && state.view && state.view !== 'player') postRestore(state);
@@ -2872,6 +2912,7 @@ function saveCategoryCache(key = COMBINED_CAT_CACHE_KEY) {
       nameQuery: categoriesState.nameQuery || '',
       nameQueries: { ...(categoriesState.nameQueries || {}) },
       nextBySource: categoriesState.nextBySource || {},
+      renderLimit: categoriesState.renderLimit || 0,
     },
   });
 }
@@ -2890,7 +2931,9 @@ function loadCategoryCache(key = COMBINED_CAT_CACHE_KEY) {
 
 /** Sort categories A→Z by name (locale-aware, case/accent-insensitive, numeric-aware). */
 function sortCategoriesAZ(list) {
-  return list.sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base', numeric: true }));
+  // No re-sorting any more: a newly loaded page used to be sorted in between the cards that were already on screen,
+  // so new cards appeared ABOVE the viewport. Cards now keep their arrival order and are only ever appended at the bottom.
+  return list;
 }
 
 function categoryCardHtml(cat) {
@@ -2979,6 +3022,7 @@ function renderCategories(data, append = false, opts = {}) {
       filterSource: isPornSites ? 'all' : prevFilter,
       nameQuery: isPornSites ? '' : (categoriesState.nameQuery || ''),
       nameQueries: isPornSites ? {} : { ...(categoriesState.nameQueries || {}) },
+      renderLimit: isPornSites ? undefined : categoriesState.renderLimit,   // keeps the already-scrolled window when coming back
     };
     saveCategoryCache(cacheKeyOfKind(kind));
 
@@ -2988,7 +3032,7 @@ function renderCategories(data, append = false, opts = {}) {
       return;
     }
 
-    const cards = categories.map(categoryCardHtml).join('');
+    const cards = '';   // tiles are drawn in chunks by applyCategoryNameFilter() -> refreshCategoryGridFromState()
     const filterBar = isPornSites ? '' : categoryFilterChipsHtml();
     const searchBar = isPornSites ? '' : `
         <div class="cat-search-bar">
@@ -3012,7 +3056,6 @@ function renderCategories(data, append = false, opts = {}) {
         ${filterBar}
         ${searchBar}
         <div class="videos">
-          ${cards || '<div style="grid-column:1/-1;padding:2rem;text-align:center;color:#7a8aaa;">No items found.</div>'}
           <div class="loading-row-slot"></div>
         </div>
         <div class="sentinel" data-site="${activeTab}"></div>
@@ -3432,12 +3475,13 @@ function observeCategorySentinel() {
         const url = entry.target.getAttribute('data-site');
         if (!((isListTab(url) || url === NETWORKS_TAB) && url === activeTab)) return;
         if (url === PORN_SITES_TAB || url === NETWORKS_TAB) loadNextStudioPage();
-        else loadNextCategoriesPage();
+        else revealMoreCategories();
       });
     }, { rootMargin: '250px 0px', threshold: 0 });
   }
   document.querySelectorAll(`.sentinel[data-site="${CATEGORIES_TAB}"], .sentinel[data-site="${PORN_SITES_TAB}"], .sentinel[data-site="${NETWORKS_TAB}"], .sentinel[data-site="${PORN_TAGS_TAB}"]`).forEach(s => {
-    categorySentinelObserver.observe(s);
+    categorySentinelObserver.unobserve(s);
+    categorySentinelObserver.observe(s);              // re-arm: reports again if the sentinel is still near
   });
 }
 
@@ -3595,7 +3639,7 @@ async function loadNextCategoriesPage() {
     if (!isFpKind(kind)) sortCategoriesAZ(st.categories);
     withScrollAnchor(() => {
     if (st === categoriesState) {
-      refreshCategoryGridFromState();
+      /* nothing to draw here: revealMoreCategories() appends the new tiles at the bottom, chunk by chunk */
     } else {
       const temp = document.createElement('div');
       temp.innerHTML = uniqueNew.map(categoryCardHtml).join('');
@@ -3629,6 +3673,7 @@ async function loadNextCategoriesPage() {
 
     saveCategoryCache(cacheKeyOfKind(kind));
     scheduleCategoryRecheck();
+    if (isCategoriesViewActive()) observeCategorySentinel();   // report again so the fetched tiles get revealed
   } catch (err) {
     st.retryCount = (st.retryCount || 0) + 1;
     loader.innerHTML = `<div style="color:#f87171;">Retrying… (${st.retryCount}/4)</div>`;
@@ -3648,6 +3693,7 @@ async function loadNextCategoriesPage() {
   }
 }
 
+const isCategoriesViewActive = () => activeTab === CATEGORIES_TAB;
 function scheduleCategoryRecheck() {
   setTimeout(() => {
     if (!isListTab(activeTab)) return;
@@ -3658,7 +3704,7 @@ function scheduleCategoryRecheck() {
     if (!s) return;
     const rect = s.getBoundingClientRect();
     const vh = window.innerHeight || document.documentElement.clientHeight;
-    if (rect.top - vh < 280) loadNextCategoriesPage();
+    if (rect.top - vh < 280) revealMoreCategories();
   }, 120);
 }
 
@@ -3698,6 +3744,8 @@ async function openCategoryFeed(link, name, opts = {}) {
     saveCategoryCache(COMBINED_CAT_CACHE_KEY);
   }
   saveCatalogScroll();
+  rememberSectionScroll(true);
+  results.style.minHeight = '';                          // height reserved for the list's restore must not follow us into the feed
   if (!opts.skipPush && history.state && ['categories', 'networks', 'pornsites', 'pornstars'].includes(history.state.view)) {
     try {
       history.replaceState({ ...history.state, scrollY: window.scrollY }, '', location.href);
@@ -3790,6 +3838,8 @@ async function openTagMix(key, name, members, opts = {}) {
   if (busy) return;
   if (activeTab === CATEGORIES_TAB) { categoriesState.scrollY = window.scrollY; saveCategoryCache(COMBINED_CAT_CACHE_KEY); }
   saveCatalogScroll();
+  rememberSectionScroll(true);
+  results.style.minHeight = '';                          // height reserved for the list's restore must not follow us into the feed
   if (!opts.skipPush && history.state && ['categories', 'networks', 'pornsites', 'pornstars'].includes(history.state.view)) {
     try { history.replaceState({ ...history.state, scrollY: window.scrollY }, '', location.href); } catch {}
   }
@@ -5573,23 +5623,82 @@ function applyCategorySourceFilter(filter, opts = {}) {
   }
 }
 
-/** Rebuild category cards from categoriesState.categories (keeps filters intact). */
+/** Categories that match the menu (All / General / BDSM) + name search. Only a window of them is drawn. */
+function categoryViewList() {
+  const st = categoriesState;
+  const filter = st.filterSource || 'all';
+  const q = (st.nameQuery || '').trim().toLowerCase();
+  const words = q ? queryWords(q) : null;
+  return (st.categories || []).filter(c =>
+    (filter === 'all' || feedOfSource(c.sourceId || activeSourceId).id === filter)
+    && (!words || searchWordsMatch(c.name || '', words)));
+}
+const categoryViewKey = () => (categoriesState.filterSource || 'all') + '|' + (categoriesState.nameQuery || '').trim().toLowerCase();
+
+/** Redraw the first renderLimit matching tiles (the rest stays in memory until the user scrolls). */
 function refreshCategoryGridFromState() {
   const feed = results.querySelector(`.feed[data-site="${CATEGORIES_TAB}"]`);
   if (!feed) return;
   const grid = feed.querySelector('.videos');
   if (!grid) return;
+  const st = categoriesState;
   const slot = grid.querySelector('.loading-row-slot');
-  const cats = categoriesState.categories || [];
+  const key = categoryViewKey();
+  if (st._viewKey !== undefined && st._viewKey !== key) st.renderLimit = LIST_CHUNK;   // another menu/search: start from the top
+  st._viewKey = key;
+  const list = categoryViewList();
+  const n = Math.min(Math.max(st.renderLimit || 0, LIST_CHUNK), list.length);
+  st._view = list; st._shown = n; st.renderLimit = n;
 
   grid.querySelectorAll('.category-card, .cat-filter-empty').forEach(el => el.remove());
   const temp = document.createElement('div');
-  temp.innerHTML = cats.map(categoryCardHtml).join('') ||
-    '<div class="cat-filter-empty" style="grid-column:1/-1;padding:2rem;text-align:center;color:#7a8aaa;">No categories found.</div>';
+  temp.innerHTML = list.slice(0, n).map(categoryCardHtml).join('');
   while (temp.firstElementChild) {
     grid.insertBefore(temp.firstElementChild, slot);
   }
   bindCategoryCards();
+}
+
+/** Scroll step: show a "loading" row, preload the thumbnails of the next chunk, then append the ready cards at the bottom.
+ *  When everything in memory is already shown, the next page is fetched first. One step at a time. */
+async function revealMoreCategories() {
+  if (activeTab !== CATEGORIES_TAB) { loadNextCategoriesPage(); return; }
+  const st = categoriesState;
+  if (st._revealing) return;
+  const feed = results.querySelector(`.feed[data-site="${CATEGORIES_TAB}"]`);
+  const grid = feed && feed.querySelector('.videos');
+  if (!grid) { loadNextCategoriesPage(); return; }
+  if (st._viewKey !== categoryViewKey()) {                  // menu / search changed meanwhile: redraw the window once
+    withScrollAnchor(() => { refreshCategoryGridFromState(); applyCategoryNameFilter(); });
+    observeCategorySentinel();
+    return;
+  }
+  const list = categoryViewList();
+  const shown = st._shown || 0;
+  if (shown >= list.length) { loadNextCategoriesPage(); return; }
+  st._revealing = true;
+  const key = categoryViewKey();
+  const slot = grid.querySelector('.loading-row-slot');
+  const loader = loadingRow();
+  grid.insertBefore(loader, slot);
+  let did = false;
+  try {
+    const end = Math.min(list.length, shown + LIST_CHUNK);
+    const chunk = list.slice(shown, end);
+    await preloadThumbs(chunk);
+    if (activeTab !== CATEGORIES_TAB || categoriesState !== st || categoryViewKey() !== key || !grid.isConnected) return;
+    const temp = document.createElement('div');
+    temp.innerHTML = chunk.map(categoryCardHtml).join('');
+    while (temp.firstElementChild) grid.insertBefore(temp.firstElementChild, slot);
+    st._view = list; st._shown = end; st.renderLimit = end;
+    bindCategoryCards();
+    applyCategoryNameFilter();
+    did = true;
+  } finally {
+    loader.remove();
+    st._revealing = false;
+    if (did) observeCategorySentinel();                     // re-arm only after real progress
+  }
 }
 
 /** Show/hide category tiles by source filter + name search (categories only, not videos). */
@@ -5600,17 +5709,8 @@ function applyCategoryNameFilter() {
 
   const feed = results.querySelector(`.feed[data-site="${CATEGORIES_TAB}"]`);
   if (!feed) return;
-  const cards = feed.querySelectorAll('.category-card');
-  let visible = 0;
-  cards.forEach(card => {
-    const sid = card.getAttribute('data-source-id') || '';
-    const name = card.getAttribute('data-name') || '';
-    const sourceOk = filter === 'all' || feedOfSource(sid).id === filter;
-    const nameOk = !q || searchWordsMatch(name, queryWords(q));
-    const show = sourceOk && nameOk;
-    card.style.display = show ? '' : 'none';
-    if (show) visible++;
-  });
+  if (categoriesState._viewKey !== categoryViewKey()) refreshCategoryGridFromState();   // menu / search changed -> redraw the window
+  const visible = categoryViewList().length;
 
   let empty = feed.querySelector('.cat-filter-empty');
   if (visible === 0) {
@@ -6131,8 +6231,36 @@ function renderCatalog(kind) {
   refreshCatalogGrid(kind);
   bindCatalogControls(kind);
   if (!st.done && activeTab === cfg.tab) {
-    loadMoreCatalog(kind, true).then(() => refreshCatalogGrid(kind));
+    // Don't auto-load more initially - wait for scroll
+    // Just ensure sentinel is set up
   }
+}
+
+/** All tiles that match the active chips + search (sorted A-Z). Only a window of them is drawn (see LIST_CHUNK). */
+function catalogViewList(kind) {
+  const st = catalogState[kind];
+  return catalogGroups(kind)
+    .filter(c => catMatch(c.name, st.q))
+    ;   // arrival order, never re-sorted: new tiles are only appended at the bottom
+}
+const catalogViewKey = (kind) => { const st = catalogState[kind]; return (st.filter || 'all') + '|' + (st.q || ''); };
+
+/** Load the thumbnails of a chunk BEFORE its cards are drawn, so the cards appear ready (max ms, then draw anyway). */
+function preloadThumbs(items, ms = 2500) {
+  const urls = items.map(c => c.thumbnail).filter(Boolean);
+  if (!urls.length) return Promise.resolve();
+  return new Promise(resolve => {
+    let left = urls.length;
+    const t = setTimeout(resolve, ms);
+    const done = () => { if (--left <= 0) { clearTimeout(t); resolve(); } };
+    urls.forEach(u => { const im = new Image(); im.referrerPolicy = 'no-referrer'; im.onload = im.onerror = done; im.src = u; });
+  });
+}
+function loadingRow() {
+  const el = document.createElement('div');
+  el.className = 'loading-row';
+  el.innerHTML = '<div class="mini-spinner"></div><div>Loading more…</div>';
+  return el;
 }
 
 function refreshCatalogGrid(kind) {
@@ -6140,29 +6268,28 @@ function refreshCatalogGrid(kind) {
   const feed = results.querySelector(`.feed[data-site="${cfg.tab}"]`);
   const grid = feed && feed.querySelector('.videos');
   if (!grid) return;
+  const key = catalogViewKey(kind);
+  if (st._viewKey !== undefined && st._viewKey !== key) st.renderLimit = LIST_CHUNK;   // another filter/search: start from the top again
+  st._viewKey = key;
+  const list = catalogViewList(kind);
+  const n = Math.min(Math.max(st.renderLimit || 0, LIST_CHUNK), list.length);
+  st._view = list; st._shown = n; st.renderLimit = n;
+  st._counts = list.slice(0, n).map(c => c.members.length);
   const slot = grid.querySelector('.loading-row-slot');
   grid.querySelectorAll('.category-card, .cat-filter-empty').forEach(el => el.remove());
-  const sorted = catalogGroups(kind).sort((a, b) =>
-    (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base', numeric: true }));
   const temp = document.createElement('div');
-  temp.innerHTML = sorted.map(c => catalogCardHtml(c, kind)).join('');
+  temp.innerHTML = list.slice(0, n).map(c => catalogCardHtml(c, kind)).join('');
   while (temp.firstElementChild) grid.insertBefore(temp.firstElementChild, slot);
   bindCategoryCards();
-  applyCatalogFilter(kind);
+  updateCatalogChrome(kind, list.length);
   observeCatalogSentinel(kind);
 }
 
-function applyCatalogFilter(kind) {
+/** Count badge, status line and the "nothing found" message (no cards are touched). */
+function updateCatalogChrome(kind, visible) {
   const cfg = CATALOGS[kind], st = catalogState[kind];
   const feed = results.querySelector(`.feed[data-site="${cfg.tab}"]`);
-  if (!feed) return 0;
-  let visible = 0;
-  feed.querySelectorAll('.category-card').forEach(card => {
-    const ok = (st.filter === 'all' || card.getAttribute('data-group') === st.filter)
-      && catMatch(card.getAttribute('data-name'), st.q);
-    card.style.display = ok ? '' : 'none';
-    if (ok) visible++;
-  });
+  if (!feed) return;
   const grid = feed.querySelector('.videos');
   let empty = feed.querySelector('.cat-filter-empty');
   if (!visible && !st.loading) {
@@ -6181,7 +6308,74 @@ function applyCatalogFilter(kind) {
     badge.textContent = `🗂️ ${visible}${suffix}`;
   }
   setStatus(st.q ? `${cfg.title} — ${visible} match${visible !== 1 ? 'es' : ''} for “${st.q}”` : `${cfg.title} — ${visible}`, false);
+}
+
+function applyCatalogFilter(kind) {
+  const st = catalogState[kind];
+  if (!st) return 0;
+  if (st._viewKey !== catalogViewKey(kind)) { refreshCatalogGrid(kind); return (st._view || []).length; }
+  const visible = catalogViewList(kind).length;
+  updateCatalogChrome(kind, visible);
   return visible;
+}
+
+/** A tile already on screen can gain another website when a new page arrives: redraw just that tile in place. */
+function syncShownCatalogCards(kind, grid, list, shown) {
+  const counts = catalogState[kind]._counts || [];
+  const cards = grid.querySelectorAll(':scope > .category-card');
+  for (let i = 0; i < shown && i < cards.length; i++) {
+    if (list[i] && counts[i] !== undefined && list[i].members.length !== counts[i]) {
+      const t = document.createElement('div');
+      t.innerHTML = catalogCardHtml(list[i], kind);
+      cards[i].replaceWith(t.firstElementChild);
+    }
+  }
+}
+
+/** Scroll step: show a "loading" row, get the next chunk ready (fetch a page only when everything in memory is already
+ *  shown, then preload its thumbnails) and only then append the ready cards at the bottom. One step at a time. */
+async function revealMoreCatalog(kind) {
+  const cfg = CATALOGS[kind], st = catalogState[kind];
+  if (!st || st._revealing) return;
+  const feed = results.querySelector(`.feed[data-site="${cfg.tab}"]`);
+  const grid = feed && feed.querySelector('.videos');
+  if (!grid) return;
+  st._revealing = true;
+  const key = catalogViewKey(kind);
+  const slot = grid.querySelector('.loading-row-slot');
+  const loader = loadingRow();
+  let did = false;
+  const stale = () => activeTab !== cfg.tab || catalogState[kind] !== st || catalogViewKey(kind) !== key || !grid.isConnected;
+  try {
+    let list = catalogViewList(kind);
+    if ((st._shown || 0) >= list.length) {
+      if (st.done) return;
+      grid.insertBefore(loader, slot);
+      await loadMoreCatalog(kind, true);                    // quiet: only fills memory, draws nothing
+      if (stale()) return;
+      list = catalogViewList(kind);
+    }
+    const shown = st._shown || 0;
+    if (shown >= list.length) return;
+    const end = Math.min(list.length, shown + LIST_CHUNK);
+    const chunk = list.slice(shown, end);
+    if (!loader.isConnected) grid.insertBefore(loader, slot);
+    await preloadThumbs(chunk);
+    if (stale()) return;
+    syncShownCatalogCards(kind, grid, list, shown);
+    const temp = document.createElement('div');
+    temp.innerHTML = chunk.map(c => catalogCardHtml(c, kind)).join('');
+    while (temp.firstElementChild) grid.insertBefore(temp.firstElementChild, slot);
+    st._view = list; st._shown = end; st.renderLimit = end;
+    st._counts = list.slice(0, end).map(c => c.members.length);
+    bindCategoryCards();
+    updateCatalogChrome(kind, list.length);
+    did = true;
+  } finally {
+    loader.remove();
+    st._revealing = false;
+    if (did && activeTab === cfg.tab) observeCatalogSentinel(kind);   // re-arm only after real progress (no endless loop at the end)
+  }
 }
 
 function bindCatalogControls(kind) {
@@ -6220,7 +6414,7 @@ function observeCatalogSentinel(kind) {
       entries.forEach(en => {
         if (!en.isIntersecting) return;
         const k = kindOfCatalogTab(en.target.getAttribute('data-site'));
-        if (k && CATALOGS[k].tab === activeTab) loadMoreCatalog(k);
+        if (k && CATALOGS[k].tab === activeTab) revealMoreCatalog(k);
       });
     }, { rootMargin: '250px 0px', threshold: 0 });
   }
@@ -6240,7 +6434,10 @@ async function loadMoreCatalog(kind, quiet) {
     added = r.reduce((a, b) => a + b, 0);
   } finally { st.loading = false; }
   if (!Object.values(st.next).some(Boolean)) st.done = true;
-  if (!quiet && activeTab === CATALOGS[kind].tab) refreshCatalogGrid(kind);
+  if (!quiet && activeTab === CATALOGS[kind].tab) {
+    st.renderLimit = (st._shown || 0) + LIST_CHUNK;          // a fetched page adds one more chunk, never the whole page
+    withScrollAnchor(() => refreshCatalogGrid(kind));
+  }
   return added;
 }
 
@@ -6248,23 +6445,9 @@ async function loadMoreCatalog(kind, quiet) {
 async function autoFillCatalog(kind) {
   const cfg = CATALOGS[kind], st = catalogState[kind];
   if (!st || !cfg.mergeByName || st.autoFilling) return;
-  st.autoFilling = true;
-  let rounds = 0;
-  try {
-    // Load only a limited amount initially - don't auto-fill everything
-    // Only load up to 2 more pages per source, then stop auto-filling
-    const maxRounds = 2;
-    while (!st.done && activeTab === cfg.tab && catalogState[kind] === st && rounds < maxRounds) {
-      while (st.loading) await new Promise(r => setTimeout(r, 150));
-      if (st.done) break;
-      await loadMoreCatalog(kind, true);
-      if (++rounds % 1 === 0 && activeTab === cfg.tab) refreshCatalogGrid(kind);
-      await new Promise(r => setTimeout(r, 300));
-    }
-  } finally {
-    st.autoFilling = false;
-    if (catalogState[kind] === st && activeTab === cfg.tab) refreshCatalogGrid(kind);
-  }
+  // Don't auto-fill - let scroll trigger loading
+  st.autoFilling = false;
+  return;
 }
 
 /** Star lists without opening the tab (used when a star chip on a video is clicked). Waits at most maxMs. */
@@ -6332,7 +6515,7 @@ async function openCatalog(kind, opts = {}) {
     renderCatalog(kind);
     if (!opts.skipPush) pushNav({ view: cfg.view });
     // Restore scroll position
-    const y = have.scrollY || 0;
+    const y = sectionScroll.has(cfg.tab) ? sectionScroll.get(cfg.tab) : (have.scrollY || 0);
     const go = () => window.scrollTo({ top: y, left: 0, behavior: 'instant' });
     requestAnimationFrame(go);
     setTimeout(go, 150);
@@ -6988,6 +7171,7 @@ function enterNavSection(section, action, force = false, pressedButton = null) {
   studioState.scrollY = 0;
   categoriesState.scrollY = 0;
   Object.values(catalogState).forEach(c => { if (c) c.scrollY = 0; });
+  sectionScroll.clear();
   results.style.minHeight = '';
   window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
   navSection = section;
