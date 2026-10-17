@@ -19,6 +19,21 @@ from urllib.parse import (
 import httpx
 from bs4 import BeautifulSoup
 
+# Enhanced caching
+from cache import (
+    resolve_cache as _RESOLVE_CACHE_LRU,
+    tags_cache as _TAGS_CACHE_LRU,
+    studios_cache as _STUDIOS_CACHE_LRU,
+    search_cache as _SEARCH_CACHE_LRU,
+    LRUCache,
+)
+
+# Keep backward compatibility - expose as module-level dict-like where needed
+try:
+    pass
+except Exception:
+    pass
+
 
 # ----------------------------------------------------------------
 # Networking helpers
@@ -283,7 +298,7 @@ VIDEO_PATH_FRAGMENTS = (
     "/content_video/", "/content_video_alt/",        # pornvideobb-style sites
 )
 
-_RESOLVE_CACHE = {}
+_RESOLVE_CACHE = _RESOLVE_CACHE_LRU
 _CACHE_TTL = 600
 
 _DEFAULT_IMAGE_CACHE = {}
@@ -1187,7 +1202,7 @@ def _extract_tags_from_soup(soup, base, max_items=2000):
             break
     return tags
 
-_TAGS_CACHE = {}
+_TAGS_CACHE = _TAGS_CACHE_LRU
 _TAGS_TTL = 600
 
 def _is_fp_tags_url(url: str) -> bool:
@@ -1553,7 +1568,7 @@ def _extract_studio_sections(soup, base, max_sections=100):
             break
     return sections
 
-_STUDIOS_CACHE = {}
+_STUDIOS_CACHE = _STUDIOS_CACHE_LRU
 _STUDIOS_TTL = 600
 
 def scrape_studio_sections(url: str, max_sections: int = 60):
@@ -2249,7 +2264,7 @@ def _homepage_url(site):
 def _item_link_set(items):
     return {it.get("link", "").split("?")[0] for it in items if it.get("link")}
 
-_SEARCH_CACHE = {}
+_SEARCH_CACHE = _SEARCH_CACHE_LRU
 _SEARCH_TTL = 300
 _SEARCH_MAX = 512
 _SEARCH_CACHE_LOCK = threading.Lock()
