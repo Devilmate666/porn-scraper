@@ -4,3 +4,4 @@ from . import parsers
 from . import cards
 from . import utils
 from . import categories
+from . import pornstars

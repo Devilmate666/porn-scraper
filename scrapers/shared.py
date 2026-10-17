@@ -104,6 +104,23 @@ _MAIN_SELECTORS = (
 )
 MAIN_SELECTORS = _MAIN_SELECTORS
 
+# Pornstar/model constants
+_COUNT_TAIL = re.compile(r"([\d][\d,]*)\s*(?:videos?|vids?|clips?)", re.I)
+_SP_STAR_PATH = re.compile(r"^/pornstar/([^/?#]+)/?$", re.I)
+_PVB_ACTOR_SECTIONS = re.compile(r"^(?:porn[_-]?actors?|actors?|pornstars?|zone_actor)$", re.I)
+_PVB_NOT_A_STAR = re.compile(r"^(?:page|letter|alphabet|\d+)$", re.I)
+_PVB_STAR_QS = ("actor", "star", "pornstar", "model")
+_PVB_ALT_PREFIX = re.compile(r"^\s*porn\s*stars?\s+", re.I)
+_MODEL_HREF_RE = re.compile(r"/(?:models?|pornstars?|actresses)/([^/?#]+)/?$", re.I)
+
+COUNT_TAIL = _COUNT_TAIL
+SP_STAR_PATH = _SP_STAR_PATH
+PVB_ACTOR_SECTIONS = _PVB_ACTOR_SECTIONS
+PVB_NOT_A_STAR = _PVB_NOT_A_STAR
+PVB_STAR_QS = _PVB_STAR_QS
+PVB_ALT_PREFIX = _PVB_ALT_PREFIX
+MODEL_HREF_RE = _MODEL_HREF_RE
+
 # Shared caches (to avoid duplication)
 _DEFAULT_IMAGE_CACHE = {}  # host -> set of default image paths
 DEFAULT_IMAGE_CACHE = _DEFAULT_IMAGE_CACHE
