@@ -965,6 +965,8 @@
 .tg-az button:hover { background: #4f46e5; border-color: #4f46e5; color: #fff; }
 .tg-status { display: flex; align-items: center; gap: .6rem; padding: .4rem 0 .6rem; font-size: .8rem; color: #8193b5; }
 .tg-spin { width: .9rem; height: .9rem; flex: none; border-radius: 50%; border: 2px solid #3a4770; border-top-color: #8b9cff; animation: mixSpin .8s linear infinite; }
+.tg-sentinel { height: 1px; width: 100%; }
+.tg-tail { min-height: 2rem; }
 .tg-retry { background: #1e2432; border: 1px solid #2e3749; color: #d0daea; border-radius: 30px; padding: .25rem .8rem; font: inherit; font-size: .75rem; cursor: pointer; }
 .tg-pill { display: inline-flex; align-items: center; gap: .45rem; max-width: 100%; padding: .28rem .3rem .28rem .8rem; background: #1b2136; border: 1px solid transparent; border-radius: 999px;
   color: #c9d2ee; font-size: .88rem; font-weight: 600; text-decoration: none; cursor: pointer; transition: background .15s, border-color .15s, color .15s; -webkit-tap-highlight-color: transparent; }
@@ -10571,6 +10573,9 @@ function render() {
   const tg = { site: 'all', q: '', saved: false, sec: 'all' };          // sec: all | general | bdsm (BDSMHole)
   try { const x = localStorage.getItem(SECKEY); if (x === 'general' || x === 'bdsm') tg.sec = x; } catch (e) {}
   let data = null, raf = 0;
+  // windowed rendering: only the first `shown` tiles are in the DOM, the rest are added as the page is scrolled
+  const BATCH = 48;
+  const cur = { items: [], shown: BATCH, sig: '', keys: '', moreIO: null };
 
   // ---------------------------------------------------------------- data
   const letterOf = (name) => {
@@ -10594,6 +10599,12 @@ function render() {
   // false = a name is only left out of the SAME filter (General vs BDSM) it already appears in on the Categories tab
   const DEDUPE_ACROSS_SECTIONS = false;
   const isCat = (it) => it.kind === 'cat';
+  // a section's tags are shown once the category lists that filter them are loaded (cached / finished data = always ready)
+  function secReady(sec) {
+    if (!data || !data.loading) return true;
+    const need = (data.catSids && data.catSids[sec]) || [];
+    return need.every((sid) => data.doneBy && data.doneBy[sid]);
+  }
   function buildGroups() {
     const map = new Map();
     const items = (data && data.items) || [];
@@ -10606,6 +10617,7 @@ function render() {
     items.forEach((it) => {
       if (isCat(it)) return;                                          // categories stay on the Categories tab
       const sec = secOf(it.sid), mk = mergeKey(it.name);
+      if (!secReady(sec)) return;                                     // wait for this section's category lists: no tile appears and vanishes again
       if (mk && (DEDUPE_ACROSS_SECTIONS ? catKeys.any : catKeys[sec]).has(mk)) return;   // already a category
       const k = sec + ':' + (mk || it.link);                          // BDSMHole never shares a tile with the other sites
       let g = map.get(k);
@@ -10734,7 +10746,8 @@ function render() {
     };
     const jobs = [];
     // category lists: loaded only so their names can be left out of the tags (kind 'cat')
-    (typeof COMBINED_CATEGORY_SOURCES !== 'undefined' ? COMBINED_CATEGORY_SOURCES : []).forEach((s) => jobs.push([s.id, s.indexUrl, null, 'cat']));
+    d.catSids = { general: [], bdsm: [] };
+    (typeof COMBINED_CATEGORY_SOURCES !== 'undefined' ? COMBINED_CATEGORY_SOURCES : []).forEach((s) => { jobs.push([s.id, s.indexUrl, null, 'cat']); d.catSids[secOf(s.id)].push(s.id); });
     // tag lists (kind 'tag')
     if (typeof PORN_TAGS_URL !== 'undefined') jobs.push(['fullporno', PORN_TAGS_URL, { mode: 'tags' }, 'tag']);
     if (typeof PVB_TAGS_URL !== 'undefined') jobs.push(['pornvideobb', PVB_TAGS_URL, { mode: 'tags' }, 'tag']);
@@ -10755,51 +10768,93 @@ function render() {
     }
     if (t && t.map && Date.now() - t.at < TTTL) { thumbs = t.map; thumbsAt = t.at; }
   } catch (e) {}
-  const tried = new Set(), queue = [];
+  // thumbnail pipeline: only tiles near the viewport are fetched, on-screen ones first, requests for tiles that were
+  // scrolled past are dropped, tiles that already carry an image from their list are never fetched, and idle time
+  // is used to warm the next batch so it is ready before the user scrolls to it
+  const tried = new Set(), queue = [], pending = new Set(), near = new Set(), warm = new Set(), fails = {}, elOf = new Map();
+  const CONC = 6, CHUNK = 4;
   const thumbOf = (g) => thumbs[g.key] || (g.members.find((m) => m.thumb) || {}).thumb || '';
   function saveThumbs() {
     clearTimeout(saveT);
     saveT = setTimeout(() => { try { localStorage.setItem(TKEY, JSON.stringify({ at: thumbsAt, map: thumbs })); } catch (e) {} }, 800);
   }
+  window.addEventListener('pagehide', () => { try { localStorage.setItem(TKEY, JSON.stringify({ at: thumbsAt, map: thumbs })); } catch (e) {} });
   function setTileThumb(key, url) {
     const v = viewEl(); if (!v) return;
     v.querySelectorAll(`.tg-card[data-key="${CSS.escape(key)}"] img`).forEach((img) => {
       img.parentElement.classList.remove('tg-wait');
-      if (url) { img.style.opacity = ''; img.src = url; }
+      if (url) {
+        const pre = new Image(); pre.referrerPolicy = 'no-referrer';
+        pre.onload = () => { img.style.opacity = ''; img.src = url; };   // swap only once the image is really loaded: no blank flash
+        pre.onerror = () => { img.style.opacity = 0; };
+        pre.src = url;
+      }
     });
   }
+  function need(k) { const g = groupMap.get(k); return !!g && !thumbs[k] && !thumbOf(g) && (fails[k] || 0) < 2; }
+  function enqueue(k, isWarm) {
+    if (pending.has(k)) return;
+    if (!need(k)) { if (!thumbs[k]) setTileThumb(k, thumbOf(groupMap.get(k) || { key: k, members: [] })); return; }
+    pending.add(k); queue.push(k); if (isWarm) warm.add(k);
+  }
+  // on-screen tiles first (closest to the middle of the screen), then the ones just outside it
+  function rank(k) {
+    const el = elOf.get(k);
+    if (!el || !el.isConnected) return warm.has(k) ? 1e6 : 1e9;
+    const r = el.getBoundingClientRect(), vh = window.innerHeight || 800;
+    const on = r.bottom > 0 && r.top < vh;
+    return (on ? 0 : 5e4) + Math.abs(r.top - vh / 3);
+  }
   function pump() {
-    while (inflight < 3 && queue.length) {
-      const gs = queue.splice(Math.max(0, queue.length - 8)).map((k) => groupMap.get(k)).filter(Boolean);   // newest (on screen) first
+    for (let i = queue.length - 1; i >= 0; i--) {                    // forget what is no longer wanted
+      const k = queue[i];
+      if (!need(k) || (!near.has(k) && !warm.has(k))) { queue.splice(i, 1); pending.delete(k); warm.delete(k); }
+    }
+    while (inflight < CONC && queue.length) {
+      queue.sort((x, y) => rank(x) - rank(y));
+      const keys = queue.splice(0, CHUNK), gs = keys.map((k) => groupMap.get(k)).filter(Boolean);
       if (!gs.length) continue;
       inflight++;
+      const done = () => { keys.forEach((k) => { pending.delete(k); warm.delete(k); }); inflight--; pump(); };
       fetch('/api/scrape', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ urls: gs.map((g) => g.members[0].link) }) })
         .then((r) => (r.ok ? r.json() : null))
         .then((j) => {
-          ((j && j.results) || []).forEach((res, i) => {
-            const it = res && (res.items || []).find((x) => x && x.thumbnail);
-            if (it && gs[i]) { thumbs[gs[i].key] = it.thumbnail; setTileThumb(gs[i].key, it.thumbnail); }
+          const res = (j && j.results) || [];
+          gs.forEach((g, i) => {
+            const it = res[i] && (res[i].items || []).find((x) => x && x.thumbnail);
+            if (it) { thumbs[g.key] = it.thumbnail; tried.add(g.key); setTileThumb(g.key, it.thumbnail); }
+            else { fails[g.key] = (fails[g.key] || 0) + 1; if (fails[g.key] >= 2) { tried.add(g.key); setTileThumb(g.key, ''); } else queue.push(g.key); }
           });
-          gs.forEach((g) => { if (!thumbs[g.key]) setTileThumb(g.key, ''); });
           saveThumbs();
         })
-        .catch(() => { gs.forEach((g) => { if (!thumbs[g.key]) setTileThumb(g.key, ''); }); })
-        .finally(() => { inflight--; pump(); });
+        .catch(() => { gs.forEach((g) => { fails[g.key] = (fails[g.key] || 0) + 1; if (fails[g.key] >= 2) { tried.add(g.key); setTileThumb(g.key, ''); } else queue.push(g.key); }); })
+        .finally(() => { gs.forEach((g) => pending.delete(g.key)); done(); });
     }
+    if (!queue.length && !inflight) idleWarm();
   }
-  function observeThumbs(v) {
+  let warmT = 0;
+  function idleWarm() {                                              // quiet moment: fetch the thumbnails of the next batch ahead of the scroll
+    clearTimeout(warmT);
+    warmT = setTimeout(() => {
+      if (queue.length || inflight) return;
+      const nextKeys = cur.items.slice(cur.shown, cur.shown + BATCH).map((g) => g.key).filter(need);
+      if (!nextKeys.length) return;
+      nextKeys.slice(0, 12).forEach((k) => enqueue(k, true));
+      pump();
+    }, 400);
+  }
+  function observeThumbs(nodes, reset) {
     if (!('IntersectionObserver' in window)) return;
     if (!io) io = new IntersectionObserver((entries) => {
       entries.forEach((e) => {
-        if (!e.isIntersecting) return;
-        io.unobserve(e.target);
-        const k = e.target.dataset.key;
-        if (k && !thumbs[k] && !tried.has(k)) { tried.add(k); queue.push(k); }
+        const k = e.target.dataset.key; if (!k) return;
+        if (e.isIntersecting) { near.add(k); enqueue(k, false); }
+        else near.delete(k);                                         // scrolled past: its request is dropped if it did not start yet
       });
       pump();
-    }, { rootMargin: '600px 0px' });
-    io.disconnect();
-    v.querySelectorAll('.tg-card').forEach((t) => { if (!thumbs[t.dataset.key] && !tried.has(t.dataset.key)) io.observe(t); });
+    }, { rootMargin: '700px 0px' });
+    if (reset) { io.disconnect(); near.clear(); elOf.clear(); }
+    (nodes || []).forEach((t) => { elOf.set(t.dataset.key, t); io.observe(t); });
   }
 
   // ---------------------------------------------------------------- view
@@ -10811,7 +10866,7 @@ function render() {
   function tileHtml(g) {
     const on = anyFav(g), th = thumbOf(g);
     return `<div class="tg-card${on ? ' is-fav' : ''}" role="link" tabindex="0" data-key="${esc(g.key)}" title="${esc(g.name)}">` +
-      `<div class="thumb${thumbs[g.key] || tried.has(g.key) ? '' : ' tg-wait'}"><img src="${esc(th || PIX)}" loading="lazy" alt="${esc(g.name)}" referrerpolicy="no-referrer" onerror="this.style.opacity=0">` +
+      `<div class="thumb${th || tried.has(g.key) ? '' : ' tg-wait'}"><img src="${esc(th || PIX)}" loading="lazy" alt="${esc(g.name)}" referrerpolicy="no-referrer" onerror="this.style.opacity=0">` +
       (tg.sec === 'all' ? `<span class="site-label s-${g.sec}">${SEC_NAMES[g.sec]}</span>` : '') +
       `<span class="tg-heart" role="button" tabindex="0" aria-pressed="${on}" aria-label="${on ? 'Remove from favorites' : 'Add to favorites'}">${HEART}</span></div>` +
       `<div class="info"><div class="title">${esc(g.name)}</div></div></div>`;
@@ -10828,6 +10883,7 @@ function render() {
       <div class="tg-az" id="tgAz"></div>
       <div class="tg-status" id="tgStatus"></div>
       <div class="tg-list" id="tgList"></div>
+      <div class="tg-tail" id="tgTail"></div>
     </div>`);
     const v = viewEl(), s = v.querySelector('#tgSearch');
     s.value = tg.q;
@@ -10847,9 +10903,11 @@ function render() {
     });
     v.querySelector('#tgAz').addEventListener('click', (e) => {
       const b = e.target.closest('[data-l]'); if (!b) return;
-      const row = v.querySelector(`.tg-sec[data-letter="${CSS.escape(b.dataset.l)}"]`); if (row) row.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      const L = b.dataset.l, idx = cur.items.findIndex((g) => g.letter === L);
+      if (idx >= cur.shown) { cur.shown = Math.min(cur.items.length, idx + BATCH); render(); }   // that letter is not in the page yet: add it first
+      const row = v.querySelector(`.tg-sec[data-letter="${CSS.escape(L)}"]`); if (row) row.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
-    v.querySelector('#tgStatus').addEventListener('click', (e) => { if (e.target.closest('[data-retry]')) { loadAll(true); render(); } });
+    v.querySelector('#tgStatus').addEventListener('click', (e) => { if (e.target.closest('[data-retry]')) { loadAll(true); cur.keys = ''; render(); } });
     const list = v.querySelector('#tgList');
     list.addEventListener('click', (e) => {
       const h = e.target.closest('.tg-heart');
@@ -10903,29 +10961,79 @@ function render() {
     v.querySelector('#tgChips').innerHTML = `<button type="button" class="tg-chip tg-chip-fav${tg.saved ? ' on' : ''}" data-tgs="saved">♥ Saved <span class="n">${saved}</span></button>`;
   }
   const SKEL = '<div class="tg-card tg-skel"><div class="thumb"></div><div class="info"><div class="title">&nbsp;</div></div></div>'.repeat(18);
+  function sectionsHtml(items) {
+    const out = []; let L = null, buf = [];
+    const flush = () => { if (buf.length) out.push(`<div class="tg-sec" data-letter="${esc(L)}"><div class="tag-letter">${esc(L)}</div><div class="tg-grid">${buf.join('')}</div></div>`); buf = []; };
+    items.forEach((g) => { if (g.letter !== L) { flush(); L = g.letter; } buf.push(tileHtml(g)); });
+    flush();
+    return out.join('');
+  }
+  function appendTiles(from, to) {
+    const v = viewEl(), list = v && v.querySelector('#tgList'); if (!list) return;
+    const part = cur.items.slice(from, to); if (!part.length) return;
+    const last = list.lastElementChild;
+    let first = part, rest = [];
+    if (last && last.dataset.letter) {                              // continue the letter section that is already open
+      let n = 0; while (n < part.length && part[n].letter === last.dataset.letter) n++;
+      if (n) { last.querySelector('.tg-grid').insertAdjacentHTML('beforeend', part.slice(0, n).map(tileHtml).join('')); }
+      rest = part.slice(n);
+    } else rest = part;
+    if (rest.length) list.insertAdjacentHTML('beforeend', sectionsHtml(rest));
+    cur.keys = cur.items.slice(0, to).map((g) => g.key).join('|');
+    const added = [...list.querySelectorAll('.tg-card')].slice(from);
+    observeThumbs(added, false);
+  }
+  function loadMore() {
+    if (cur.shown >= cur.items.length) return;
+    const from = cur.shown;
+    cur.shown = Math.min(cur.items.length, cur.shown + BATCH);
+    appendTiles(from, cur.shown);
+    drawTail();
+  }
+  // tail under the grid: spinner + sentinel while tiles remain (or lists are still arriving), like the other sections
+  function drawTail() {
+    const v = viewEl(), tail = v && v.querySelector('#tgTail'); if (!tail) return;
+    if (cur.moreIO) cur.moreIO.disconnect();
+    const more = cur.shown < cur.items.length;
+    if (!more && !(data && data.loading)) { tail.innerHTML = ''; return; }
+    tail.innerHTML = `<div class="tg-status"><span class="tg-spin"></span><span>${more ? `${cur.shown} of ${cur.items.length} · loading more as you scroll` : 'Loading more tags & genres…'}</span></div>` + (more ? '<div class="tg-sentinel"></div>' : '');
+    const sn = tail.querySelector('.tg-sentinel'); if (!sn) return;
+    if (!('IntersectionObserver' in window)) { cur.shown = cur.items.length; render(); return; }
+    if (!cur.moreIO) cur.moreIO = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) loadMore(); }, { rootMargin: '900px 0px' });
+    cur.moreIO.observe(sn);                                         // observing again re-reports: keeps loading while the sentinel is still near
+  }
   function render() {
     const v = viewEl(); if (!v) return;
     if (!data) loadAll(false);
     if (!data) return;
-    updateChips();                                                  // also rebuilds groupMap
+    updateChips();                                                  // also rebuilds groupMap (only the tags that are ready)
     const st = v.querySelector('#tgStatus'), list = v.querySelector('#tgList');
-    if (data.loading) {                                             // placeholders until every list is in, then the whole sorted page at once
-      if (!list.querySelector('.tg-skel')) { list.innerHTML = `<div class="tg-sec"><div class="tg-grid">${SKEL}</div></div>`; v.querySelector('#tgAz').innerHTML = ''; }
+    const q = tg.q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    cur.items = [...groupMap.values()]
+      .filter((g) => (tg.sec === 'all' || g.sec === tg.sec) && (!tg.saved || anyFav(g)) && q.every((w) => g.name.toLowerCase().includes(w)))
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }) || a.sec.localeCompare(b.sec));
+    const items = cur.items;
+    const sig = tg.sec + '|' + tg.saved + '|' + q.join(' ');
+    if (sig !== cur.sig) { cur.sig = sig; cur.shown = BATCH; cur.keys = ''; }   // new filter / search: start again from the first batch
+    cur.shown = Math.min(Math.max(cur.shown, BATCH), items.length);
+    const keys = items.slice(0, cur.shown).map((g) => g.key).join('|');
+    if (data.loading && !items.length) {                            // nothing ready yet: placeholders
+      if (!list.querySelector('.tg-skel')) { list.innerHTML = `<div class="tg-sec"><div class="tg-grid">${SKEL}</div></div>`; v.querySelector('#tgAz').innerHTML = ''; cur.keys = ''; }
+      v.querySelector('#tgTail').innerHTML = '';
       st.innerHTML = `<span class="tg-spin"></span><span>Loading tags &amp; genres… ${data.total - data.pending} of ${data.total} lists</span>`;
       return;
     }
-    const q = tg.q.trim().toLowerCase().split(/\s+/).filter(Boolean);
-    const items = [...groupMap.values()]
-      .filter((g) => (tg.sec === 'all' || g.sec === tg.sec) && (!tg.saved || anyFav(g)) && q.every((w) => g.name.toLowerCase().includes(w)))
-      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }) || a.sec.localeCompare(b.sec));
-    const groups = new Map();
-    items.forEach((g) => { if (!groups.has(g.letter)) groups.set(g.letter, []); groups.get(g.letter).push(g); });
-    const letters = [...groups.keys()].sort((a, b) => (a === '#' ? -1 : b === '#' ? 1 : a.localeCompare(b)));
-    list.innerHTML = letters.map((L) => `<div class="tg-sec" data-letter="${esc(L)}"><div class="tag-letter">${esc(L)}</div><div class="tg-grid">${groups.get(L).map(tileHtml).join('')}</div></div>`).join('');
-    observeThumbs(v);
+    if (keys !== cur.keys || list.querySelector('.tg-skel')) {      // only touch the grid when what is visible really changed
+      list.innerHTML = sectionsHtml(items.slice(0, cur.shown));
+      cur.keys = keys;
+      observeThumbs([...list.querySelectorAll('.tg-card')], true);
+    }
+    const letters = [...new Set(items.map((g) => g.letter))].sort((a, b) => (a === '#' ? -1 : b === '#' ? 1 : a.localeCompare(b)));
     v.querySelector('#tgAz').innerHTML = letters.map((L) => `<button type="button" data-l="${esc(L)}">${esc(L)}</button>`).join('');
+    drawTail();
     const what = tg.sec === 'all' ? '' : ` · ${SEC_NAMES[tg.sec]}`;
-    if (!data.items.length) st.innerHTML = `<span>Could not load any tags or genres.</span> <button type="button" class="tg-retry" data-retry="1">Try again</button>`;
+    if (data.loading) st.innerHTML = `<span class="tg-spin"></span><span>${items.length} ready · loading lists… ${data.total - data.pending} of ${data.total}</span>`;
+    else if (!data.items.length) st.innerHTML = `<span>Could not load any tags or genres.</span> <button type="button" class="tg-retry" data-retry="1">Try again</button>`;
     else if (!items.length) st.innerHTML = `<span>${tg.saved && !q.length ? 'Nothing saved yet. Tap the ♥ on any tag.' : 'No matching tags or genres.'}</span>`;
     else st.innerHTML = `<span>${items.length} tag${items.length === 1 ? '' : 's'} &amp; genres${what}${data.failed ? ' · some lists could not load' : ''}</span>${data.failed ? ' <button type="button" class="tg-retry" data-retry="1">Retry</button>' : ''}`;
   }
