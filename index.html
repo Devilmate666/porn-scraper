@@ -1414,6 +1414,58 @@ body.fav-panel-open { overflow: hidden; }
   #favPanel .lib-card { border-radius: .6rem; }
   #favPanel .lib-grid { gap: .2rem; }
 }
+
+/* ===================================================================================================
+   Zoom-proof layout (desktop browsers)
+   1) The opened video always fills the whole screen. On a zoomed-out page the viewport is many CSS pixels wide, and the
+      "max-width / max-height" caps meant for the inline player made the fixed full-screen player a narrow centred box.
+   2) The number of cards per row is FIXED. Before, it was derived from the CSS width, so zooming in/out changed it (and
+      crossed the 700 / 900 / 1000 px breakpoints). Change the numbers below to taste.
+   =================================================================================================== */
+.main-player.active { max-width: none; width: 100%; height: 100%; margin: 0; }
+.main-player.active .main-player-body { max-height: none; aspect-ratio: auto; }
+
+:root { --cols-cards: 4; --cols-tags: 5; }
+@media (hover: hover) and (pointer: fine) {
+  .videos, .section-loading,
+  .studio-list.series-grid,
+  .cams-grid { grid-template-columns: repeat(var(--cols-cards), minmax(0, 1fr)); }
+  .tg-grid { grid-template-columns: repeat(var(--cols-tags), minmax(0, 1fr)); }
+}
+
+/* ===================================================================================================
+   PHONES (<= 700px): exactly ONE card per row, everywhere (feeds, search, categories, tags & genres,
+   series, networks, cams, channels, history, My Mix, library). Placed last so it wins over every
+   earlier 2-column / auto-fill rule, including the fixed desktop column counts.
+   =================================================================================================== */
+@media (max-width: 700px) {
+  .videos, .section-loading,
+  .studio-list.series-grid,
+  .cams-grid,
+  .tg-grid,
+  #favPanel .lib-grid,
+  #favPanel .mix-grid,
+  #histPanel .hp-grid { grid-template-columns: minmax(0, 1fr) !important; }
+  .grid, #results .grid { grid-template-columns: minmax(0, 1fr) !important; }
+
+  .videos, .section-loading, .studio-list.series-grid, .cams-grid, .tg-grid { gap: .7rem; }
+  .videos, .section-loading, .studio-list.series-grid, .cams-grid { padding: .6rem .5rem; }
+
+  /* a single card is wide now, so give its text a bit more room */
+  .info { padding: .6rem .7rem .75rem; }
+  .title { font-size: .85rem; line-height: 1.3; margin-bottom: .3rem; }
+  .meta { font-size: .68rem; }
+  .card-stars { font-size: .75rem; }
+  .site-label { top: .45rem; left: .45rem; font-size: .62rem; padding: .15rem .5rem; }
+  .category-card .title, .series-card .series-title { font-size: .85rem; }
+
+  /* Networks / Series sections: one video visible at a time, swipe sideways for the rest of the row */
+  .studio-row { grid-auto-columns: 100% !important; }
+
+  /* Library shelves: one wide card per view (with a peek of the next); round star/category tiles stay modest */
+  #favPanel .lib-shelf.w-wide > .lib-card { width: 88%; }
+  #favPanel .lib-grid.w-round .lib-thumb { max-width: 55vw; margin-left: auto; margin-right: auto; }
+}
 </style>
 <base target="_blank">
 <base target="_blank">
@@ -1974,7 +2026,7 @@ function pageIsLocked() {
 }
 function saveEntryScroll(force = false) {
   try {
-    if (!force && (performance.now() < scrollFreezeUntil || navSilent || scrollRestoring)) return;
+    if (!force && (performance.now() < scrollFreezeUntil || navSilent || scrollRestoring || scrollLockOn)) return;
     if (pageIsLocked()) return;                          // a video is open: the page underneath keeps what it had
     const st = history.state;
     if (!st || st.sid !== NAV_SID || typeof st.idx !== 'number') return;
@@ -1993,6 +2045,37 @@ document.addEventListener('click', () => { saveEntryScroll(true); scrollFreezeUn
 document.addEventListener('keydown', (e) => { if (e.key === 'Enter') { saveEntryScroll(true); scrollFreezeUntil = performance.now() + 1200; } }, true);
 window.addEventListener('pagehide', () => saveEntryScroll(true));
 
+/* ---- Scroll lock while a page is swapped on Back ----
+   A fast swipe keeps "coasting" (momentum) after the finger is gone. If Back is pressed meanwhile, that leftover momentum
+   used to carry on into the page that comes back (the list scrolled too) and its scroll events were recorded as the
+   list's position. While the lock is on, the page cannot move by itself: the coasting stops, only the restore moves it. */
+let scrollLockOn = false, scrollLockTimer = 0;
+const blockTouchMove = (e) => { if (e.cancelable) e.preventDefault(); };
+function holdScrollLock(ms) {
+  clearTimeout(scrollLockTimer);
+  if (ms <= 0) {
+    if (scrollLockOn) {
+      scrollLockOn = false;
+      document.documentElement.style.overflow = '';
+      document.documentElement.style.touchAction = '';
+      document.removeEventListener('touchmove', blockTouchMove, true);
+    }
+    return;
+  }
+  if (!scrollLockOn) {
+    scrollLockOn = true;
+    document.documentElement.style.overflow = 'hidden';       // stops a running fling; programmatic scrollTo still works
+    document.documentElement.style.touchAction = 'none';
+    document.addEventListener('touchmove', blockTouchMove, { passive: false, capture: true });
+  }
+  scrollLockTimer = setTimeout(() => holdScrollLock(0), ms);
+}
+// first popstate listener of the page: runs before the app's own handler
+window.addEventListener('popstate', () => {
+  scrollFreezeUntil = Math.max(scrollFreezeUntil, performance.now() + 1500);   // scroll events of the old page are not the new page's
+  holdScrollLock(700);                                                          // restoreScrollRobust extends it while it works
+}, true);
+
 /* ---- ONE authoritative scroll memory for the section lists (Pornstars, Categories, Porn Series, Networks) ----
    The position of a list is written ONLY while that list is really on screen (never during a feed load, never while a
    restore runs, never while a video is open), so scrolling inside a pornstar's / category's video feed can no longer
@@ -2002,7 +2085,7 @@ const sectionTabOfView = (v) => ({ categories: CATEGORIES_TAB, pornsites: PORN_S
 function sectionListShown() {
   const t = activeTab;
   if (!t || ![CATEGORIES_TAB, PORN_SITES_TAB, NETWORKS_TAB, PORNSTARS_TAB].includes(t)) return null;
-  if (pageIsLocked() || scrollRestoring || feedLoadCtl) return null;
+  if (pageIsLocked() || scrollRestoring || scrollLockOn || feedLoadCtl) return null;
   return results.querySelector(`.feed[data-site="${t}"]`) ? t : null;     // the list itself must be what is drawn
 }
 function rememberSectionScroll(force) {
@@ -2024,8 +2107,73 @@ window.addEventListener('scroll', () => {
 document.addEventListener('pointerdown', () => rememberSectionScroll(true), true);
 document.addEventListener('click', () => rememberSectionScroll(true), true);       // the exact spot at the moment a card is tapped
 window.addEventListener('pagehide', () => rememberSectionScroll(true));
+/* ---- Keep-alive: a page is never thrown away when you open something from it ----
+   Like a normal website (the old page stays frozen, Back shows it again), the whole page - cards, filters, search text,
+   how far it was loaded - is parked off-screen while the next page is open, and put back untouched on Back. Nothing is
+   rebuilt and nothing has to be restored "by guessing", so what happens in the next page can't influence the old one.
+   Covers: Pornstars, Categories, Porn Series, Networks, Tags & Genres, Live cams, Live channels and video feeds. */
+const sectionKeep = new Map();                         // page key (its data-site) -> { frag, y }
+const SECTION_LIST_TABS = () => [CATEGORIES_TAB, PORN_SITES_TAB, NETWORKS_TAB, PORNSTARS_TAB];
+function keepablePageKey() {
+  const t = activeTab;
+  if (!t || t === WEBSEARCH_TAB || String(t).startsWith(MIX_PREFIX)) return null;   // search results / mixed home feed are rebuilt as before
+  if (pageIsLocked() || scrollRestoring || feedLoadCtl) return null;
+  return results.querySelector(`.feed[data-site="${CSS.escape(t)}"]`) ? t : null;   // that page itself must be what is drawn
+}
+function keepSectionList() {
+  const t = keepablePageKey();
+  if (!t) return;
+  const y = Math.round(window.scrollY);
+  if (SECTION_LIST_TABS().includes(t)) sectionScroll.set(t, y);
+  rescueSearchBar();                                   // the shared search / nav bars must not be parked with the page
+  const frag = document.createDocumentFragment();
+  while (results.firstChild) frag.appendChild(results.firstChild);
+  sectionKeep.delete(t);
+  sectionKeep.set(t, { frag, y });
+  while (sectionKeep.size > 8) sectionKeep.delete(sectionKeep.keys().next().value);   // keep memory bounded: oldest parked page goes
+}
+function pageKeyOfState(state) {
+  if (!state) return null;
+  const t = sectionTabOfView(state.view);
+  if (t) return t;
+  switch (state.view) {
+    case 'porntags': return PORN_TAGS_TAB;
+    case 'livecams': return LIVECAMS_TAB;
+    case 'livechannels': return LIVECHANNELS_TAB;
+    case 'category-feed':
+    case 'feed': return state.feedUrl || null;
+  }
+  return null;
+}
+function restoreKeptSection(state) {
+  const key = pageKeyOfState(state);
+  const k = key && sectionKeep.get(key);
+  if (!k) return false;
+  sectionKeep.delete(key);
+  const isList = SECTION_LIST_TABS().includes(key);
+  const isOtherSection = key === PORN_TAGS_TAB || key === LIVECAMS_TAB || key === LIVECHANNELS_TAB;
+  const isFeedPage = !isList && !isOtherSection;       // a video feed: it hosts the shared nav + search bars
+  if (key === NETWORKS_TAB || key === PORN_SITES_TAB) useStudioView(key);
+  if (isFeedPage) rescueSearchBar(); else hideSearchBar();   // also moves the shared bars out of the page that is leaving
+  results.style.minHeight = '';
+  results.replaceChildren(k.frag);
+  activeTab = key;
+  window.scrollTo({ top: k.y, left: 0, behavior: 'instant' });   // same content as before: the exact position, at once
+  if (isFeedPage) {
+    const feedEl = results.querySelector(`.feed[data-site="${CSS.escape(key)}"]`);
+    if (feedEl) placeSearchInFeed(feedEl);
+    observeSentinel(key);                              // infinite scroll continues where it was
+    scheduleRecheck(key);
+  } else if (isList) {
+    const ck = kindOfCatalogTab(key);
+    if (ck) observeCatalogSentinel(ck); else observeCategorySentinel();
+  }
+  return true;
+}
 /** A history state that points at a section list gets that list's own remembered position. */
 function withSectionScroll(state) {
+  const key = pageKeyOfState(state);
+  if (key && sectionKeep.has(key)) return { ...state, scrollY: sectionKeep.get(key).y };
   const t = state && sectionTabOfView(state.view);
   return (t && sectionScroll.has(t)) ? { ...state, scrollY: sectionScroll.get(t) } : state;
 }
@@ -2034,6 +2182,7 @@ function withSectionScroll(state) {
 function restoreScrollRobust(y) {
   y = Math.max(0, Math.round(y || 0));
   scrollRestoring = true;
+  holdScrollLock(2000);
   const t0 = performance.now();
   let stop = false, okSince = 0;
   const cancel = () => { stop = true; };
@@ -2051,6 +2200,7 @@ function restoreScrollRobust(y) {
     scrollRestoring = false;
     evs.forEach(ev => window.removeEventListener(ev, cancel));
     scrollFreezeUntil = 0;
+    holdScrollLock(stop ? 0 : 350);                      // let any coasting die before the page may move again
     saveEntryScroll(true);
   };
   if (y > 0 && document.documentElement.scrollHeight < y + (window.innerHeight || 0) + 2) { preserveSectionScrollRange(y); reserved = true; }
@@ -2154,6 +2304,11 @@ async function applyNavStateInner(state) {
     delete under.title;
     await applyNavState(under);
     await playInMainPlayer(state.detail, state.title || 'Video', { skipPush: true });
+    return;
+  }
+
+  if (restoreKeptSection(state)) {
+    setTimeout(updateNetworkBarActive, 0);
     return;
   }
 
@@ -2824,6 +2979,7 @@ function cardHtml(item, si) {
 
 function renderFeed(siteUrl) {
   activeTab = siteUrl;
+  sectionKeep.delete(siteUrl);
   setTimeout(updateNetworkBarActive, 0);
   const data = siteData.get(siteUrl);
   if (!data) {
@@ -2988,6 +3144,7 @@ function bindCategoryFilterChips() {
 function renderCategories(data, append = false, opts = {}) {
   if (!append) hideSearchBar();
   const kind = opts.kind || data.kind || 'categories'; // 'categories' | 'pornsites'
+  if (!append) sectionKeep.delete(tabOfKind(kind));
   const isPornSites = isFpKind(kind); // single-source FullPorno listing (sites or tags)
   const isTags = kind === 'porntags';
   activeTab = tabOfKind(kind);
@@ -3746,6 +3903,7 @@ async function openCategoryFeed(link, name, opts = {}) {
   saveCatalogScroll();
   rememberSectionScroll(true);
   results.style.minHeight = '';                          // height reserved for the list's restore must not follow us into the feed
+  keepSectionList();
   if (!opts.skipPush && history.state && ['categories', 'networks', 'pornsites', 'pornstars'].includes(history.state.view)) {
     try {
       history.replaceState({ ...history.state, scrollY: window.scrollY }, '', location.href);
@@ -3840,6 +3998,7 @@ async function openTagMix(key, name, members, opts = {}) {
   saveCatalogScroll();
   rememberSectionScroll(true);
   results.style.minHeight = '';                          // height reserved for the list's restore must not follow us into the feed
+  keepSectionList();
   if (!opts.skipPush && history.state && ['categories', 'networks', 'pornsites', 'pornstars'].includes(history.state.view)) {
     try { history.replaceState({ ...history.state, scrollY: window.scrollY }, '', location.href); } catch {}
   }
@@ -5252,6 +5411,7 @@ function renderStudioSections(data, append = false) {
   } else {
     hideSearchBar();
     activeTab = studioTab;
+    sectionKeep.delete(studioTab);
   }
   const sections = data.sections || [];
 
@@ -5556,6 +5716,7 @@ const openNetworks  = (forceRefresh = false, opts = {}) => openStudioView(NETWOR
 /** FullPorno tags / categories listing — always available as "Porn Tags". */
 /** Tags & Genres: every tag + genre of every website as thumbnail tiles (built by the Tags & Genres block at the end). */
 async function openPornTags(forceRefresh = false, opts = {}) {
+  sectionKeep.delete(PORN_TAGS_TAB);
   hideSearchBar();
   activeTab = PORN_TAGS_TAB;
   results.innerHTML = `<div class="feed" data-site="${PORN_TAGS_TAB}">
@@ -6205,6 +6366,7 @@ function catalogChipsHtml(kind) {
 
 function renderCatalog(kind) {
   const cfg = CATALOGS[kind], st = catalogState[kind];
+  sectionKeep.delete(cfg.tab);
   hideSearchBar();
   activeTab = cfg.tab;
   setTimeout(updateNetworkBarActive, 0);
@@ -6822,6 +6984,7 @@ function showLiveCamsError(err) {
 }
 
 async function openLiveCams(force = false, opts = {}) {
+  sectionKeep.delete(LIVECAMS_TAB);
   if (!force && liveCamsData && liveCamsData.items.length) {
     renderLiveCams();
     if (!opts.skipPush) pushNav({ view: 'livecams' });
@@ -7103,6 +7266,7 @@ function showChannelsError(err) {
 }
 
 async function openLiveChannels(force = false, opts = {}) {
+  sectionKeep.delete(LIVECHANNELS_TAB);
   activeTab = LIVECHANNELS_TAB;
   if (opts.category !== undefined) chanState = chanNewState(opts.category || '');
   else if (force || !chanState) chanState = chanNewState(chanState ? chanState.category : '', !!force);
@@ -7172,6 +7336,7 @@ function enterNavSection(section, action, force = false, pressedButton = null) {
   categoriesState.scrollY = 0;
   Object.values(catalogState).forEach(c => { if (c) c.scrollY = 0; });
   sectionScroll.clear();
+  sectionKeep.clear();
   results.style.minHeight = '';
   window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
   navSection = section;
@@ -8284,6 +8449,7 @@ new MutationObserver((muts) => {
 /** 🏠 Home: back to the mixed feed of every site, filter reset to All. */
 
 async function goHome(forceRefresh = false, startJourney = false) {
+  sectionKeep.clear();
   clearTimeout(liveTimer);
   searchToken++;
   navSection = 'home';
